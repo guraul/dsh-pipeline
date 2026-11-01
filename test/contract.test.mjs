@@ -33,16 +33,27 @@ const PR = 42
 const SHA = 'c'.repeat(40)
 const OTHER_SHA = 'd'.repeat(40)
 
-/** 假 gh：只记录 argv，永不触网。 */
+/** 假 gh：只记录 argv，永不触网；pr view 返回合并流程需要的 JSON。 */
 const FAKE_GH = `#!/bin/sh
 printf 'gh %s\\n' "$*" >> "$DSH_CONTRACT_LOG"
+case "$*" in
+  "pr view "*)
+    printf '{"headRefName":"task/42","state":"OPEN"}\\n' ;;
+esac
 exit 0
 `
 
-/** 假 git：记录 argv，并把固定 sha 当作 rev-parse HEAD 的输出。 */
+/** 假 git：记录 argv，并按子命令给出该子命令该有的输出。 */
 const FAKE_GIT = `#!/bin/sh
 printf 'git %s\\n' "$*" >> "$DSH_CONTRACT_LOG"
-printf '%s\\n' "$DSH_CONTRACT_SHA"
+case "$*" in
+  *"rev-parse HEAD"*)
+    printf '%s\\n' "$DSH_CONTRACT_SHA" ;;
+  *"worktree list --porcelain"*)
+    printf 'worktree %s\\nHEAD %s\\nbranch refs/heads/main\\n\\n' "$DSH_CONTRACT_REPO" "$DSH_CONTRACT_SHA"
+    printf 'worktree %s\\nHEAD %s\\nbranch refs/heads/task/42\\n\\n' "$DSH_CONTRACT_WT" "$DSH_CONTRACT_SHA" ;;
+esac
+exit 0
 `
 
 function recordFor(overrides = {}) {
@@ -109,6 +120,8 @@ function makeFixture({ record } = {}) {
     PATH: `${binDir}:${process.env.PATH}`,
     DSH_CONTRACT_LOG: logFile,
     DSH_CONTRACT_SHA: SHA,
+    DSH_CONTRACT_REPO: repo,
+    DSH_CONTRACT_WT: join(base, 'wt-task-42'),
   }
 
   return { base, repo, binDir, cwd, logFile, env }
@@ -142,6 +155,17 @@ function ghCalls(fixture) {
     .filter((line) => line.startsWith('gh '))
 }
 
+const MERGE_CALL = `gh pr merge ${PR} --repo o/r --squash`
+
+/** 合并恰好发生一次，且是闸门之后的最后一个 gh 动作。 */
+function assertMergedOnce(fixture) {
+  const calls = ghCalls(fixture)
+  assert.equal(calls.filter((line) => line === MERGE_CALL).length, 1, calls.join('\n'))
+  assert.equal(calls[calls.length - 1], MERGE_CALL)
+  assert.match(calls[0], new RegExp(`^gh pr view ${PR} --repo o/r `))
+  return calls
+}
+
 function cleanup(t, fixture) {
   t.after(() => rmSync(fixture.base, { recursive: true, force: true }))
   return fixture
@@ -153,7 +177,7 @@ test('合格记录：退出 0，且真实发出 gh pr merge --squash', (t) => {
 
   assert.equal(result.status, 0, `stderr: ${result.stderr}`)
   assert.match(result.stdout, new RegExp(`已合并 PR #${PR}`))
-  assert.deepEqual(ghCalls(fixture), [`gh pr merge ${PR} --repo o/r --squash`])
+  assertMergedOnce(fixture)
 })
 
 test('记录判定为 REJECT：退出 1，且没有任何 gh 调用', (t) => {
@@ -181,7 +205,7 @@ test('--no-review：退出 0，跳审审计落盘且照常合并', (t) => {
 
   assert.equal(result.status, 0, `stderr: ${result.stderr}`)
   assert.match(result.stderr, /已跳过审核/)
-  assert.deepEqual(ghCalls(fixture), [`gh pr merge ${PR} --repo o/r --squash`])
+  assertMergedOnce(fixture)
 
   const audits = readdirSync(skipsDir)
   assert.equal(audits.length, 1)

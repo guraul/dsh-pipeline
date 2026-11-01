@@ -63,6 +63,14 @@ function stubRunner() {
   const runner = (command, args) => {
     calls.push({ command, args: [...args] })
     if (command === 'git') return { status: 0, stdout: `${SHA}\n`, stderr: '' }
+    // gh pr view 要返回 JSON（merge 用 headRefName 定位分支），其余 gh 命令给空输出
+    if (args[0] === 'pr' && args[1] === 'view') {
+      return {
+        status: 0,
+        stdout: JSON.stringify({ headRefName: 'task/7', state: 'OPEN' }),
+        stderr: '',
+      }
+    }
     return { status: 0, stdout: 'merged\n', stderr: '' }
   }
   return { runner, calls }
@@ -186,7 +194,7 @@ test('gate: --no-review 写入跳过审计并警告，退出码 0', () => {
   assert.equal(audit.policyVersion, PACKAGE_VERSION)
 })
 
-test('merge: 闸门通过后调用 gh pr merge 且固定 --squash', () => {
+test('merge: 闸门通过后调用 gh pr merge 且固定 --squash，随后清理现场', () => {
   const root = tmp()
   withRepo(root)
   const file = writeApprovedRecord(root)
@@ -198,10 +206,20 @@ test('merge: 闸门通过后调用 gh pr merge 且固定 --squash', () => {
     0,
   )
   assert.match(io.state.out, /已合并 PR #7（--squash）/)
-  assert.equal(calls.length, 1)
-  assert.equal(calls[0].command, 'gh')
-  assert.deepEqual(calls[0].args, ['pr', 'merge', '7', '--repo', 'owner/repo', '--squash'])
-  assert.ok(calls[0].args.includes('--squash'))
+
+  const merge = calls.filter((call) => call.command === 'gh' && call.args[1] === 'merge')
+  assert.equal(merge.length, 1)
+  assert.deepEqual(merge[0].args, ['pr', 'merge', '7', '--repo', 'owner/repo', '--squash'])
+  assert.ok(merge[0].args.includes('--squash'))
+
+  // 合并之后必须继续收尾：列 worktree → fetch → 快进 → 删本地分支
+  const gitArgs = calls.filter((call) => call.command === 'git').map((call) => call.args.slice(2))
+  assert.deepEqual(gitArgs, [
+    ['worktree', 'list', '--porcelain'],
+    ['fetch', '--prune', 'origin'],
+    ['merge', '--ff-only', 'origin/main'],
+    ['branch', '-d', '--', 'task/7'],
+  ])
 })
 
 test('merge: 闸门拒绝时不调用 gh，退出码 1', () => {

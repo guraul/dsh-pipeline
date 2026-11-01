@@ -3,7 +3,8 @@
  * dsh-pipeline CLI：参数解析与四个子命令的编排。
  *
  * 判定、读写、执行全部复用 lib/，本文件不复制任何业务规则：
- * gate / merge 共用 decideGate()，合并方式由 gh.prMerge 固定为 --squash。
+ * gate 走 decideGate()；merge 整条流程（闸门 → squash 合并 → 清理现场）交给
+ * lib/merge.mjs，合并方式由 gh.prMerge 固定为 --squash。
  *
  * 输出约定：面向人的信息走 stdout，错误与警告走 stderr，全部中文。
  * 退出码：0 通过 / 1 闸门拒绝 / 2 参数或环境错误。
@@ -14,9 +15,16 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { evaluateGate } from '../lib/gate.mjs'
-import { loadConfig } from '../lib/config.mjs'
-import { prMerge } from '../lib/gh.mjs'
-import { headSha as gitHeadSha } from '../lib/git.mjs'
+import { prMerge, prView } from '../lib/gh.mjs'
+import {
+  deleteBranch,
+  fetch as gitFetch,
+  headSha as gitHeadSha,
+  mergeFF,
+  worktreeList,
+  worktreeRemove,
+} from '../lib/git.mjs'
+import { runMerge as runMergeFlow } from '../lib/merge.mjs'
 import { NONCE_PATTERN, extractFindings, parseVerdict } from '../lib/review.mjs'
 import {
   MAX_ROUND,
@@ -39,7 +47,7 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
 
 子命令:
   gate       审核闸门检查
-  merge      闸门通过后合并 PR（固定 --squash）
+  merge      闸门通过后合并 PR（固定 --squash）并清理现场
   record     把审核响应落盘为记录
   status     查看审核记录概况
   task       任务生命周期（未实现）
@@ -298,34 +306,54 @@ function runGate(argv, deps, io) {
   return decision.code
 }
 
+/**
+ * merge 只负责参数解析与输出：闸门、合并、清理的顺序与失败语义都在 lib/merge.mjs。
+ * runner 在这里绑定到真实的 gh / git 封装上，lib 层保持与执行器无关。
+ */
 function runMerge(argv, deps, io) {
   const parsed = parseGateArgs(argv)
   if (parsed.error) return argError(io, 'merge', parsed.error)
 
-  const decision = decideGate({ ...parsed, runner: deps.runner })
-  emit(io, decision.lines)
-  if (decision.code !== 0) return decision.code
+  const runner = deps.runner
+  const result = runMergeFlow({
+    pr: parsed.pr,
+    root: parsed.root,
+    recordPath: parsed.record,
+    noReview: parsed.noReview,
+    reason: parsed.reason,
+    headSha: parsed.headSha,
+    deps: {
+      gh: {
+        prView: (pr, options = {}) => prView(pr, { ...options, runner }),
+        prMerge: (pr, options = {}) => prMerge(pr, { ...options, runner }),
+      },
+      git: {
+        headSha: (cwd) => gitHeadSha(cwd, { runner }),
+        worktreeList: (cwd) => worktreeList(cwd, { runner }),
+        worktreeRemove: (cwd, path) => worktreeRemove(cwd, path, { runner }),
+        fetch: (cwd, options = {}) => gitFetch(cwd, { ...options, runner }),
+        mergeFF: (cwd, options = {}) => mergeFF(cwd, { ...options, runner }),
+        deleteBranch: (cwd, name) => deleteBranch(cwd, name, { runner }),
+      },
+    },
+  })
 
-  let loaded
-  try {
-    loaded = loadConfig(parsed.root)
-  } catch (error) {
-    io.err(`merge: ${messageOf(error)}`)
-    return 2
-  }
-  const repo = loaded.config.repo
-  if (!nonEmpty(repo)) {
-    io.err(`merge: 未配置仓库标识（${join(parsed.root, '.dsh', 'pipeline.json')} 缺少 repo）`)
-    return 2
+  // 跳过审核是「留痕的例外」，警告走 stderr，与 gate 子命令一致
+  if (parsed.noReview && result.steps.some((step) => step.name === 'gate' && step.ok)) {
+    io.err(`警告: PR #${parsed.pr} 已跳过审核（原因: ${parsed.reason}）`)
   }
 
-  const result = prMerge(parsed.pr, { repo, runner: deps.runner })
-  if (!result.ok) {
-    io.err(`merge: 合并失败: ${result.error}`)
-    return 2
+  for (const step of result.steps) {
+    if (step.ok) io.out(`${step.name}: ${step.detail}`)
+    else io.err(`${step.name}: ${step.detail}`)
   }
-  io.out(`已合并 PR #${parsed.pr}（--squash）`)
-  return 0
+
+  if (result.ok) {
+    io.out(`已合并 PR #${parsed.pr}（--squash），现场已清理，main 已快进`)
+    return 0
+  }
+  io.err(`merge: 停在 ${String(result.step)} 步骤（${String(result.code)}）`)
+  return result.step === 'gate' ? 1 : 2
 }
 
 function readTextFile(file, label) {
