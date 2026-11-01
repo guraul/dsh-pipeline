@@ -3,7 +3,7 @@
  * dsh-pipeline CLI：参数解析与四个子命令的编排。
  *
  * 判定、读写、执行全部复用 lib/，本文件不复制任何业务规则：
- * gate 走 decideGate()；merge 整条流程（闸门 → squash 合并 → 清理现场）交给
+ * gate 走 decideGate()；merge 整条流程（闸门 → CI → squash 合并 → 清理现场）交给
  * lib/merge.mjs，合并方式由 gh.prMerge 固定为 --squash。
  *
  * 输出约定：面向人的信息走 stdout，错误与警告走 stderr，全部中文。
@@ -15,7 +15,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { evaluateGate } from '../lib/gate.mjs'
-import { prMerge, prView } from '../lib/gh.mjs'
+import { prChecks, prMerge, prView } from '../lib/gh.mjs'
 import {
   deleteBranch,
   fetch as gitFetch,
@@ -61,6 +61,11 @@ gate / merge 选项:
   --head-sha <sha>   指定 head 提交（缺省取 git HEAD）
   --no-review        跳过审核并写入跳过审计
   --reason <文本>    跳过审核的原因（必须与 --no-review 同用）
+
+merge 额外选项:
+  --check-only       只校验（闸门 + CI），不合并、不清理
+  --checks-file <f>  用文件内容代替 gh pr checks（形如 {"state":"success"}）
+  --force            CI 未过仍合并（闸门不受影响，仍强制生效）
 
 record 选项:
   --request <file>   审核请求 JSON
@@ -149,9 +154,11 @@ function parseRound(value) {
   return { value: round }
 }
 
-/** gate / merge 共用同一份参数校验。 */
-function parseGateArgs(argv) {
-  const parsed = parseArgs(argv, GATE_VALUE_FLAGS, GATE_BOOL_FLAGS)
+/** gate / merge 共用同一份参数校验；merge 多三个开关（check-only / checks-file / force）。 */
+function parseGateArgs(argv, { mergeOnly = false } = {}) {
+  const valueFlags = mergeOnly ? MERGE_VALUE_FLAGS : GATE_VALUE_FLAGS
+  const boolFlags = mergeOnly ? MERGE_BOOL_FLAGS : GATE_BOOL_FLAGS
+  const parsed = parseArgs(argv, valueFlags, boolFlags)
   if (parsed.error) return { error: parsed.error }
   const options = parsed.options
 
@@ -178,13 +185,25 @@ function parseGateArgs(argv) {
     return { error: `--head-sha 必须是 40 位小写十六进制: ${headSha}` }
   }
 
-  return {
+  const common = {
     pr: pr.value,
     root: root.value,
     record: options.record,
     noReview: options['no-review'] === true,
     reason: options.reason,
     headSha,
+  }
+  if (!mergeOnly) return common
+
+  if (options['checks-file'] !== undefined && !nonEmpty(options['checks-file'])) {
+    return { error: '--checks-file 必须是非空文件路径' }
+  }
+
+  return {
+    ...common,
+    checkOnly: options['check-only'] === true,
+    checksFile: options['checks-file'],
+    force: options.force === true,
   }
 }
 
@@ -281,6 +300,8 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
 
 const GATE_VALUE_FLAGS = new Set(['pr', 'root', 'record', 'reason', 'head-sha'])
 const GATE_BOOL_FLAGS = new Set(['no-review'])
+const MERGE_VALUE_FLAGS = new Set([...GATE_VALUE_FLAGS, 'checks-file'])
+const MERGE_BOOL_FLAGS = new Set([...GATE_BOOL_FLAGS, 'check-only', 'force'])
 const RECORD_VALUE_FLAGS = new Set(['request', 'response', 'round'])
 const RECORD_BOOL_FLAGS = new Set()
 const STATUS_VALUE_FLAGS = new Set(['root'])
@@ -311,7 +332,7 @@ function runGate(argv, deps, io) {
  * runner 在这里绑定到真实的 gh / git 封装上，lib 层保持与执行器无关。
  */
 function runMerge(argv, deps, io) {
-  const parsed = parseGateArgs(argv)
+  const parsed = parseGateArgs(argv, { mergeOnly: true })
   if (parsed.error) return argError(io, 'merge', parsed.error)
 
   const runner = deps.runner
@@ -322,10 +343,14 @@ function runMerge(argv, deps, io) {
     noReview: parsed.noReview,
     reason: parsed.reason,
     headSha: parsed.headSha,
+    checkOnly: parsed.checkOnly,
+    checksFile: parsed.checksFile,
+    force: parsed.force,
     deps: {
       gh: {
         prView: (pr, options = {}) => prView(pr, { ...options, runner }),
         prMerge: (pr, options = {}) => prMerge(pr, { ...options, runner }),
+        prChecks: (pr, options = {}) => prChecks(pr, { ...options, runner }),
       },
       git: {
         headSha: (cwd) => gitHeadSha(cwd, { runner }),
@@ -349,11 +374,15 @@ function runMerge(argv, deps, io) {
   }
 
   if (result.ok) {
+    if (result.checkOnly === true) {
+      io.out('审核闸门通过（仅校验，未合并）')
+      return 0
+    }
     io.out(`已合并 PR #${parsed.pr}（--squash），现场已清理，main 已快进`)
     return 0
   }
   io.err(`merge: 停在 ${String(result.step)} 步骤（${String(result.code)}）`)
-  return result.step === 'gate' ? 1 : 2
+  return result.step === 'gate' || result.step === 'ci' ? 1 : 2
 }
 
 function readTextFile(file, label) {

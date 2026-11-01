@@ -56,8 +56,8 @@ function fail(code, error) {
   return { ok: false, code, data: null, error }
 }
 
-/** 假 gh：记录调用顺序，默认 prView 返回 OPEN 的 PR。 */
-function fakeGh({ state = 'OPEN', branch = BRANCH, view, merge } = {}) {
+/** 假 gh：记录调用顺序，默认 prView 返回 OPEN 的 PR，prChecks 返回全部通过。 */
+function fakeGh({ state = 'OPEN', branch = BRANCH, view, merge, checks } = {}) {
   const calls = []
   return {
     calls,
@@ -66,6 +66,11 @@ function fakeGh({ state = 'OPEN', branch = BRANCH, view, merge } = {}) {
         calls.push({ op: 'prView', pr, options })
         if (typeof view === 'function') return view(pr, options)
         return ok({ headRefName: branch, state })
+      },
+      prChecks: (pr, options) => {
+        calls.push({ op: 'prChecks', pr, options })
+        if (typeof checks === 'function') return checks(pr, options)
+        return ok([{ name: 'test', state: 'SUCCESS', bucket: 'pass' }])
       },
       prMerge: (pr, options) => {
         calls.push({ op: 'prMerge', pr, options })
@@ -214,15 +219,16 @@ test('合并成功：按 worktree → fetch → 快进 → 删本地分支的顺
   assert.equal(result.ok, true, JSON.stringify(result.steps, null, 2))
   assert.deepEqual(
     result.steps.map((step) => step.name),
-    ['repo', 'head', 'gate', 'pr', 'merge', 'worktree', 'fetch', 'ff', 'branch'],
+    ['repo', 'head', 'gate', 'pr', 'ci', 'merge', 'worktree', 'fetch', 'ff', 'branch'],
   )
   assert.ok(result.steps.every((step) => step.ok))
 
   assert.deepEqual(
     gh.calls.map((call) => call.op),
-    ['prView', 'prMerge'],
+    ['prView', 'prChecks', 'prMerge'],
+    '定位 PR → CI → 合并，全部发生在闸门之后',
   )
-  assert.deepEqual(gh.calls[1].options, { repo: 'owner/repo', squash: true })
+  assert.deepEqual(gh.calls[2].options, { repo: 'owner/repo', squash: true })
 
   assert.deepEqual(git.ops(), ['worktreeList', 'worktreeRemove', 'fetch', 'mergeFF', 'deleteBranch'])
 
@@ -264,11 +270,11 @@ test('worktree 移除失败：仍报告已完成的步骤，且不再继续清�
 
   assert.deepEqual(
     result.steps.map((step) => step.name),
-    ['repo', 'head', 'gate', 'pr', 'merge', 'worktree'],
+    ['repo', 'head', 'gate', 'pr', 'ci', 'merge', 'worktree'],
   )
   assert.deepEqual(
     result.steps.map((step) => step.ok),
-    [true, true, true, true, true, false],
+    [true, true, true, true, true, true, false],
   )
   assert.equal(gh.calls.filter((call) => call.op === 'prMerge').length, 1, '合并已成功，记录不能丢')
   assert.deepEqual(git.ops(), ['worktreeList', 'worktreeRemove'], '失败后不再 fetch / 快进 / 删分支')
@@ -466,4 +472,174 @@ test('未指定 headSha 时用 git.headSha 取当前提交', () => {
   assert.equal(git.ops()[0], 'headSha')
   assert.equal(git.calls[0].cwd, root)
   assert.match(result.steps.find((step) => step.name === 'head').detail, new RegExp(SHA))
+})
+
+// —— 三个开关：--check-only / --checks-file / --force ——
+
+/** 造一份 checks 文件：内容形如 {"state":"success"}。 */
+function checksFileWith(state) {
+  const file = join(tmp(), 'checks.json')
+  writeFileSync(file, JSON.stringify({ state }), 'utf8')
+  return file
+}
+
+test('--check-only：只校验，不调用 prMerge、不做任何 git 操作', () => {
+  const { root, file } = approvedRoot()
+  const gh = fakeGh()
+  const git = fakeGit()
+
+  const result = runMerge({
+    pr: PR,
+    root,
+    recordPath: file,
+    headSha: SHA,
+    checkOnly: true,
+    deps: depsOf(gh, git),
+  })
+
+  assert.equal(result.ok, true, JSON.stringify(result.steps, null, 2))
+  assert.equal(result.checkOnly, true)
+  assert.deepEqual(result.steps.map((step) => step.name), ['repo', 'head', 'gate', 'pr', 'ci'])
+  assert.equal(gh.calls.filter((call) => call.op === 'prMerge').length, 0, '演练模式绝不合并')
+  assert.deepEqual(gh.calls.map((call) => call.op), ['prView', 'prChecks'], '只读：定位 PR 与读 CI')
+  assert.deepEqual(git.ops(), [], '不清理现场')
+})
+
+test('--checks-file: state=success 放行，且不调用 gh pr checks', () => {
+  const { root, file } = approvedRoot()
+  const gh = fakeGh()
+  const git = fakeGit()
+
+  const result = runMerge({
+    pr: PR,
+    root,
+    recordPath: file,
+    headSha: SHA,
+    checksFile: checksFileWith('success'),
+    deps: depsOf(gh, git),
+  })
+
+  assert.equal(result.ok, true, JSON.stringify(result.steps, null, 2))
+  assert.equal(gh.calls.filter((call) => call.op === 'prChecks').length, 0, '有 checks-file 时不该调 gh')
+  assert.equal(gh.calls.filter((call) => call.op === 'prMerge').length, 1)
+  const ci = result.steps.find((step) => step.name === 'ci')
+  assert.equal(ci.ok, true)
+  assert.equal(ci.skipped, undefined, '通过不等于跳过')
+  assert.match(ci.detail, /通过/)
+  assert.match(ci.detail, /checks-file/)
+  assert.deepEqual(git.ops(), ['worktreeList', 'worktreeRemove', 'fetch', 'mergeFF', 'deleteBranch'])
+})
+
+test('--checks-file: state=failure 拒绝，停在 ci，零合并零清理', () => {
+  const { root, file } = approvedRoot()
+  const gh = fakeGh()
+  const git = fakeGit()
+
+  const result = runMerge({
+    pr: PR,
+    root,
+    recordPath: file,
+    headSha: SHA,
+    checksFile: checksFileWith('failure'),
+    deps: depsOf(gh, git),
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.step, 'ci')
+  assert.equal(result.code, 'E_CI')
+  assert.match(result.error, /failure/)
+  assert.deepEqual(result.steps.map((step) => step.name), ['repo', 'head', 'gate', 'pr', 'ci'])
+  assert.equal(result.steps.at(-1).ok, false)
+  assert.equal(gh.calls.filter((call) => call.op === 'prMerge').length, 0, 'CI 未过不许合并')
+  assert.equal(git.calls.length, 0, 'CI 未过不许清理')
+})
+
+test('state=failure + --force：继续合并，ci 步骤标注为跳过（不是通过）', () => {
+  const { root, file } = approvedRoot()
+  const gh = fakeGh()
+  const git = fakeGit()
+
+  const result = runMerge({
+    pr: PR,
+    root,
+    recordPath: file,
+    headSha: SHA,
+    checksFile: checksFileWith('failure'),
+    force: true,
+    deps: depsOf(gh, git),
+  })
+
+  assert.equal(result.ok, true, JSON.stringify(result.steps, null, 2))
+  assert.equal(gh.calls.filter((call) => call.op === 'prMerge').length, 1)
+  const ci = result.steps.find((step) => step.name === 'ci')
+  assert.equal(ci.ok, true)
+  assert.equal(ci.skipped, true, 'force 时 CI 是「跳过」，必须能被看出来')
+  assert.match(ci.detail, /--force/)
+  assert.match(ci.detail, /跳过/)
+  assert.equal(gh.calls.filter((call) => call.op === 'prChecks').length, 0, 'force 时连 gh 都不发')
+  assert.deepEqual(git.ops(), ['worktreeList', 'worktreeRemove', 'fetch', 'mergeFF', 'deleteBranch'])
+})
+
+test('--force 不能绕过闸门：REJECT 记录 + force 仍停在 gate，零 gh / 零 git', () => {
+  const { root, file } = approvedRoot({ verdict: 'REJECT' })
+  const gh = fakeGh()
+  const git = fakeGit()
+
+  const result = runMerge({
+    pr: PR,
+    root,
+    recordPath: file,
+    headSha: SHA,
+    force: true,
+    checksFile: checksFileWith('success'),
+    deps: depsOf(gh, git),
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.step, 'gate')
+  assert.equal(result.code, 'E_VERDICT')
+  assert.match(result.error, /REJECT/)
+  assert.deepEqual(result.steps.map((step) => step.name), ['repo', 'head', 'gate'])
+  assert.equal(gh.calls.length, 0, 'force 只作用于 CI，闸门未过时一个 gh 命令都不发')
+  assert.equal(git.calls.length, 0)
+})
+
+test('gh pr checks 有 pending：拒绝合并（E_CI），零清理', () => {
+  const { root, file } = approvedRoot()
+  const gh = fakeGh({
+    checks: () => ok([{ name: 'build', state: 'IN_PROGRESS', bucket: 'pending' }]),
+  })
+  const git = fakeGit()
+
+  const result = runMerge({ pr: PR, root, recordPath: file, headSha: SHA, deps: depsOf(gh, git) })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.step, 'ci')
+  assert.equal(result.code, 'E_CI')
+  assert.match(result.error, /build/)
+  assert.equal(gh.calls.filter((call) => call.op === 'prMerge').length, 0)
+  assert.equal(git.calls.length, 0)
+})
+
+test('--checks-file 内容不是合法 JSON：按 E_CI 拒绝，不静默放行', () => {
+  const { root, file } = approvedRoot()
+  const gh = fakeGh()
+  const git = fakeGit()
+  const bad = join(tmp(), 'checks.json')
+  writeFileSync(bad, 'not json', 'utf8')
+
+  const result = runMerge({
+    pr: PR,
+    root,
+    recordPath: file,
+    headSha: SHA,
+    checksFile: bad,
+    deps: depsOf(gh, git),
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.step, 'ci')
+  assert.equal(result.code, 'E_CI')
+  assert.match(result.error, /不是合法 JSON/)
+  assert.equal(gh.calls.filter((call) => call.op === 'prMerge').length, 0)
 })
