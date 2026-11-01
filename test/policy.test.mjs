@@ -120,3 +120,12 @@ test('纯函数：重复调用一致且不改动输入', () => {
   assert.ok(Object.isFrozen(patterns))
   assert.ok(Object.isFrozen(DEFAULT_HIGH_RISK))
 })
+
+test('默认清单含密钥与自指保护（reviewer 指出的闸门削弱）', async () => {
+  const { mergePolicy } = await import('../lib/policy.mjs')
+  const p = mergePolicy()
+  for (const file of ['.env.local', 'certs/a.pem', 'certs/a.key', 'certs/a.p12', 'scripts/deploy.sh', 'scripts/rollback.sh', '.dsh/pipeline.json']) {
+    const result = p.hit([file], 1)
+    assert.equal(result.hit, true, `${file} 应命中高风险`)
+  }
+})
