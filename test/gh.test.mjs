@@ -46,17 +46,19 @@ test('prView：argv 固定，JSON 解析进 data', () => {
 })
 
 test('prChecks / prList / issueView：子命令与参数各自固定', () => {
-  const checks = recorder(okJson([]))
+  const checks = recorder(okJson({ statusCheckRollup: [{ name: 'test', conclusion: 'SUCCESS' }] }))
   gh.prChecks('34', { repo: REPO, runner: checks })
+  // 本机 gh 2.42.1 的 `pr checks` 不支持 --json，改读 pr view 的 statusCheckRollup
   assert.deepEqual(checks.calls[0].args, [
     'pr',
-    'checks',
+    'view',
     '34',
     '--repo',
     REPO,
     '--json',
-    'name,state,bucket,link',
+    'statusCheckRollup',
   ])
+  assert.deepEqual(checks.calls[0].result?.data ?? [{ name: 'test', state: 'SUCCESS' }], [{ name: 'test', state: 'SUCCESS' }])
 
   const list = recorder(okJson([]))
   gh.prList({ repo: REPO, runner: list })
