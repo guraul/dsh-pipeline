@@ -38,7 +38,7 @@ const FAKE_GH = `#!/bin/sh
 printf 'gh %s\\n' "$*" >> "$DSH_CONTRACT_LOG"
 case "$*" in
   "pr view "*)
-    printf '{"headRefName":"task/42","state":"OPEN"}\\n' ;;
+    printf '{"headRefName":"task/42","state":"OPEN","headRefOid":"%s"}\\n' "$DSH_CONTRACT_SHA" ;;
 esac
 exit 0
 `
@@ -149,6 +149,11 @@ function runMerge(fixture, extraArgs, recordFile) {
 }
 
 /** 假命令日志里的 gh 调用（不含 git）。 */
+/** 只关心写操作：读 PR 元信息是闸门前必须发生的只读调用。 */
+function mutations(fixture) {
+  return ghCalls(fixture).filter((line) => /\bpr (merge|review|comment|close|edit)\b/.test(line))
+}
+
 function ghCalls(fixture) {
   return readFileSync(fixture.logFile, 'utf8')
     .split('\n')
@@ -180,22 +185,22 @@ test('合格记录：退出 0，且真实发出 gh pr merge --squash', (t) => {
   assertMergedOnce(fixture)
 })
 
-test('记录判定为 REJECT：退出 1，且没有任何 gh 调用', (t) => {
+test('记录判定为 REJECT：退出 1，且没有任何写操作', (t) => {
   const fixture = cleanup(t, makeFixture({ record: recordFor({ verdict: 'REJECT' }) }))
   const result = runMerge(fixture, [], recordPath(fixture, SHA))
 
   assert.equal(result.status, 1, `stderr: ${result.stderr}`)
   assert.match(result.stderr, /REJECT/)
-  assert.deepEqual(ghCalls(fixture), [])
+  assert.deepEqual(mutations(fixture), [], '闸门不过时不允许任何写操作')
 })
 
-test('无审核记录且未声明跳过：退出 1，且没有任何 gh 调用', (t) => {
+test('无审核记录且未声明跳过：退出 1，且没有任何写操作', (t) => {
   const fixture = cleanup(t, makeFixture())
   const result = runMerge(fixture, [])
 
   assert.equal(result.status, 1, `stderr: ${result.stderr}`)
   assert.match(result.stderr, /未提供审核记录/)
-  assert.deepEqual(ghCalls(fixture), [])
+  assert.deepEqual(mutations(fixture), [], '闸门不过时不允许任何写操作')
 })
 
 test('--no-review：退出 0，跳审审计落盘且照常合并', (t) => {
@@ -213,11 +218,11 @@ test('--no-review：退出 0，跳审审计落盘且照常合并', (t) => {
   assert.equal(JSON.parse(readFileSync(join(skipsDir, audits[0]), 'utf8')).reason, '紧急热修')
 })
 
-test('记录 head 与当前 head 不符：退出 1，且没有任何 gh 调用', (t) => {
+test('记录 head 与 PR head 不符：退出 1，且没有任何写操作', (t) => {
   const fixture = cleanup(t, makeFixture({ record: recordFor({ head_sha: OTHER_SHA }) }))
   const result = runMerge(fixture, [], recordPath(fixture, OTHER_SHA))
 
   assert.equal(result.status, 1, `stderr: ${result.stderr}`)
   assert.match(result.stderr, /判定已作废/)
-  assert.deepEqual(ghCalls(fixture), [])
+  assert.deepEqual(mutations(fixture), [], '闸门不过时不允许任何写操作')
 })

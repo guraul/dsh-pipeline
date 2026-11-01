@@ -65,7 +65,7 @@ function fakeGh({ state = 'OPEN', branch = BRANCH, view, merge, checks } = {}) {
       prView: (pr, options) => {
         calls.push({ op: 'prView', pr, options })
         if (typeof view === 'function') return view(pr, options)
-        return ok({ headRefName: branch, state })
+        return ok({ headRefName: branch, state, headRefOid: SHA })
       },
       prChecks: (pr, options) => {
         calls.push({ op: 'prChecks', pr, options })
@@ -461,16 +461,17 @@ test('PR 已 CLOSED 且未合并：停在 pr 步骤，不清理', () => {
   assert.equal(git.calls.length, 0)
 })
 
-test('未指定 headSha 时用 git.headSha 取当前提交', () => {
+test('未指定 headSha 时取 PR 的 head（不是本机 HEAD）', () => {
   const { root, file } = approvedRoot()
-  const gh = fakeGh()
+  const fake = fakeGh()
   const git = fakeGit()
 
-  const result = runMerge({ pr: PR, root, recordPath: file, deps: depsOf(gh, git) })
+  const result = runMerge({ pr: PR, root, recordPath: file, deps: depsOf(fake, git) })
 
-  assert.equal(result.ok, true)
-  assert.equal(git.ops()[0], 'headSha')
-  assert.equal(git.calls[0].cwd, root)
+  assert.equal(result.ok, true, JSON.stringify(result.steps))
+  // head 必须来自 PR，而不是本机 HEAD：合并通常从主工作区发起，本地 HEAD 是 main
+  assert.equal(fake.calls.some((c) => c.op === 'prView'), true, '应向 gh 要 PR head')
+  assert.equal(git.ops().includes('headSha'), false, '不应拿本机 HEAD 当 PR head')
   assert.match(result.steps.find((step) => step.name === 'head').detail, new RegExp(SHA))
 })
 
