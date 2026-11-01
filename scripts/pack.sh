@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+#
+# 打包脚本（ADR-0003 决策 4 的「包自身门禁」）：
+#   先跑 node --test，测试不过就 exit 1，不产出任何 tarball。
+#   测试通过才 pnpm pack 到 dist/，并把产物复制一份为 dist/latest.tgz。
+#
+# 兼容 macOS 自带的 bash 3.2：不使用 ${VAR:-默认值}、mapfile、关联数组。
+# 已存在的同名文件直接覆盖；dist/ 被 .gitignore 忽略，本脚本不做任何 git 操作。
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+DIST="dist"
+TEST_LOG="$(mktemp -t dsh-pack-test)"
+
+cleanup() {
+  rm -f "$TEST_LOG"
+}
+trap cleanup EXIT
+
+version="$(node -e "process.stdout.write(JSON.parse(require('node:fs').readFileSync('package.json','utf8')).version)")"
+
+echo "==> 门禁: node --test"
+set +e
+node --test >"$TEST_LOG" 2>&1
+test_status=$?
+set -e
+cat "$TEST_LOG"
+
+if [ "$test_status" -ne 0 ]; then
+  echo "打包中止: 测试失败（node --test 退出码 ${test_status}），未生成 tarball" >&2
+  exit 1
+fi
+
+# 汇总行随 reporter 而变（spec 用 "ℹ tests 5"，tap 用 "# tests 5"），两种都认。
+summary() {
+  grep -E "^[^ ]* $1 [0-9][0-9]*\$" "$TEST_LOG" | tail -n 1 | awk '{print $3}'
+}
+
+tests="$(summary tests)"
+pass="$(summary pass)"
+fail="$(summary fail)"
+
+if [ -z "$tests" ]; then
+  tests="未知"
+fi
+if [ -z "$pass" ]; then
+  pass="未知"
+fi
+if [ -z "$fail" ]; then
+  fail="未知"
+fi
+
+mkdir -p "$DIST"
+
+echo "==> 打包: pnpm pack --pack-destination ${DIST}"
+pack_output="$(pnpm pack --pack-destination "$DIST")"
+printf '%s\n' "$pack_output" | tail -n 1
+tarball="$(printf '%s\n' "$pack_output" | tail -n 1)"
+
+# pnpm 的输出格式可能因版本而异，取不到就回退到 dist/ 下最新的编号包。
+if [ ! -f "$tarball" ]; then
+  tarball=""
+  for candidate in "$DIST"/*-*.tgz; do
+    if [ -f "$candidate" ]; then
+      tarball="$candidate"
+    fi
+  done
+fi
+
+if [ -z "$tarball" ] || [ ! -f "$tarball" ]; then
+  echo "打包失败: 未找到 pnpm pack 产物" >&2
+  exit 1
+fi
+
+cp -f "$tarball" "$DIST/latest.tgz"
+
+echo ""
+echo "版本: ${version}"
+echo "产物: ${tarball}"
+echo "最新: ${DIST}/latest.tgz"
+echo "测试: ${tests} 条，通过 ${pass}，失败 ${fail}"
