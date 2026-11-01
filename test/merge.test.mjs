@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { FF_REF, runMerge } from '../lib/merge.mjs'
+import { deleteBranch as realDeleteBranch } from '../lib/git.mjs'
 import { PACKAGE_VERSION, SCHEMA_VERSION, reviewsDir, writeRecord } from '../lib/record.mjs'
 
 const PR = 7
@@ -99,8 +100,8 @@ function fakeGit({ responses = {}, worktrees = DEFAULT_WORKTREES, head = SHA } =
       worktreeRemove: (cwd, path) => respond('worktreeRemove', { cwd, path }, ok()),
       fetch: (cwd, options) => respond('fetch', { cwd, options }, ok()),
       mergeFF: (cwd, options) => respond('mergeFF', { cwd, options }, ok('Fast-forward')),
-      deleteBranch: (cwd, name) =>
-        respond('deleteBranch', { cwd, name }, ok(`Deleted branch ${name}`)),
+      deleteBranch: (cwd, name, options) =>
+        respond('deleteBranch', { cwd, name, options }, ok(`Deleted branch ${name}`)),
     },
   }
 }
@@ -234,6 +235,7 @@ test('合并成功：按 worktree → fetch → 快进 → 删本地分支的顺
   assert.equal(advanced.options.ref, FF_REF)
   assert.equal(deleted.name, BRANCH, '删除的正是 PR 的 head 分支')
   assert.equal(deleted.cwd, MAIN_WT)
+  assert.deepEqual(deleted.options, { force: true }, 'squash 合并后必须走 -D（force）')
 })
 
 test('worktree 移除失败：仍报告已完成的步骤，且不再继续清理', () => {
@@ -343,7 +345,7 @@ test('本地分支已不存在：按跳过处理，不算失败', () => {
   assert.match(step.detail, /已不存在/)
 })
 
-test('squash 后 git branch -d 拒绝：报 E_BRANCH_UNMERGED，不谎报成功', () => {
+test('强删仍被拒绝（不该发生）：报 E_BRANCH_UNMERGED，不谎报成功', () => {
   const { root, file } = approvedRoot()
   const gh = fakeGh()
   const git = fakeGit({
@@ -368,6 +370,11 @@ test('squash 后 git branch -d 拒绝：报 E_BRANCH_UNMERGED，不谎报成功'
   assert.equal(result.step, 'branch')
   assert.equal(result.code, 'E_BRANCH_UNMERGED')
   assert.match(result.error, /未删除/)
+  assert.deepEqual(
+    git.calls.find((call) => call.op === 'deleteBranch').options,
+    { force: true },
+    '兜底路径本身走的也是 -D',
+  )
   assert.equal(result.steps.find((step) => step.name === 'ff').ok, true, '前面的步骤记录仍在')
 })
 
@@ -388,6 +395,44 @@ test('PR 已是 MERGED：跳过合并，仍完成清理（幂等重跑）', () =
   assert.equal(gh.calls.filter((call) => call.op === 'prMerge').length, 0)
   assert.match(result.steps.find((step) => step.name === 'merge').detail, /已是 MERGED/)
   assert.deepEqual(git.ops(), ['worktreeList', 'worktreeRemove', 'fetch', 'mergeFF', 'deleteBranch'])
+  assert.deepEqual(
+    git.calls.find((call) => call.op === 'deleteBranch').options,
+    { force: true },
+    '幂等重跑同样走 -D',
+  )
+})
+
+test('删分支接真实实现时，merge 发出的 argv 是 branch -D --', () => {
+  const { root, file } = approvedRoot()
+  const gh = fakeGh()
+  const fake = fakeGit()
+  const calls = []
+  const runner = (command, args) => {
+    calls.push({ command, args: [...args] })
+    return { status: 0, stdout: `Deleted branch ${BRANCH}\n`, stderr: '' }
+  }
+
+  const result = runMerge({
+    pr: PR,
+    root,
+    recordPath: file,
+    headSha: SHA,
+    deps: {
+      gh: gh.gh,
+      git: {
+        ...fake.git,
+        deleteBranch: (cwd, name, options) => realDeleteBranch(cwd, name, { ...options, runner }),
+      },
+      now: () => NOW,
+    },
+  })
+
+  assert.equal(result.ok, true, JSON.stringify(result.steps, null, 2))
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0], {
+    command: 'git',
+    args: ['-C', MAIN_WT, 'branch', '-D', '--', BRANCH],
+  })
 })
 
 test('PR 已 CLOSED 且未合并：停在 pr 步骤，不清理', () => {

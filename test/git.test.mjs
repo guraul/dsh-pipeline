@@ -119,6 +119,34 @@ test('worktreeRemove / deleteBranch：路径与分支名以 -- 隔离', () => {
   assert.ok(!branch.calls[0].args.includes('-D'), '未合并的分支不应被强删')
 })
 
+test('deleteBranch：缺省仍是 -d，只有显式 force:true 才用 -D', () => {
+  const plain = recorder({ status: 0, stdout: '', stderr: '' })
+  git.deleteBranch(CWD, 'feat/x', { runner: plain })
+  assert.deepEqual(plain.calls[0].args, ['-C', CWD, 'branch', '-d', '--', 'feat/x'])
+
+  // 显式传 force 的假值也不应升级成强删
+  for (const force of [false, 0, 'yes', undefined, null]) {
+    const runner = recorder({ status: 0, stdout: '', stderr: '' })
+    git.deleteBranch(CWD, 'feat/x', { force, runner })
+    assert.deepEqual(runner.calls[0].args, ['-C', CWD, 'branch', '-d', '--', 'feat/x'], `force=${String(force)}`)
+  }
+
+  const forced = recorder({ status: 0, stdout: 'Deleted branch feat/x\n', stderr: '' })
+  const result = git.deleteBranch(CWD, 'feat/x', { force: true, runner: forced })
+  assert.deepEqual(forced.calls[0].args, ['-C', CWD, 'branch', '-D', '--', 'feat/x'])
+  assert.equal(result.ok, true)
+})
+
+test('deleteBranch：分支名校验不因 force 放宽', () => {
+  const runner = recorder({ status: 0, stdout: '', stderr: '' })
+  for (const name of [undefined, '', '-x', '--force', 'a..b', 'a b']) {
+    const result = git.deleteBranch(CWD, name, { force: true, runner })
+    assert.equal(result.ok, false, `name=${String(name)}`)
+    assert.equal(result.code, 'E_INPUT')
+  }
+  assert.equal(runner.calls.length, 0)
+})
+
 test('失败时返回 code 与 stderr 末两行，不抛异常', () => {
   const runner = recorder({
     status: 128,
