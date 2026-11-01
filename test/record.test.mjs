@@ -144,3 +144,22 @@ test('跳过审计落到 <dir>/skips/<stamp>-<pr>.json 并带 policyVersion', ()
   assert.throws(() => writeSkipAudit(dir, { pr: 0, reason: 'x', now }), code('E_RECORD'))
   assert.throws(() => writeSkipAudit(dir, { pr: 12, reason: '', now }), code('E_RECORD'))
 })
+
+test('记录可携带 policy（否则 gate 的高风险判定是死代码）', async () => {
+  const { validateRecord, SCHEMA_VERSION } = await import('../lib/record.mjs')
+  const v = (await import('../package.json', { with: { type: 'json' } })).default.version
+  const result = validateRecord({
+    schemaVersion: SCHEMA_VERSION,
+    policyVersion: v,
+    pr: 1,
+    round: 1,
+    verdict: 'APPROVE',
+    head_sha: 'a'.repeat(40),
+    findings: [],
+    evidence: ['x:1'],
+    policy: { hit: true, reasons: ['scripts/pipeline/x'] },
+    form: 'cli',
+    model: 'codebuddy/glm-5.3-flash',
+  })
+  assert.equal(result.ok, true, JSON.stringify(result.errors ?? result))
+})
