@@ -1,17 +1,36 @@
 #!/usr/bin/env node
 /**
- * dsh-pipeline CLI 骨架。
+ * dsh-pipeline CLI：参数解析与四个子命令的编排。
  *
- * 只做参数分发：--help / --version 可用，子命令一律「未实现」并 exit 2。
- * 本文件不包含任何业务判定逻辑，也不引入任何依赖。
+ * 判定、读写、执行全部复用 lib/，本文件不复制任何业务规则：
+ * gate / merge 共用 decideGate()，合并方式由 gh.prMerge 固定为 --squash。
+ *
+ * 输出约定：面向人的信息走 stdout，错误与警告走 stderr，全部中文。
+ * 退出码：0 通过 / 1 闸门拒绝 / 2 参数或环境错误。
+ * runner 可注入，测试用假 runner 断言实际发出的命令，不碰真实 gh/git。
  */
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { evaluateGate } from '../lib/gate.mjs'
+import { loadConfig } from '../lib/config.mjs'
+import { prMerge } from '../lib/gh.mjs'
+import { headSha as gitHeadSha } from '../lib/git.mjs'
+import { NONCE_PATTERN, extractFindings, parseVerdict } from '../lib/review.mjs'
+import {
+  MAX_ROUND,
+  SHA_PATTERN,
+  readRecord,
+  reviewsDir,
+  writeRecord,
+  writeSkipAudit,
+} from '../lib/record.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8'))
 
+const IMPLEMENTED = new Set(['gate', 'merge', 'record', 'status'])
 const SUBCOMMANDS = ['task', 'prepare', 'pr', 'merge', 'gate', 'record', 'status']
 
 const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单一实现
@@ -19,41 +38,499 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
 用法: dsh-pipeline <子命令> [选项]
 
 子命令:
-  task       任务生命周期
-  prepare    准备交付
-  pr         创建/更新 PR
-  merge      合并
-  gate       门禁检查
-  record     记录
-  status     查看状态
+  gate       审核闸门检查
+  merge      闸门通过后合并 PR（固定 --squash）
+  record     把审核响应落盘为记录
+  status     查看审核记录概况
+  task       任务生命周期（未实现）
+  prepare    准备交付（未实现）
+  pr         创建/更新 PR（未实现）
 
-选项:
+gate / merge 选项:
+  --pr <n>           PR 编号（必填）
+  --root <dir>       仓库根目录（必填）
+  --record <file>    审核记录文件
+  --head-sha <sha>   指定 head 提交（缺省取 git HEAD）
+  --no-review        跳过审核并写入跳过审计
+  --reason <文本>    跳过审核的原因（必须与 --no-review 同用）
+
+record 选项:
+  --request <file>   审核请求 JSON
+  --response <file>  reviewer 响应文本
+  --round <n>        审核轮次（1..${MAX_ROUND}，默认 1）
+  记录写入当前工作目录的 .dsh-web/reviews
+
+status 选项:
+  --root <dir>       仓库根目录（必填）
+
+全局选项:
   -h, --help     显示帮助
   -v, --version  显示版本
 
-当前版本仅为骨架，所有子命令尚未实现。`
+退出码: 0 通过 / 1 闸门拒绝 / 2 参数或环境错误`
 
-const [first] = process.argv.slice(2)
-
-if (first === '-h' || first === '--help') {
-  process.stdout.write(`${HELP}\n`)
-  process.exit(0)
+function messageOf(error) {
+  return error instanceof Error ? error.message : String(error)
 }
 
-if (first === '-v' || first === '--version') {
-  process.stdout.write(`${pkg.version}\n`)
-  process.exit(0)
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-if (first === undefined) {
-  process.stdout.write(`${HELP}\n`)
-  process.exit(0)
+function nonEmpty(value) {
+  return typeof value === 'string' && value.trim().length > 0
 }
 
-if (SUBCOMMANDS.includes(first)) {
-  process.stderr.write(`dsh-pipeline ${first}: 未实现\n`)
-  process.exit(2)
+/**
+ * 极简参数解析：只接受 --name value 与 --name=value。
+ * 布尔参数不取值；重复参数、未知参数一律报错，不做猜测。
+ */
+function parseArgs(argv, valueFlags, booleanFlags) {
+  const options = {}
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i]
+    if (!arg.startsWith('--')) return { error: `无法识别的参数: ${arg}` }
+    const eq = arg.indexOf('=')
+    const name = eq === -1 ? arg.slice(2) : arg.slice(2, eq)
+
+    if (booleanFlags.has(name)) {
+      if (eq !== -1) return { error: `--${name} 不接受取值` }
+      if (options[name] !== undefined) return { error: `重复参数: --${name}` }
+      options[name] = true
+      continue
+    }
+
+    if (valueFlags.has(name)) {
+      if (options[name] !== undefined) return { error: `重复参数: --${name}` }
+      if (eq !== -1) {
+        options[name] = arg.slice(eq + 1)
+        continue
+      }
+      const next = argv[i + 1]
+      if (next === undefined || next.startsWith('--')) return { error: `--${name} 缺少取值` }
+      options[name] = next
+      i += 1
+      continue
+    }
+
+    return { error: `未知选项: --${name}` }
+  }
+  return { options }
 }
 
-process.stderr.write(`dsh-pipeline: 未知子命令 "${first}"\n\n${HELP}\n`)
-process.exit(2)
+function parsePr(value) {
+  if (value === undefined) return { error: '缺少必填参数 --pr' }
+  if (!/^[1-9][0-9]*$/.test(value)) return { error: `--pr 必须是正整数: ${value}` }
+  return { value: Number(value) }
+}
+
+function requireRoot(value) {
+  if (!nonEmpty(value)) return { error: '缺少必填参数 --root' }
+  return { value }
+}
+
+function parseRound(value) {
+  if (value === undefined) return { value: 1 }
+  if (!/^[1-9][0-9]*$/.test(value)) {
+    return { error: `--round 必须是 1..${MAX_ROUND} 的整数: ${value}` }
+  }
+  const round = Number(value)
+  if (round < 1 || round > MAX_ROUND) {
+    return { error: `--round 必须是 1..${MAX_ROUND} 的整数: ${value}` }
+  }
+  return { value: round }
+}
+
+/** gate / merge 共用同一份参数校验。 */
+function parseGateArgs(argv) {
+  const parsed = parseArgs(argv, GATE_VALUE_FLAGS, GATE_BOOL_FLAGS)
+  if (parsed.error) return { error: parsed.error }
+  const options = parsed.options
+
+  const pr = parsePr(options.pr)
+  if (pr.error) return { error: pr.error }
+  const root = requireRoot(options.root)
+  if (root.error) return { error: root.error }
+
+  if (options.record !== undefined && options['no-review'] === true) {
+    return { error: '不能同时使用 --record 与 --no-review' }
+  }
+  if (options['no-review'] !== true && options.reason !== undefined) {
+    return { error: '--reason 只能与 --no-review 一起使用' }
+  }
+  if (options['no-review'] === true && !nonEmpty(options.reason)) {
+    return { error: '--no-review 必须配合 --reason 说明跳过原因' }
+  }
+  if (options.record !== undefined && !nonEmpty(options.record)) {
+    return { error: '--record 必须是非空文件路径' }
+  }
+
+  const headSha = options['head-sha']
+  if (headSha !== undefined && !SHA_PATTERN.test(headSha)) {
+    return { error: `--head-sha 必须是 40 位小写十六进制: ${headSha}` }
+  }
+
+  return {
+    pr: pr.value,
+    root: root.value,
+    record: options.record,
+    noReview: options['no-review'] === true,
+    reason: options.reason,
+    headSha,
+  }
+}
+
+/**
+ * gate / merge 的唯一判定入口：跳过审计、fail-closed、记录校验、head 解析、闸门判定。
+ * 返回 { code, skipped, lines }，由调用方决定打印后是否继续合并。
+ */
+function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
+  if (noReview) {
+    try {
+      const file = writeSkipAudit(reviewsDir(root), { pr, headSha, reason })
+      return {
+        code: 0,
+        skipped: true,
+        lines: [
+          {
+            stream: 'err',
+            text: `警告: PR #${pr} 已跳过审核（原因: ${reason}）；审计记录: ${file}`,
+          },
+        ],
+      }
+    } catch (error) {
+      return {
+        code: 2,
+        skipped: false,
+        lines: [{ stream: 'err', text: `跳过审核失败: ${messageOf(error)}` }],
+      }
+    }
+  }
+
+  if (record === undefined) {
+    return {
+      code: 1,
+      skipped: false,
+      lines: [
+        { stream: 'err', text: '审核闸门: 未提供审核记录，且未声明 --no-review，按失败关闭处理' },
+      ],
+    }
+  }
+
+  let candidate
+  try {
+    candidate = readRecord(record)
+  } catch (error) {
+    return {
+      code: 1,
+      skipped: false,
+      lines: [{ stream: 'err', text: `审核闸门: ${messageOf(error)}` }],
+    }
+  }
+
+  if (candidate.pr !== pr) {
+    return {
+      code: 1,
+      skipped: false,
+      lines: [
+        { stream: 'err', text: `审核闸门: 记录属于 PR #${String(candidate.pr)}，与 --pr #${pr} 不符` },
+      ],
+    }
+  }
+
+  let sha = headSha
+  if (sha === undefined) {
+    const current = gitHeadSha(root, { runner })
+    if (!current.ok) {
+      return {
+        code: 2,
+        skipped: false,
+        lines: [{ stream: 'err', text: `无法获取当前 head 提交: ${current.error}` }],
+      }
+    }
+    sha = current.data
+  }
+
+  const verdict = evaluateGate({
+    record: candidate,
+    headSha: sha,
+    currentPolicyVersion: pkg.version,
+  })
+  if (!verdict.ok) {
+    return {
+      code: 1,
+      skipped: false,
+      lines: [{ stream: 'err', text: `审核闸门: ${verdict.reason}` }],
+    }
+  }
+
+  return {
+    code: 0,
+    skipped: false,
+    lines: [{ stream: 'out', text: `审核闸门: PR #${pr} 通过` }],
+  }
+}
+
+const GATE_VALUE_FLAGS = new Set(['pr', 'root', 'record', 'reason', 'head-sha'])
+const GATE_BOOL_FLAGS = new Set(['no-review'])
+const RECORD_VALUE_FLAGS = new Set(['request', 'response', 'round'])
+const RECORD_BOOL_FLAGS = new Set()
+const STATUS_VALUE_FLAGS = new Set(['root'])
+const STATUS_BOOL_FLAGS = new Set()
+
+function emit(io, lines) {
+  for (const line of lines) {
+    if (line.stream === 'err') io.err(line.text)
+    else io.out(line.text)
+  }
+}
+
+function argError(io, sub, message) {
+  io.err(`${sub}: ${message}`)
+  return 2
+}
+
+function runGate(argv, deps, io) {
+  const parsed = parseGateArgs(argv)
+  if (parsed.error) return argError(io, 'gate', parsed.error)
+  const decision = decideGate({ ...parsed, runner: deps.runner })
+  emit(io, decision.lines)
+  return decision.code
+}
+
+function runMerge(argv, deps, io) {
+  const parsed = parseGateArgs(argv)
+  if (parsed.error) return argError(io, 'merge', parsed.error)
+
+  const decision = decideGate({ ...parsed, runner: deps.runner })
+  emit(io, decision.lines)
+  if (decision.code !== 0) return decision.code
+
+  let loaded
+  try {
+    loaded = loadConfig(parsed.root)
+  } catch (error) {
+    io.err(`merge: ${messageOf(error)}`)
+    return 2
+  }
+  const repo = loaded.config.repo
+  if (!nonEmpty(repo)) {
+    io.err(`merge: 未配置仓库标识（${join(parsed.root, '.dsh', 'pipeline.json')} 缺少 repo）`)
+    return 2
+  }
+
+  const result = prMerge(parsed.pr, { repo, runner: deps.runner })
+  if (!result.ok) {
+    io.err(`merge: 合并失败: ${result.error}`)
+    return 2
+  }
+  io.out(`已合并 PR #${parsed.pr}（--squash）`)
+  return 0
+}
+
+function readTextFile(file, label) {
+  try {
+    return { text: readFileSync(file, 'utf8') }
+  } catch {
+    return { error: `无法读取${label}: ${file}` }
+  }
+}
+
+function runRecord(argv, deps, io) {
+  const parsed = parseArgs(argv, RECORD_VALUE_FLAGS, RECORD_BOOL_FLAGS)
+  if (parsed.error) return argError(io, 'record', parsed.error)
+  const options = parsed.options
+
+  if (!nonEmpty(options.request)) return argError(io, 'record', '缺少必填参数 --request')
+  if (!nonEmpty(options.response)) return argError(io, 'record', '缺少必填参数 --response')
+  const round = parseRound(options.round)
+  if (round.error) return argError(io, 'record', round.error)
+
+  const requestFile = readTextFile(options.request, '请求文件')
+  if (requestFile.error) return argError(io, 'record', requestFile.error)
+  let request
+  try {
+    request = JSON.parse(requestFile.text)
+  } catch {
+    return argError(io, 'record', `请求文件不是合法 JSON: ${options.request}`)
+  }
+  if (!isPlainObject(request)) return argError(io, 'record', '请求内容必须是 JSON 对象')
+  if (!Number.isInteger(request.pr) || request.pr <= 0) {
+    return argError(io, 'record', `请求中的 pr 必须是正整数: ${String(request.pr)}`)
+  }
+  if (typeof request.head_sha !== 'string' || !SHA_PATTERN.test(request.head_sha)) {
+    return argError(io, 'record', `请求中的 head_sha 必须是 40 位小写十六进制: ${String(request.head_sha)}`)
+  }
+  if (typeof request.nonce !== 'string' || !NONCE_PATTERN.test(request.nonce)) {
+    return argError(io, 'record', `请求中的 nonce 必须是 12 位 base32 标记: ${String(request.nonce)}`)
+  }
+
+  const responseFile = readTextFile(options.response, '响应文件')
+  if (responseFile.error) return argError(io, 'record', responseFile.error)
+  const response = responseFile.text
+
+  const verdict = parseVerdict(response, { nonce: request.nonce, diff: request.diff })
+  if (!verdict.ok) {
+    return argError(io, 'record', '无法从响应中解析出唯一且带正确标记的判定行')
+  }
+  if (verdict.sha !== request.head_sha) {
+    return argError(
+      io,
+      'record',
+      `判定针对提交 ${verdict.sha}，与请求提交 ${request.head_sha} 不一致`,
+    )
+  }
+
+  const extracted = extractFindings(response)
+  if (extracted.warn !== null) io.err(`record: 提示: ${extracted.warn}`)
+
+  const record = {
+    pr: request.pr,
+    round: round.value,
+    verdict: verdict.verdict,
+    head_sha: request.head_sha,
+    findings: extracted.findings,
+    evidence: extracted.evidence,
+    createdAt: new Date().toISOString(),
+  }
+  if (typeof request.traceId === 'string' && request.traceId.length > 0) {
+    record.traceId = request.traceId
+  }
+
+  const cwd = nonEmpty(deps.cwd) ? deps.cwd : process.cwd()
+  try {
+    const file = writeRecord(reviewsDir(cwd), record)
+    io.out(`已写入审核记录: ${file}`)
+    return 0
+  } catch (error) {
+    io.err(`record: 写入失败: ${messageOf(error)}`)
+    return 2
+  }
+}
+
+/** 读取 <root>/.dsh-web/reviews 下的有效记录及无法解析的数量。 */
+function collectRecords(root) {
+  const dir = reviewsDir(root)
+  let entries
+  try {
+    entries = readdirSync(dir, { withFileTypes: true })
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { records: [], invalid: 0 }
+    throw error
+  }
+
+  const records = []
+  let invalid = 0
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue
+    const file = join(dir, entry.name)
+    try {
+      const record = readRecord(file)
+      const created = Date.parse(record.createdAt)
+      let mtime = 0
+      try {
+        mtime = statSync(file).mtimeMs
+      } catch {
+        mtime = 0
+      }
+      records.push({
+        record,
+        time: Number.isNaN(created) ? mtime : created,
+        mtime,
+      })
+    } catch {
+      invalid += 1
+    }
+  }
+
+  records.sort((a, b) => b.time - a.time || b.mtime - a.mtime)
+  return { records, invalid }
+}
+
+function runStatus(argv, deps, io) {
+  const parsed = parseArgs(argv, STATUS_VALUE_FLAGS, STATUS_BOOL_FLAGS)
+  if (parsed.error) return argError(io, 'status', parsed.error)
+  const root = requireRoot(parsed.options.root)
+  if (root.error) return argError(io, 'status', root.error)
+
+  let collected
+  try {
+    collected = collectRecords(root.value)
+  } catch (error) {
+    io.err(`status: 读取审核记录失败: ${messageOf(error)}`)
+    return 2
+  }
+
+  io.out(`审核记录: ${collected.records.length} 条`)
+  if (collected.records.length === 0) {
+    io.out('最近一条: 无')
+  } else {
+    const { record } = collected.records[0]
+    const sha = typeof record.head_sha === 'string' ? record.head_sha.slice(0, 8) : '未知'
+    io.out(
+      `最近一条: PR #${record.pr} 第 ${record.round} 轮 结论 ${record.verdict}（提交 ${sha}）`,
+    )
+  }
+  if (collected.invalid > 0) io.out(`无法解析的记录: ${collected.invalid} 条`)
+  return 0
+}
+
+/**
+ * CLI 主入口。deps 可注入 runner 与输出流，便于测试；缺省走真实实现。
+ * @param {string[]} argv
+ * @param {{ runner?: Function, cwd?: string, stdout?: Function, stderr?: Function }} [deps]
+ * @returns {number} 退出码
+ */
+export function runCli(argv, deps = {}) {
+  const writeOut = typeof deps.stdout === 'function' ? deps.stdout : (text) => process.stdout.write(text)
+  const writeErr = typeof deps.stderr === 'function' ? deps.stderr : (text) => process.stderr.write(text)
+  const io = {
+    out: (text) => writeOut(`${text}\n`),
+    err: (text) => writeErr(`${text}\n`),
+  }
+
+  const [first, ...rest] = argv
+
+  if (first === '-h' || first === '--help' || first === undefined) {
+    io.out(HELP)
+    return 0
+  }
+  if (first === '-v' || first === '--version') {
+    io.out(pkg.version)
+    return 0
+  }
+  if (!IMPLEMENTED.has(first)) {
+    if (SUBCOMMANDS.includes(first)) {
+      io.err(`dsh-pipeline ${first}: 未实现`)
+      return 2
+    }
+    io.err(`dsh-pipeline: 未知子命令 "${first}"`)
+    io.err(HELP)
+    return 2
+  }
+
+  try {
+    if (first === 'gate') return runGate(rest, deps, io)
+    if (first === 'merge') return runMerge(rest, deps, io)
+    if (first === 'record') return runRecord(rest, deps, io)
+    return runStatus(rest, deps, io)
+  } catch (error) {
+    io.err(`dsh-pipeline ${first}: ${messageOf(error)}`)
+    return 2
+  }
+}
+
+/** 仅在作为可执行文件直接运行时自动执行；被 import 时不产生副作用。 */
+function invokedDirectly() {
+  const entry = process.argv[1]
+  if (entry === undefined) return false
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url))
+  } catch {
+    return false
+  }
+}
+
+if (invokedDirectly()) {
+  process.exit(runCli(process.argv.slice(2)))
+}
