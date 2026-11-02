@@ -330,6 +330,102 @@ test('没有 worktree 持有该分支：跳过移除步骤，其余照常', () =
   assert.deepEqual(git.ops(), ['worktreeList', 'fetch', 'mergeFF', 'deleteBranch'])
 })
 
+// —— 主工作区保护：PR 分支在主工作区里 checkout 时不能 remove 主工作区 ——
+
+test('分支检出在主工作区：跳过 worktree 移除，fetch / 快进 / 删分支照常', () => {
+  const { root, file } = approvedRoot()
+  const gh = fakeGh()
+  const git = fakeGit({
+    worktrees: [
+      { path: MAIN_WT, head: SHA, branch: BRANCH, detached: false, bare: false },
+      { path: root, head: OTHER_SHA, branch: 'task/9', detached: false, bare: false },
+    ],
+  })
+
+  const result = runMerge({
+    pr: PR,
+    root,
+    recordPath: file,
+    headSha: SHA,
+    deps: depsOf(gh, git),
+  })
+
+  assert.equal(result.ok, true, JSON.stringify(result.steps, null, 2))
+  assert.deepEqual(
+    result.steps.map((step) => step.name),
+    ['repo', 'head', 'gate', 'pr', 'ci', 'merge', 'worktree', 'fetch', 'ff', 'branch'],
+    'worktree 保护不能中断后续步骤',
+  )
+  assert.ok(result.steps.every((step) => step.ok))
+
+  const step = result.steps.find((item) => item.name === 'worktree')
+  assert.match(step.detail, /主工作区/)
+  assert.match(step.detail, /跳过/)
+  assert.ok(step.detail.includes(MAIN_WT), step.detail)
+
+  assert.deepEqual(
+    git.ops(),
+    ['worktreeList', 'fetch', 'mergeFF', 'deleteBranch'],
+    '主工作区不能被 worktree remove，只能删分支',
+  )
+  const [fetched, advanced, deleted] = git.calls.slice(1)
+  assert.equal(fetched.cwd, MAIN_WT, 'fetch 仍在主工作区执行')
+  assert.equal(advanced.cwd, MAIN_WT, 'main 快进仍在主工作区执行')
+  assert.equal(advanced.options.ref, FF_REF)
+  assert.equal(deleted.name, BRANCH, '分支照常删除')
+  assert.deepEqual(deleted.options, { force: true })
+})
+
+test('root 带尾斜杠时仍认得出主工作区：不误删主工作区，流程走完', () => {
+  const { root, file } = approvedRoot()
+  const gh = fakeGh()
+  const git = fakeGit({
+    worktrees: [
+      { path: root, head: SHA, branch: BRANCH, detached: false, bare: false },
+      { path: TASK_WT, head: OTHER_SHA, branch: 'task/9', detached: false, bare: false },
+    ],
+  })
+
+  const result = runMerge({
+    pr: PR,
+    root: `${root}/`,
+    recordPath: file,
+    headSha: SHA,
+    deps: depsOf(gh, git),
+  })
+
+  assert.equal(result.ok, true, JSON.stringify(result.steps, null, 2))
+  assert.equal(git.ops().includes('worktreeRemove'), false, '主工作区（哪怕路径写法不同）绝不能 remove')
+  assert.match(result.steps.find((item) => item.name === 'worktree').detail, /跳过/)
+  assert.deepEqual(git.ops(), ['worktreeList', 'fetch', 'mergeFF', 'deleteBranch'])
+})
+
+test('分支在 linked worktree：仍正常移除，且不碰主工作区', () => {
+  const { root, file } = approvedRoot()
+  const gh = fakeGh()
+  const git = fakeGit({
+    worktrees: [
+      { path: root, head: OTHER_SHA, branch: 'main', detached: false, bare: false },
+      { path: TASK_WT, head: SHA, branch: BRANCH, detached: false, bare: false },
+    ],
+  })
+
+  const result = runMerge({
+    pr: PR,
+    root,
+    recordPath: file,
+    headSha: SHA,
+    deps: depsOf(gh, git),
+  })
+
+  assert.equal(result.ok, true, JSON.stringify(result.steps, null, 2))
+  assert.deepEqual(git.ops(), ['worktreeList', 'worktreeRemove', 'fetch', 'mergeFF', 'deleteBranch'])
+  const removed = git.calls.find((call) => call.op === 'worktreeRemove')
+  assert.equal(removed.path, TASK_WT, '移除的是 linked worktree')
+  assert.equal(removed.cwd, root, '从主工作区执行移除')
+  assert.match(result.steps.find((item) => item.name === 'worktree').detail, /已移除 worktree/)
+})
+
 test('本地分支已不存在：按跳过处理，不算失败', () => {
   const { root, file } = approvedRoot()
   const gh = fakeGh()
