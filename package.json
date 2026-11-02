@@ -11,7 +11,13 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "pack": "bash scripts/pack.sh"
   },
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "files": [
+    "bin",
+    "lib",
+    "README.md"
+  ]
 }
