@@ -188,12 +188,18 @@ test('cwd 非法时拒绝，不调用 git', () => {
 test('导出面固定：只有具名操作，没有接受 argv 的通用入口', () => {
   const callables = Object.entries(git).filter(([, value]) => typeof value === 'function')
   assert.deepEqual(callables.map(([name]) => name).sort(), [
+    'configGet',
+    'configSet',
     'currentBranch',
     'deleteBranch',
     'fetch',
     'headSha',
     'mergeFF',
+    'push',
     'remoteUrl',
+    'statusPorcelain',
+    'toplevel',
+    'worktreeAdd',
     'worktreeList',
     'worktreeRemove',
   ])
@@ -207,4 +213,50 @@ test('导出面固定：只有具名操作，没有接受 argv 的通用入口',
   const runner = recorder({ status: 0, stdout: 'main\n', stderr: '' })
   git.currentBranch(CWD, { runner }, ['push', '--force'])
   assert.deepEqual(runner.calls[0].args, ['-C', CWD, 'rev-parse', '--abbrev-ref', 'HEAD'])
+})
+
+test('toplevel / statusPorcelain / worktreeAdd / push：各自一条固定 argv', () => {
+  const top = recorder({ status: 0, stdout: '/repo\n', stderr: '' })
+  assert.equal(git.toplevel(CWD, { runner: top }).data, '/repo')
+  assert.deepEqual(top.calls[0].args, ['-C', CWD, 'rev-parse', '--show-toplevel'])
+
+  const status = recorder({ status: 0, stdout: '', stderr: '' })
+  git.statusPorcelain(CWD, { runner: status })
+  assert.deepEqual(status.calls[0].args, ['-C', CWD, 'status', '--porcelain'])
+
+  const added = recorder({ status: 0, stdout: '', stderr: '' })
+  git.worktreeAdd(CWD, { branch: 'task/12-x', path: '/repo/.worktrees/12-x', ref: 'origin/main', runner: added })
+  assert.deepEqual(added.calls[0].args, [
+    '-C',
+    CWD,
+    'worktree',
+    'add',
+    '-b',
+    'task/12-x',
+    '/repo/.worktrees/12-x',
+    'origin/main',
+  ])
+
+  const pushed = recorder({ status: 0, stdout: '', stderr: '' })
+  git.push(CWD, { branch: 'task/12-x', runner: pushed })
+  assert.deepEqual(pushed.calls[0].args, ['-C', CWD, 'push', '-u', 'origin', 'task/12-x'])
+
+  const plain = recorder({ status: 0, stdout: '', stderr: '' })
+  git.push(CWD, { branch: 'task/12-x', setUpstream: false, runner: plain })
+  assert.deepEqual(plain.calls[0].args, ['-C', CWD, 'push', 'origin', 'task/12-x'])
+})
+
+test('worktreeAdd / push / configGet / configSet：非法入参不调用 git', () => {
+  const runner = recorder({ status: 0, stdout: '', stderr: '' })
+  assert.equal(git.worktreeAdd(CWD, { branch: '-b', path: '/repo/wt', ref: 'origin/main', runner }).code, 'E_INPUT')
+  assert.equal(git.worktreeAdd(CWD, { branch: 'task/1-x', path: '', ref: 'origin/main', runner }).code, 'E_INPUT')
+  assert.equal(git.worktreeAdd(CWD, { branch: 'task/1-x', path: '/repo/wt', ref: '', runner }).code, 'E_INPUT')
+  assert.equal(git.push(CWD, { branch: '--force', runner }).code, 'E_INPUT')
+  assert.equal(git.configGet(CWD, 'user.name; rm -rf /', { runner }).code, 'E_INPUT')
+  assert.equal(git.configSet(CWD, { key: 'user.name', value: '', runner }).code, 'E_INPUT')
+  assert.equal(runner.calls.length, 0)
+
+  const set = recorder({ status: 0, stdout: '', stderr: '' })
+  git.configSet(CWD, { key: 'user.name', value: 'gubin', runner: set })
+  assert.deepEqual(set.calls[0].args, ['-C', CWD, 'config', 'user.name', 'gubin'])
 })
