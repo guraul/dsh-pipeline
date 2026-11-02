@@ -63,7 +63,7 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
 
 task 用法:
   dsh-pipeline task <issue号> [--root <dir>]
-  --root <dir>       仓库根目录（缺省取 git 顶层目录）
+  --root <dir>       仓库根目录（缺省取主工作区；在 worktree 里运行会自动上溯）
   幂等：worktree 已存在时只打印路径；路径被别的目录占用时报错退出 2。
 
 pr 用法:

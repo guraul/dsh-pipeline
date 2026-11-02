@@ -168,7 +168,7 @@ test('task: fetch 连续失败重试 3 次后退出 2', () => {
   assert.equal(calls.some((call) => sub(call.args)[0] === 'worktree' && sub(call.args)[1] === 'add'), false)
 })
 
-test('task: 缺省 root 取 git 顶层目录，仓库标识可从 origin 反推', () => {
+test('task: 缺省 root 取主工作区（--git-common-dir 的父目录），仓库标识可从 origin 反推', () => {
   const root = tmp()
   const calls = []
   const runner = (command, args) => {
@@ -177,8 +177,8 @@ test('task: 缺省 root 取 git 顶层目录，仓库标识可从 origin 反推'
     if (command === 'gh') {
       return { status: 0, stdout: JSON.stringify({ number: 3, title: 'Fix typo' }), stderr: '' }
     }
-    if (rest[0] === 'rev-parse' && rest[1] === '--show-toplevel') {
-      return { status: 0, stdout: `${root}\n`, stderr: '' }
+    if (rest[0] === 'rev-parse' && rest[1] === '--git-common-dir') {
+      return { status: 0, stdout: '.git\n', stderr: '' }
     }
     if (rest[0] === 'remote') {
       return { status: 0, stdout: 'git@github.com:guraul/dsh-pipeline.git\n', stderr: '' }

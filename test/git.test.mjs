@@ -193,6 +193,7 @@ test('导出面固定：只有具名操作，没有接受 argv 的通用入口',
     'currentBranch',
     'deleteBranch',
     'fetch',
+    'gitCommonDir',
     'headSha',
     'mergeFF',
     'push',
@@ -215,10 +216,14 @@ test('导出面固定：只有具名操作，没有接受 argv 的通用入口',
   assert.deepEqual(runner.calls[0].args, ['-C', CWD, 'rev-parse', '--abbrev-ref', 'HEAD'])
 })
 
-test('toplevel / statusPorcelain / worktreeAdd / push：各自一条固定 argv', () => {
+test('toplevel / gitCommonDir / statusPorcelain / worktreeAdd / push：各自一条固定 argv', () => {
   const top = recorder({ status: 0, stdout: '/repo\n', stderr: '' })
   assert.equal(git.toplevel(CWD, { runner: top }).data, '/repo')
   assert.deepEqual(top.calls[0].args, ['-C', CWD, 'rev-parse', '--show-toplevel'])
+
+  const common = recorder({ status: 0, stdout: '/repo/.git\n', stderr: '' })
+  assert.equal(git.gitCommonDir(CWD, { runner: common }).data, '/repo/.git')
+  assert.deepEqual(common.calls[0].args, ['-C', CWD, 'rev-parse', '--git-common-dir'])
 
   const status = recorder({ status: 0, stdout: '', stderr: '' })
   git.statusPorcelain(CWD, { runner: status })
