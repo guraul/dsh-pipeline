@@ -147,6 +147,21 @@ test('deleteBranch：分支名校验不因 force 放宽', () => {
   assert.equal(runner.calls.length, 0)
 })
 
+test('checkout：固定 argv，分支名过校验，非法入参不调用 git', () => {
+  const runner = recorder({ status: 0, stdout: "Switched to branch 'main'\n", stderr: '' })
+  const result = git.checkout(CWD, { branch: 'main', runner })
+  assert.deepEqual(runner.calls[0].args, ['-C', CWD, 'checkout', 'main'])
+  assert.equal(result.ok, true)
+
+  const invalid = recorder({ status: 0, stdout: '', stderr: '' })
+  for (const branch of [undefined, '', '-b', '--orphan', 'a..b', 'a b']) {
+    const failed = git.checkout(CWD, { branch, runner: invalid })
+    assert.equal(failed.ok, false, `branch=${String(branch)}`)
+    assert.equal(failed.code, 'E_INPUT')
+  }
+  assert.equal(invalid.calls.length, 0)
+})
+
 test('失败时返回 code 与 stderr 末两行，不抛异常', () => {
   const runner = recorder({
     status: 128,
@@ -188,6 +203,7 @@ test('cwd 非法时拒绝，不调用 git', () => {
 test('导出面固定：只有具名操作，没有接受 argv 的通用入口', () => {
   const callables = Object.entries(git).filter(([, value]) => typeof value === 'function')
   assert.deepEqual(callables.map(([name]) => name).sort(), [
+    'checkout',
     'configGet',
     'configSet',
     'currentBranch',

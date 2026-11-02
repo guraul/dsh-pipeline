@@ -19,10 +19,13 @@ import { loadConfig } from '../lib/config.mjs'
 import { evaluateGate } from '../lib/gate.mjs'
 import { prChecks, prMerge, prView } from '../lib/gh.mjs'
 import {
+  checkout,
+  currentBranch,
   deleteBranch,
   fetch as gitFetch,
   headSha as gitHeadSha,
   mergeFF,
+  statusPorcelain,
   worktreeList,
   worktreeRemove,
 } from '../lib/git.mjs'
@@ -395,6 +398,9 @@ function runMerge(argv, deps, io) {
         headSha: (cwd) => gitHeadSha(cwd, { runner }),
         worktreeList: (cwd) => worktreeList(cwd, { runner }),
         worktreeRemove: (cwd, path) => worktreeRemove(cwd, path, { runner }),
+        currentBranch: (cwd) => currentBranch(cwd, { runner }),
+        statusPorcelain: (cwd) => statusPorcelain(cwd, { runner }),
+        checkout: (cwd, options = {}) => checkout(cwd, { ...options, runner }),
         fetch: (cwd, options = {}) => gitFetch(cwd, { ...options, runner }),
         mergeFF: (cwd, options = {}) => mergeFF(cwd, { ...options, runner }),
         deleteBranch: (cwd, name) => deleteBranch(cwd, name, { runner }),
@@ -415,6 +421,12 @@ function runMerge(argv, deps, io) {
   if (result.ok) {
     if (result.checkOnly === true) {
       io.out('审核闸门通过（仅校验，未合并）')
+      return 0
+    }
+    const ffStep = result.steps.find((step) => step.name === 'ff')
+    if (ffStep?.skipped === true) {
+      // 快进没做成时不能说成「main 已快进」：原因与下一步动作在 ff 那一行里
+      io.out(`已合并 PR #${parsed.pr}（--squash），但 main 未快进: ${ffStep.detail}`)
       return 0
     }
     io.out(`已合并 PR #${parsed.pr}（--squash），现场已清理，main 已快进`)

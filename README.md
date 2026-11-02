@@ -33,6 +33,8 @@ dsh-pipeline merge --pr <N> --record <记录>
 
 `merge` 会读 `.dsh/pipeline.json` 的 `repo`（`guraul/dsh-pipeline`），用 `gh pr checks` 校验 CI，再校验记录与 PR 的 head 提交是否一致；任一条不满足即拒绝合并。
 
+合并后收尾时，若主工作区仍停在 PR 分支：工作区干净会自动切回 `main` 再快进；有未提交改动则不改动现场，只跳过快进并提示手动切换，本地分支删除被拒时同样跳过并说明。
+
 `.dsh/pipeline.json` 的 `ci` 字段目前**没有消费方**：CI 判定走 `gh pr checks`，写它只是预留。
 
 **命中高风险时的正式路径**是显式跳过审核，而不是手工点合并：

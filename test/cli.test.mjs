@@ -60,11 +60,23 @@ function writeApprovedRecord(root, overrides = {}) {
   return writeRecord(reviewsDir(root), recordFor(overrides))
 }
 
-function stubRunner() {
+function stubRunner(root = '/repo/main') {
   const calls = []
   const runner = (command, args) => {
     calls.push({ command, args: [...args] })
-    if (command === 'git') return { status: 0, stdout: `${SHA}\n`, stderr: '' }
+    if (command === 'git') {
+      // 主工作区停在 main 且干净：merge 收尾不做 checkout / 不读 status
+      if (args.includes('worktree') && args.includes('--porcelain')) {
+        return {
+          status: 0,
+          stdout: `worktree ${root}\nHEAD ${SHA}\nbranch refs/heads/main\n\n`,
+          stderr: '',
+        }
+      }
+      if (args.includes('--abbrev-ref')) return { status: 0, stdout: 'main\n', stderr: '' }
+      if (args.includes('status')) return { status: 0, stdout: '', stderr: '' }
+      return { status: 0, stdout: `${SHA}\n`, stderr: '' }
+    }
     // gh pr view 要返回 JSON（merge 用 headRefName 定位分支），其余 gh 命令给空输出
     if (args[0] === 'pr' && args[1] === 'view') {
       return {
@@ -201,7 +213,7 @@ test('merge: 闸门通过后调用 gh pr merge 且固定 --squash，随后清理
   withRepo(root)
   const file = writeApprovedRecord(root)
   const io = makeIO()
-  const { runner, calls } = stubRunner()
+  const { runner, calls } = stubRunner(root)
 
   assert.equal(
     run(['merge', '--pr', '7', '--root', root, '--record', file, '--head-sha', SHA], io, { runner }),

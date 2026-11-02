@@ -103,6 +103,9 @@ function fakeGit({ responses = {}, worktrees = DEFAULT_WORKTREES, head = SHA } =
       headSha: (cwd) => respond('headSha', { cwd }, ok(head)),
       worktreeList: (cwd) => respond('worktreeList', { cwd }, ok(worktrees)),
       worktreeRemove: (cwd, path) => respond('worktreeRemove', { cwd, path }, ok()),
+      currentBranch: (cwd) => respond('currentBranch', { cwd }, ok('main')),
+      statusPorcelain: (cwd) => respond('statusPorcelain', { cwd }, ok('')),
+      checkout: (cwd, options) => respond('checkout', { cwd, options }, ok('')),
       fetch: (cwd, options) => respond('fetch', { cwd, options }, ok()),
       mergeFF: (cwd, options) => respond('mergeFF', { cwd, options }, ok('Fast-forward')),
       deleteBranch: (cwd, name, options) =>
@@ -365,13 +368,18 @@ test('分支检出在主工作区：跳过 worktree 移除，fetch / 快进 / �
 
   assert.deepEqual(
     git.ops(),
-    ['worktreeList', 'fetch', 'mergeFF', 'deleteBranch'],
-    '主工作区不能被 worktree remove，只能删分支',
+    ['worktreeList', 'fetch', 'statusPorcelain', 'checkout', 'mergeFF', 'deleteBranch'],
+    '主工作区不能被 worktree remove；先切回 main 再快进，最后删分支',
   )
-  const [fetched, advanced, deleted] = git.calls.slice(1)
+  const fetched = git.calls.find((call) => call.op === 'fetch')
+  const switched = git.calls.find((call) => call.op === 'checkout')
+  const advanced = git.calls.find((call) => call.op === 'mergeFF')
+  const deleted = git.calls.find((call) => call.op === 'deleteBranch')
   assert.equal(fetched.cwd, MAIN_WT, 'fetch 仍在主工作区执行')
+  assert.deepEqual(switched.options, { branch: 'main' }, 'PR 分支被检出时必须先切回 main')
   assert.equal(advanced.cwd, MAIN_WT, 'main 快进仍在主工作区执行')
   assert.equal(advanced.options.ref, FF_REF)
+  assert.match(result.steps.find((item) => item.name === 'ff').detail, /已从 task\/7 切换到 main/)
   assert.equal(deleted.name, BRANCH, '分支照常删除')
   assert.deepEqual(deleted.options, { force: true })
 })
@@ -397,7 +405,14 @@ test('root 带尾斜杠时仍认得出主工作区：不误删主工作区，流
   assert.equal(result.ok, true, JSON.stringify(result.steps, null, 2))
   assert.equal(git.ops().includes('worktreeRemove'), false, '主工作区（哪怕路径写法不同）绝不能 remove')
   assert.match(result.steps.find((item) => item.name === 'worktree').detail, /跳过/)
-  assert.deepEqual(git.ops(), ['worktreeList', 'fetch', 'mergeFF', 'deleteBranch'])
+  assert.deepEqual(git.ops(), [
+    'worktreeList',
+    'fetch',
+    'statusPorcelain',
+    'checkout',
+    'mergeFF',
+    'deleteBranch',
+  ])
 })
 
 test('分支在 linked worktree：仍正常移除，且不碰主工作区', () => {
@@ -424,6 +439,159 @@ test('分支在 linked worktree：仍正常移除，且不碰主工作区', () =
   assert.equal(removed.path, TASK_WT, '移除的是 linked worktree')
   assert.equal(removed.cwd, root, '从主工作区执行移除')
   assert.match(result.steps.find((item) => item.name === 'worktree').detail, /已移除 worktree/)
+})
+
+// —— 快进前确认主工作区分支：PR 分支被 checkout 在主工作区时不能直接 merge --ff-only ——
+
+/** 主工作区停在 PR 分支、另有一个无关 worktree：模拟上一个 PR 收尾留下的现场。 */
+const ON_PR_BRANCH = [
+  { path: MAIN_WT, head: SHA, branch: BRANCH, detached: false, bare: false },
+  { path: '/repo/.wt/task-9', head: OTHER_SHA, branch: 'task/9', detached: false, bare: false },
+]
+
+test('主工作区已在 main：不读 status、不 checkout，直接快进', () => {
+  const { root, file } = approvedRoot()
+  const gh = fakeGh()
+  const git = fakeGit()
+
+  const result = runMerge({
+    pr: PR,
+    root,
+    recordPath: file,
+    headSha: SHA,
+    deps: depsOf(gh, git),
+  })
+
+  assert.equal(result.ok, true, JSON.stringify(result.steps, null, 2))
+  assert.deepEqual(git.ops(), ['worktreeList', 'worktreeRemove', 'fetch', 'mergeFF', 'deleteBranch'])
+  assert.equal(git.ops().includes('checkout'), false)
+  assert.equal(git.ops().includes('statusPorcelain'), false)
+  const ff = result.steps.find((step) => step.name === 'ff')
+  assert.equal(ff.skipped, undefined)
+  assert.match(ff.detail, /main 已快进到 origin\/main/)
+})
+
+test('主工作区在 PR 分支且干净：先 checkout main 再快进，分支照常删除', () => {
+  const { root, file } = approvedRoot()
+  const gh = fakeGh()
+  const git = fakeGit({ worktrees: ON_PR_BRANCH })
+
+  const result = runMerge({
+    pr: PR,
+    root,
+    recordPath: file,
+    headSha: SHA,
+    deps: depsOf(gh, git),
+  })
+
+  assert.equal(result.ok, true, JSON.stringify(result.steps, null, 2))
+  assert.deepEqual(git.ops(), [
+    'worktreeList',
+    'fetch',
+    'statusPorcelain',
+    'checkout',
+    'mergeFF',
+    'deleteBranch',
+  ])
+  const checkout = git.calls.find((call) => call.op === 'checkout')
+  assert.equal(checkout.cwd, MAIN_WT)
+  assert.deepEqual(checkout.options, { branch: 'main' })
+  const advanced = git.calls.find((call) => call.op === 'mergeFF')
+  assert.equal(advanced.cwd, MAIN_WT)
+  assert.deepEqual(advanced.options, { ref: FF_REF })
+
+  const ff = result.steps.find((step) => step.name === 'ff')
+  assert.equal(ff.ok, true)
+  assert.equal(ff.skipped, undefined)
+  assert.match(ff.detail, new RegExp(`已从 ${BRANCH} 切换到 main`))
+  assert.match(ff.detail, /main 已快进到 origin\/main/)
+  assert.equal(result.steps.find((step) => step.name === 'branch').ok, true)
+})
+
+test('主工作区在 PR 分支且有未提交改动：不动现场、跳过快进并提示，仍尝试删分支', () => {
+  const { root, file } = approvedRoot()
+  const gh = fakeGh()
+  const git = fakeGit({
+    worktrees: ON_PR_BRANCH,
+    responses: { statusPorcelain: () => ok(' M lib/merge.mjs\n?? scratch.txt') },
+  })
+
+  const result = runMerge({
+    pr: PR,
+    root,
+    recordPath: file,
+    headSha: SHA,
+    deps: depsOf(gh, git),
+  })
+
+  assert.equal(result.ok, true, JSON.stringify(result.steps, null, 2))
+  assert.deepEqual(git.ops(), ['worktreeList', 'fetch', 'statusPorcelain', 'deleteBranch'])
+  assert.equal(git.ops().includes('checkout'), false, '绝不能改动用户现场')
+  assert.equal(git.ops().includes('mergeFF'), false, '快进必须跳过')
+
+  const ff = result.steps.find((step) => step.name === 'ff')
+  assert.equal(ff.ok, true)
+  assert.equal(ff.skipped, true, '跳过快进必须能被看出来')
+  assert.ok(ff.detail.includes(`主工作区停留在 ${BRANCH}`), ff.detail)
+  assert.match(ff.detail, /请手动切换后重试/)
+  assert.match(ff.detail, /未改动现场/)
+
+  assert.match(result.steps.find((step) => step.name === 'branch').detail, /已删除本地分支/)
+})
+
+test('分支仍被检出任凭删除被拒：跳过删除并说明，不判失败', () => {
+  const { root, file } = approvedRoot()
+  const gh = fakeGh()
+  const git = fakeGit({
+    worktrees: ON_PR_BRANCH,
+    responses: {
+      statusPorcelain: () => ok(' M lib/merge.mjs'),
+      deleteBranch: () =>
+        fail(1, `error: Cannot delete branch '${BRANCH}' checked out at '${MAIN_WT}'`),
+    },
+  })
+
+  const result = runMerge({
+    pr: PR,
+    root,
+    recordPath: file,
+    headSha: SHA,
+    deps: depsOf(gh, git),
+  })
+
+  assert.equal(result.ok, true, JSON.stringify(result.steps, null, 2))
+  assert.equal(result.step, undefined, '不应停在 branch 步骤')
+  assert.equal(result.steps.find((step) => step.name === 'ff').skipped, true)
+
+  const branch = result.steps.find((step) => step.name === 'branch')
+  assert.equal(branch.ok, true)
+  assert.match(branch.detail, /仍被工作区检出/)
+  assert.match(branch.detail, /跳过删除/)
+  assert.ok(branch.detail.includes(`git -C ${MAIN_WT} branch -D -- ${BRANCH}`), branch.detail)
+})
+
+test('主工作区在 PR 分支且干净、但 checkout 失败：停在 ff 并给出可执行命令', () => {
+  const { root, file } = approvedRoot()
+  const gh = fakeGh()
+  const git = fakeGit({
+    worktrees: ON_PR_BRANCH,
+    responses: { checkout: () => fail(1, "fatal: 'main' is already checked out at '/repo/other'") },
+  })
+
+  const result = runMerge({
+    pr: PR,
+    root,
+    recordPath: file,
+    headSha: SHA,
+    deps: depsOf(gh, git),
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.step, 'ff')
+  assert.match(result.error, /主工作区停留在 task\/7/)
+  assert.match(result.error, /切换 main 失败/)
+  assert.ok(result.error.includes(`git -C ${MAIN_WT} checkout main`), result.error)
+  assert.equal(git.ops().includes('mergeFF'), false, 'checkout 失败不得继续快进')
 })
 
 test('本地分支已不存在：按跳过处理，不算失败', () => {
