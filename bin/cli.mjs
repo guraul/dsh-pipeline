@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /**
- * dsh-pipeline CLI：参数解析与四个子命令的编排。
+ * dsh-pipeline CLI：参数解析与子命令的编排。
  *
  * 判定、读写、执行全部复用 lib/，本文件不复制任何业务规则：
  * gate 走 decideGate()；merge 整条流程（闸门 → CI → squash 合并 → 清理现场）交给
- * lib/merge.mjs，合并方式由 gh.prMerge 固定为 --squash。
+ * lib/merge.mjs，合并方式由 gh.prMerge 固定为 --squash；
+ * task / pr 的流程分别交给 lib/task.mjs 与 lib/pr.mjs。
  *
  * 输出约定：面向人的信息走 stdout，错误与警告走 stderr，全部中文。
  * 退出码：0 通过 / 1 闸门拒绝 / 2 参数或环境错误。
@@ -27,6 +28,7 @@ import {
 } from '../lib/git.mjs'
 import { runMerge as runMergeFlow } from '../lib/merge.mjs'
 import { mergePolicy } from '../lib/policy.mjs'
+import { runPr as runPrFlow } from '../lib/pr.mjs'
 import { NONCE_PATTERN, analyzeVerdict, extractFindings } from '../lib/review.mjs'
 import {
   MAX_ROUND,
@@ -38,11 +40,12 @@ import {
   writeRecord,
   writeSkipAudit,
 } from '../lib/record.mjs'
+import { runTask as runTaskFlow } from '../lib/task.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8'))
 
-const IMPLEMENTED = new Set(['gate', 'merge', 'record', 'status'])
+const IMPLEMENTED = new Set(['gate', 'merge', 'record', 'status', 'task', 'pr'])
 const SUBCOMMANDS = ['task', 'prepare', 'pr', 'merge', 'gate', 'record', 'status']
 
 const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单一实现
@@ -54,9 +57,19 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
   merge      闸门通过后合并 PR（固定 --squash）并清理现场
   record     把审核响应落盘为记录
   status     查看审核记录概况
-  task       任务生命周期（未实现）
+  task       从 issue 创建 task/<号>-<slug> 分支与 worktree
   prepare    准备交付（未实现）
-  pr         创建/更新 PR（未实现）
+  pr         推送当前 task 分支并创建 PR
+
+task 用法:
+  dsh-pipeline task <issue号> [--root <dir>]
+  --root <dir>       仓库根目录（缺省取 git 顶层目录）
+  幂等：worktree 已存在时只打印路径；路径被别的目录占用时报错退出 2。
+
+pr 用法:
+  dsh-pipeline pr [--root <dir>]
+  --root <dir>       仓库根目录（缺省取当前 task worktree 的顶层目录）
+  当前分支必须是 task/<号>-<slug>；PR 已存在时只打印链接。
 
 gate / merge 选项:
   --pr <n>           PR 编号（必填）
@@ -328,6 +341,10 @@ const RECORD_VALUE_FLAGS = new Set([
 const RECORD_BOOL_FLAGS = new Set(['json'])
 const STATUS_VALUE_FLAGS = new Set(['root'])
 const STATUS_BOOL_FLAGS = new Set()
+const TASK_VALUE_FLAGS = new Set(['root'])
+const TASK_BOOL_FLAGS = new Set()
+const PR_VALUE_FLAGS = new Set(['root'])
+const PR_BOOL_FLAGS = new Set()
 
 function emit(io, lines) {
   for (const line of lines) {
@@ -720,6 +737,59 @@ function runStatus(argv, deps, io) {
 }
 
 /**
+ * task：issue 号是位置参数（唯一一个），其余走 --root。
+ * 参数错误一律 2，流程失败也一律 2——task 没有「闸门拒绝」这种中间态。
+ */
+function runTask(argv, deps, io) {
+  const [first, ...rest] = argv
+  if (first === undefined) return argError(io, 'task', '用法: dsh-pipeline task <issue号> [--root <dir>]')
+  if (first.startsWith('--')) return argError(io, 'task', `缺少 issue 号（用法: dsh-pipeline task <issue号>）`)
+  if (!/^[1-9][0-9]*$/.test(first)) return argError(io, 'task', `issue 号必须是正整数: ${first}`)
+
+  const parsed = parseArgs(rest, TASK_VALUE_FLAGS, TASK_BOOL_FLAGS)
+  if (parsed.error) return argError(io, 'task', parsed.error)
+  if (parsed.options.root !== undefined && !nonEmpty(parsed.options.root)) {
+    return argError(io, 'task', '--root 必须是非空目录路径')
+  }
+
+  const result = runTaskFlow({
+    issue: Number(first),
+    root: parsed.options.root,
+    cwd: nonEmpty(deps.cwd) ? deps.cwd : process.cwd(),
+    runner: deps.runner,
+    sleep: deps.sleep,
+    exists: deps.exists,
+  })
+  if (!result.ok) {
+    io.err(`task: ${result.error}`)
+    return 2
+  }
+  result.lines.forEach((line, index) => io.out(index === 0 ? `task: ${line}` : line))
+  return 0
+}
+
+/** pr：没有位置参数；分支名与 issue 号都由当前分支推导。 */
+function runPr(argv, deps, io) {
+  const parsed = parseArgs(argv, PR_VALUE_FLAGS, PR_BOOL_FLAGS)
+  if (parsed.error) return argError(io, 'pr', parsed.error)
+  if (parsed.options.root !== undefined && !nonEmpty(parsed.options.root)) {
+    return argError(io, 'pr', '--root 必须是非空目录路径')
+  }
+
+  const result = runPrFlow({
+    root: parsed.options.root,
+    cwd: nonEmpty(deps.cwd) ? deps.cwd : process.cwd(),
+    runner: deps.runner,
+  })
+  if (!result.ok) {
+    io.err(`pr: ${result.error}`)
+    return 2
+  }
+  result.lines.forEach((line, index) => io.out(index === 0 ? `pr: ${line}` : line))
+  return 0
+}
+
+/**
  * CLI 主入口。deps 可注入 runner 与输出流，便于测试；缺省走真实实现。
  * @param {string[]} argv
  * @param {{ runner?: Function, cwd?: string, stdout?: Function, stderr?: Function }} [deps]
@@ -757,6 +827,8 @@ export function runCli(argv, deps = {}) {
     if (first === 'gate') return runGate(rest, deps, io)
     if (first === 'merge') return runMerge(rest, deps, io)
     if (first === 'record') return runRecord(rest, deps, io)
+    if (first === 'task') return runTask(rest, deps, io)
+    if (first === 'pr') return runPr(rest, deps, io)
     return runStatus(rest, deps, io)
   } catch (error) {
     io.err(`dsh-pipeline ${first}: ${messageOf(error)}`)

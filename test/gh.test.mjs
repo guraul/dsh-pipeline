@@ -202,10 +202,12 @@ test('导出面固定：只有具名操作，没有接受 argv 的通用入口',
     'issueView',
     'prChecks',
     'prComment',
+    'prCreate',
     'prList',
     'prMerge',
     'prReview',
     'prView',
+    'prViewByBranch',
   ])
 
   for (const [name, fn] of callables) {
@@ -225,4 +227,52 @@ test('导出面固定：只有具名操作，没有接受 argv 的通用入口',
     '--json',
     'number,title,state,isDraft,headRefName,headRefOid,baseRefName,mergeable,url',
   ])
+})
+
+test('prViewByBranch：按分支名查 url，非法分支名不调用 gh', () => {
+  const runner = recorder({ status: 0, stdout: JSON.stringify({ url: 'https://github.com/o/r/pull/1' }), stderr: '' })
+  const result = gh.prViewByBranch('task/12-x', { repo: REPO, runner })
+  assert.equal(result.ok, true)
+  assert.equal(result.data.url, 'https://github.com/o/r/pull/1')
+  assert.deepEqual(runner.calls[0].args, ['pr', 'view', 'task/12-x', '--repo', REPO, '--json', 'url'])
+
+  const idle = recorder({ status: 0, stdout: '{}', stderr: '' })
+  for (const bad of ['', '-x', 'task/12 x', 'task/../main', null]) {
+    assert.equal(gh.prViewByBranch(bad, { repo: REPO, runner: idle }).code, 'E_INPUT', `branch=${String(bad)}`)
+  }
+  assert.equal(idle.calls.length, 0)
+})
+
+test('prCreate：base/head/title/body 各占一个 argv，缺一项就拒绝', () => {
+  const runner = recorder({ status: 0, stdout: 'https://github.com/o/r/pull/2\n', stderr: '' })
+  const result = gh.prCreate({
+    repo: REPO,
+    base: 'main',
+    head: 'task/12-x',
+    title: '标题 (#12)',
+    body: 'Closes #12\n',
+    runner,
+  })
+  assert.equal(result.ok, true)
+  assert.deepEqual(runner.calls[0].args, [
+    'pr',
+    'create',
+    '--repo',
+    REPO,
+    '--base',
+    'main',
+    '--head',
+    'task/12-x',
+    '--title',
+    '标题 (#12)',
+    '--body',
+    'Closes #12\n',
+  ])
+
+  const idle = recorder({ status: 0, stdout: '', stderr: '' })
+  assert.equal(gh.prCreate({ repo: REPO, head: 'task/12-x', title: 't', body: 'b', runner: idle }).ok, true)
+  assert.equal(gh.prCreate({ repo: REPO, head: '--admin', title: 't', body: 'b', runner: idle }).code, 'E_INPUT')
+  assert.equal(gh.prCreate({ repo: REPO, head: 'task/12-x', title: '  ', body: 'b', runner: idle }).code, 'E_INPUT')
+  assert.equal(gh.prCreate({ repo: REPO, head: 'task/12-x', title: 't', body: '   ', runner: idle }).code, 'E_INPUT')
+  assert.equal(gh.prCreate({ repo: 'bad repo', head: 'task/12-x', title: 't', body: 'b', runner: idle }).code, 'E_INPUT')
 })
