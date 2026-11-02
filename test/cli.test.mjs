@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -11,12 +11,14 @@ import {
   readRecord,
   recordFile,
   reviewsDir,
+  validateRecord,
   writeRecord,
 } from '../lib/record.mjs'
 
 const SHA = 'a'.repeat(40)
 const OTHER_SHA = 'b'.repeat(40)
 const NONCE = 'ABCDEFGHJKLM'
+const PKG = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 
 function tmp() {
   return mkdtempSync(join(tmpdir(), 'dsh-cli-'))
@@ -298,6 +300,170 @@ test('record: 响应缺少判定行时退出码 2 且不落盘', () => {
   assert.equal(run(['record', '--request', request, '--response', response], io, { cwd: root }), 2)
   assert.match(io.state.err, /判定行/)
   assert.equal(readdirSync(root).includes('.dsh-web'), false)
+})
+
+/** 造一份请求 + 响应；envelope 为 true 时按插件 prepare 的 {request, stats} 写。 */
+function recordInputs(dir, request, { envelope = true, verdict = 'APPROVE' } = {}) {
+  const requestFile = join(dir, 'request.json')
+  const responseFile = join(dir, 'response.txt')
+  const diffChars = String(request.diff ?? '').length
+  const payload = envelope
+    ? { request, stats: { diffChars, addedLines: 1, diffSha256: 'sha256:x' } }
+    : request
+  writeFileSync(requestFile, JSON.stringify(payload), 'utf8')
+  writeFileSync(responseFile, reviewText(verdict, request.head_sha), 'utf8')
+  return { requestFile, responseFile }
+}
+
+function runRecordWith(root, request, { cwd = root, envelope = true, extra = [] } = {}) {
+  const inputs = recordInputs(root, request, { envelope })
+  const io = makeIO()
+  const code = run(
+    ['record', '--request', inputs.requestFile, '--response', inputs.responseFile, ...extra],
+    io,
+    { cwd },
+  )
+  return { code, io }
+}
+
+test('record: --root 决定落盘位置，不污染 cwd', () => {
+  const root = tmp()
+  const cwd = tmp()
+  const request = { pr: 7, head_sha: SHA, nonce: NONCE, diff: 'diff --git a/x b/x\n+1' }
+
+  const { code } = runRecordWith(root, request, { cwd, extra: ['--root', root] })
+  assert.equal(code, 0)
+  assert.ok(existsSync(recordFile(reviewsDir(root), 7, SHA)), '记录应落在 --root 下')
+  assert.equal(readdirSync(cwd).includes('.dsh-web'), false, 'cwd 不该被写入运行态')
+})
+
+test('record: 缺省根目录仍是 cwd（--root 可省略）', () => {
+  const cwd = tmp()
+  const request = { pr: 7, head_sha: SHA, nonce: NONCE, diff: 'diff --git a/x b/x\n+1' }
+
+  const { code } = runRecordWith(cwd, request, { cwd })
+  assert.equal(code, 0)
+  assert.ok(existsSync(recordFile(reviewsDir(cwd), 7, SHA)))
+})
+
+test('record: 写出的记录能通过包自己的 validateRecord', () => {
+  const root = tmp()
+  const request = { pr: 7, head_sha: SHA, nonce: NONCE, diff: 'diff --git a/x b/x\n+1' }
+
+  const { code } = runRecordWith(root, request, { extra: ['--root', root, '--duration-ms', '1200'] })
+  assert.equal(code, 0)
+
+  const file = recordFile(reviewsDir(root), 7, SHA)
+  const saved = JSON.parse(readFileSync(file, 'utf8'))
+  const result = validateRecord(saved)
+  assert.equal(result.ok, true, `记录不合规: ${JSON.stringify(result.errors)}`)
+  assert.equal(saved.schemaVersion, SCHEMA_VERSION)
+  assert.equal(saved.nonce, NONCE)
+  assert.equal(saved.form, 'cli')
+  assert.equal(typeof saved.model, 'string')
+  assert.equal(saved.durationMs, 1200)
+  assert.equal(saved.request.diffChars, request.diff.length)
+  assert.equal(saved.request.issue, null)
+})
+
+test('record: 信封与扁平两种请求都能处理', () => {
+  const root = tmp()
+
+  const envelope = runRecordWith(
+    root,
+    {
+      pr: 7,
+      head_sha: SHA,
+      nonce: NONCE,
+      diff: 'diff --git a/.env b/.env\n+A=1',
+      issue: { number: 217, title: 't', body: 'b' },
+    },
+    { extra: ['--root', root] },
+  )
+  assert.equal(envelope.code, 0, envelope.io.state.err)
+  const fromEnvelope = JSON.parse(readFileSync(recordFile(reviewsDir(root), 7, SHA), 'utf8'))
+  assert.equal(fromEnvelope.pr, 7)
+  assert.equal(fromEnvelope.request.issue, 217)
+
+  const flatRoot = tmp()
+  const flat = runRecordWith(
+    flatRoot,
+    {
+      pr: 8,
+      head_sha: OTHER_SHA,
+      nonce: NONCE,
+      diff: 'diff --git a/x b/x\n+1',
+      issue: 219,
+    },
+    { envelope: false, extra: ['--root', flatRoot] },
+  )
+  assert.equal(flat.code, 0, flat.io.state.err)
+  const fromFlat = JSON.parse(readFileSync(recordFile(reviewsDir(flatRoot), 8, OTHER_SHA), 'utf8'))
+  assert.equal(fromFlat.pr, 8)
+  assert.equal(fromFlat.request.issue, 219)
+})
+
+test('record: 命中 .env 高风险时 policy.hit=true、errorCode=E_POLICY，且 verdict 不变', () => {
+  const root = tmp()
+  const request = {
+    pr: 7,
+    head_sha: SHA,
+    nonce: NONCE,
+    files: ['.env'],
+    diff: 'diff --git a/.env b/.env\n+SECRET=1\n',
+  }
+
+  const { code } = runRecordWith(root, request, { extra: ['--root', root] })
+  assert.equal(code, 0)
+
+  const saved = readRecord(recordFile(reviewsDir(root), 7, SHA))
+  assert.equal(saved.policy.hit, true)
+  assert.ok(saved.policy.reasons.length > 0)
+  assert.equal(saved.errorCode, 'E_POLICY')
+  assert.equal(saved.verdict, 'APPROVE', '高风险只标注错误码，不改判定')
+})
+
+test('record: 请求没带 files 时从 diff 头还原路径，高风险不漏判', () => {
+  const root = tmp()
+  const request = {
+    pr: 7,
+    head_sha: SHA,
+    nonce: NONCE,
+    diff: '--- a/conf/.env.production\n+++ b/conf/.env.production\n+TOKEN=1\n',
+  }
+
+  const { code } = runRecordWith(root, request, { extra: ['--root', root] })
+  assert.equal(code, 0)
+
+  const saved = readRecord(recordFile(reviewsDir(root), 7, SHA))
+  assert.equal(saved.policy.hit, true)
+  assert.equal(saved.errorCode, 'E_POLICY')
+})
+
+test('record: 高风险追加规则来自 <root>/.dsh/pipeline.json，policyVersion 等于 package.json 版本', () => {
+  const root = tmp()
+  mkdirSync(join(root, '.dsh'), { recursive: true })
+  writeFileSync(
+    join(root, '.dsh', 'pipeline.json'),
+    JSON.stringify({ repo: 'owner/repo', highRisk: ['deploy/**'] }),
+    'utf8',
+  )
+  const request = {
+    pr: 7,
+    head_sha: SHA,
+    nonce: NONCE,
+    files: ['deploy/prod.sh'],
+    diff: 'diff --git a/deploy/prod.sh b/deploy/prod.sh\n+rm -rf /\n',
+  }
+
+  const { code } = runRecordWith(root, request, { extra: ['--root', root] })
+  assert.equal(code, 0)
+
+  const saved = readRecord(recordFile(reviewsDir(root), 7, SHA))
+  assert.equal(saved.policy.hit, true)
+  assert.ok(saved.policy.reasons.some((reason) => reason.includes('deploy/prod.sh')))
+  assert.equal(saved.policyVersion, PKG.version)
+  assert.equal(saved.policyVersion, PACKAGE_VERSION)
 })
 
 test('status: 输出记录数与最近一条结论', () => {

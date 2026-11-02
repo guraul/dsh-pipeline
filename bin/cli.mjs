@@ -14,6 +14,7 @@ import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { loadConfig } from '../lib/config.mjs'
 import { evaluateGate } from '../lib/gate.mjs'
 import { prChecks, prMerge, prView } from '../lib/gh.mjs'
 import {
@@ -25,9 +26,12 @@ import {
   worktreeRemove,
 } from '../lib/git.mjs'
 import { runMerge as runMergeFlow } from '../lib/merge.mjs'
+import { mergePolicy } from '../lib/policy.mjs'
 import { NONCE_PATTERN, extractFindings, parseVerdict } from '../lib/review.mjs'
 import {
   MAX_ROUND,
+  PACKAGE_VERSION,
+  SCHEMA_VERSION,
   SHA_PATTERN,
   readRecord,
   reviewsDir,
@@ -68,10 +72,12 @@ merge 额外选项:
   --force            CI 未过仍合并（闸门不受影响，仍强制生效）
 
 record 选项:
-  --request <file>   审核请求 JSON
+  --request <file>   审核请求 JSON（插件信封 {request,stats} 或扁平请求均可）
   --response <file>  reviewer 响应文本
   --round <n>        审核轮次（1..${MAX_ROUND}，默认 1）
-  记录写入当前工作目录的 .dsh-web/reviews
+  --root <dir>       仓库根目录（默认当前工作目录），记录写入 <root>/.dsh-web/reviews
+  --model <名>       产生判定的模型（缺省取请求里的 model）
+  --duration-ms <n>  本次审核耗时（毫秒，可选）
 
 status 选项:
   --root <dir>       仓库根目录（必填）
@@ -302,7 +308,7 @@ const GATE_VALUE_FLAGS = new Set(['pr', 'root', 'record', 'reason', 'head-sha'])
 const GATE_BOOL_FLAGS = new Set(['no-review'])
 const MERGE_VALUE_FLAGS = new Set([...GATE_VALUE_FLAGS, 'checks-file'])
 const MERGE_BOOL_FLAGS = new Set([...GATE_BOOL_FLAGS, 'check-only', 'force'])
-const RECORD_VALUE_FLAGS = new Set(['request', 'response', 'round'])
+const RECORD_VALUE_FLAGS = new Set(['request', 'response', 'round', 'root', 'model', 'duration-ms'])
 const RECORD_BOOL_FLAGS = new Set()
 const STATUS_VALUE_FLAGS = new Set(['root'])
 const STATUS_BOOL_FLAGS = new Set()
@@ -393,6 +399,48 @@ function readTextFile(file, label) {
   }
 }
 
+/** 插件 prepare 写的是信封 {request, stats}；扁平请求则直接用顶层字段。 */
+function requestOf(payload) {
+  return isPlainObject(payload.request) ? payload.request : payload
+}
+
+/** issue 可能是号、也可能是 {number,...}（prepare 的形态）；取不到就是 null，不猜。 */
+function issueNumberOf(issue) {
+  if (Number.isInteger(issue) && issue > 0) return issue
+  if (isPlainObject(issue) && Number.isInteger(issue.number) && issue.number > 0) return issue.number
+  return null
+}
+
+/** 请求没带 files 时从 diff 的 `+++ b/<path>` 头还原，避免高风险判定因缺文件列表而静默放行。 */
+function diffPaths(diff) {
+  const paths = new Set()
+  for (const line of String(diff ?? '').split('\n')) {
+    const match = /^\+\+\+ b\/(.+)$/.exec(line)
+    if (match) paths.add(match[1])
+  }
+  return [...paths]
+}
+
+function changedFiles(request) {
+  return Array.isArray(request.files) ? request.files : diffPaths(request.diff)
+}
+
+/** 变更行数（增删合计），忽略 diff 的 +++/--- 文件头。 */
+function countChangedLines(diff) {
+  let count = 0
+  for (const line of String(diff ?? '').split('\n')) {
+    if (line.startsWith('+++') || line.startsWith('---')) continue
+    if (line.startsWith('+') || line.startsWith('-')) count += 1
+  }
+  return count
+}
+
+function parseDuration(value) {
+  if (value === undefined) return { value: undefined }
+  if (!/^[0-9]+$/.test(value)) return { error: `--duration-ms 必须是非负整数: ${value}` }
+  return { value: Number(value) }
+}
+
 function runRecord(argv, deps, io) {
   const parsed = parseArgs(argv, RECORD_VALUE_FLAGS, RECORD_BOOL_FLAGS)
   if (parsed.error) return argError(io, 'record', parsed.error)
@@ -400,18 +448,28 @@ function runRecord(argv, deps, io) {
 
   if (!nonEmpty(options.request)) return argError(io, 'record', '缺少必填参数 --request')
   if (!nonEmpty(options.response)) return argError(io, 'record', '缺少必填参数 --response')
+  if (options.root !== undefined && !nonEmpty(options.root)) {
+    return argError(io, 'record', '--root 必须是非空目录路径')
+  }
+  if (options.model !== undefined && !nonEmpty(options.model)) {
+    return argError(io, 'record', '--model 必须是非空字符串')
+  }
   const round = parseRound(options.round)
   if (round.error) return argError(io, 'record', round.error)
+  const duration = parseDuration(options['duration-ms'])
+  if (duration.error) return argError(io, 'record', duration.error)
 
   const requestFile = readTextFile(options.request, '请求文件')
   if (requestFile.error) return argError(io, 'record', requestFile.error)
-  let request
+  let payload
   try {
-    request = JSON.parse(requestFile.text)
+    payload = JSON.parse(requestFile.text)
   } catch {
     return argError(io, 'record', `请求文件不是合法 JSON: ${options.request}`)
   }
-  if (!isPlainObject(request)) return argError(io, 'record', '请求内容必须是 JSON 对象')
+  if (!isPlainObject(payload)) return argError(io, 'record', '请求内容必须是 JSON 对象')
+  const request = requestOf(payload)
+
   if (!Number.isInteger(request.pr) || request.pr <= 0) {
     return argError(io, 'record', `请求中的 pr 必须是正整数: ${String(request.pr)}`)
   }
@@ -441,22 +499,53 @@ function runRecord(argv, deps, io) {
   const extracted = extractFindings(response)
   if (extracted.warn !== null) io.err(`record: 提示: ${extracted.warn}`)
 
+  const root = nonEmpty(options.root) ? options.root : nonEmpty(deps.cwd) ? deps.cwd : process.cwd()
+  let policy
+  try {
+    const { config } = loadConfig(root)
+    policy = mergePolicy({ highRiskAppend: config.highRisk }).hit(
+      changedFiles(request),
+      countChangedLines(request.diff),
+      { diff: request.diff },
+    )
+  } catch (error) {
+    // 策略算不出来就写不了可信记录：宁可失败，也不写一条 policy 缺失的记录。
+    io.err(`record: 高风险判定失败: ${messageOf(error)}`)
+    return 2
+  }
+
   const record = {
+    schemaVersion: SCHEMA_VERSION,
+    policyVersion: PACKAGE_VERSION,
     pr: request.pr,
     round: round.value,
     verdict: verdict.verdict,
     head_sha: request.head_sha,
+    nonce: request.nonce,
     findings: extracted.findings,
     evidence: extracted.evidence,
+    form: 'cli',
+    model: nonEmpty(options.model)
+      ? options.model
+      : nonEmpty(request.model)
+        ? request.model
+        : 'unknown',
+    request: {
+      issue: issueNumberOf(request.issue),
+      diffChars: String(request.diff ?? '').length,
+    },
+    policy,
     createdAt: new Date().toISOString(),
   }
+  if (duration.value !== undefined) record.durationMs = duration.value
+  // 命中高风险不改判定（判定是 reviewer 的结论），只标注合并必须人工放行。
+  if (policy.hit) record.errorCode = 'E_POLICY'
   if (typeof request.traceId === 'string' && request.traceId.length > 0) {
     record.traceId = request.traceId
   }
 
-  const cwd = nonEmpty(deps.cwd) ? deps.cwd : process.cwd()
   try {
-    const file = writeRecord(reviewsDir(cwd), record)
+    const file = writeRecord(reviewsDir(root), record)
     io.out(`已写入审核记录: ${file}`)
     return 0
   } catch (error) {
