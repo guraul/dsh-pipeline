@@ -289,7 +289,7 @@ test('record: 解析响应并落盘，文件名与字段正确', () => {
   assert.ok(!Number.isNaN(Date.parse(saved.createdAt)))
 })
 
-test('record: 响应缺少判定行时退出码 2 且不落盘', () => {
+test('record: 响应缺少判定行时落一条 ESCALATE/E_PARSE，退出码 1', () => {
   const root = tmp()
   const request = join(root, 'request.json')
   const response = join(root, 'response.txt')
@@ -297,9 +297,80 @@ test('record: 响应缺少判定行时退出码 2 且不落盘', () => {
   writeFileSync(response, '只有分析，没有判定行。', 'utf8')
 
   const io = makeIO()
-  assert.equal(run(['record', '--request', request, '--response', response], io, { cwd: root }), 2)
+  assert.equal(run(['record', '--request', request, '--response', response], io, { cwd: root }), 1)
+  assert.match(io.state.err, /E_PARSE/)
   assert.match(io.state.err, /判定行/)
-  assert.equal(readdirSync(root).includes('.dsh-web'), false)
+
+  const saved = readRecord(recordFile(reviewsDir(root), 7, SHA))
+  assert.equal(saved.verdict, 'ESCALATE')
+  assert.equal(saved.errorCode, 'E_PARSE')
+  assert.equal(saved.head_sha, SHA)
+  assert.deepEqual(saved.findings, [])
+  assert.equal(saved.evidence.length, 1)
+  assert.match(saved.evidence[0], /判定行/)
+})
+
+test('record: 响应有两个判定行时落一条 ESCALATE/E_PARSE，退出码 1', () => {
+  const root = tmp()
+  const lines = [
+    `${NONCE} VERDICT: APPROVE SHA: ${SHA}`,
+    `${NONCE} VERDICT: REJECT SHA: ${SHA}`,
+  ].join('\n')
+  const inputs = writeInputs(root, { pr: 7, head_sha: SHA, nonce: NONCE }, `${lines}\n`)
+
+  const io = makeIO()
+  assert.equal(
+    run(['record', '--request', inputs.requestFile, '--response', inputs.responseFile, '--root', root], io, {
+      cwd: root,
+    }),
+    1,
+  )
+  assert.match(io.state.err, /E_PARSE/)
+
+  const saved = readRecord(recordFile(reviewsDir(root), 7, SHA))
+  assert.equal(saved.verdict, 'ESCALATE')
+  assert.equal(saved.errorCode, 'E_PARSE')
+  assert.match(saved.evidence[0], /2 条判定行/)
+})
+
+test('record: 判定 sha 与请求不一致时落 ESCALATE/E_SHA_MISMATCH，退出码 1', () => {
+  const root = tmp()
+  const inputs = writeInputs(
+    root,
+    { pr: 7, head_sha: SHA, nonce: NONCE, diff: 'diff --git a/x b/x\n+1' },
+    plainReviewText('APPROVE', OTHER_SHA),
+  )
+
+  const io = makeIO()
+  assert.equal(
+    run(['record', '--request', inputs.requestFile, '--response', inputs.responseFile, '--root', root], io, {
+      cwd: root,
+    }),
+    1,
+  )
+  assert.match(io.state.err, /E_SHA_MISMATCH/)
+
+  const saved = readRecord(recordFile(reviewsDir(root), 7, SHA))
+  assert.equal(saved.verdict, 'ESCALATE')
+  assert.equal(saved.errorCode, 'E_SHA_MISMATCH')
+  assert.equal(saved.head_sha, SHA)
+  assert.ok(saved.evidence.some((item) => item.includes(OTHER_SHA)))
+})
+
+test('record: 响应文件不存在时退出码 2 且不产生记录', () => {
+  const root = tmp()
+  const requestFile = join(root, 'request.json')
+  writeFileSync(requestFile, JSON.stringify({ pr: 7, head_sha: SHA, nonce: NONCE }), 'utf8')
+
+  const io = makeIO()
+  const code = run(
+    ['record', '--request', requestFile, '--response', join(root, 'missing.txt'), '--root', root],
+    io,
+    { cwd: root },
+  )
+  assert.equal(code, 2)
+  assert.match(io.state.err, /无法读取响应文件/)
+  assert.equal(existsSync(reviewsDir(root)), false)
 })
 
 /** 造一份请求 + 响应；envelope 为 true 时按插件 prepare 的 {request, stats} 写。 */
