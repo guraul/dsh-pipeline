@@ -74,10 +74,14 @@ merge 额外选项:
 record 选项:
   --request <file>   审核请求 JSON（插件信封 {request,stats} 或扁平请求均可）
   --response <file>  reviewer 响应文本
+  --findings <file>  响应里没有 json 代码块时的兜底（{\"findings\":[...],\"evidence\":[...]}）
   --round <n>        审核轮次（1..${MAX_ROUND}，默认 1）
   --root <dir>       仓库根目录（默认当前工作目录），记录写入 <root>/.dsh-web/reviews
   --model <名>       产生判定的模型（缺省取请求里的 model）
+  --provider <名>    产出判定的提供方（缺省 unknown）
+  --form <名>        记录的形态标记（缺省 cli）
   --duration-ms <n>  本次审核耗时（毫秒，可选）
+  --json             把写出的记录完整对象打到 stdout（不再打印「已写入审核记录」）
 
 status 选项:
   --root <dir>       仓库根目录（必填）
@@ -308,8 +312,18 @@ const GATE_VALUE_FLAGS = new Set(['pr', 'root', 'record', 'reason', 'head-sha'])
 const GATE_BOOL_FLAGS = new Set(['no-review'])
 const MERGE_VALUE_FLAGS = new Set([...GATE_VALUE_FLAGS, 'checks-file'])
 const MERGE_BOOL_FLAGS = new Set([...GATE_BOOL_FLAGS, 'check-only', 'force'])
-const RECORD_VALUE_FLAGS = new Set(['request', 'response', 'round', 'root', 'model', 'duration-ms'])
-const RECORD_BOOL_FLAGS = new Set()
+const RECORD_VALUE_FLAGS = new Set([
+  'request',
+  'response',
+  'findings',
+  'round',
+  'root',
+  'model',
+  'provider',
+  'form',
+  'duration-ms',
+])
+const RECORD_BOOL_FLAGS = new Set(['json'])
 const STATUS_VALUE_FLAGS = new Set(['root'])
 const STATUS_BOOL_FLAGS = new Set()
 
@@ -399,6 +413,39 @@ function readTextFile(file, label) {
   }
 }
 
+/** 响应里是否出现 ```json 块（只要围栏在就算，内容是否可解析交给 extractFindings 判断）。 */
+function hasJsonFence(text) {
+  return /```json[ \t]*\r?\n/.test(String(text ?? ''))
+}
+
+/**
+ * 读取 --findings 兜底文件：形如 {"findings":[...],"evidence":[...]}。
+ * 文件不可读、非法 JSON、缺 findings 数组一律返回中文错误（不向上抛 SyntaxError）。
+ */
+function readFindingsFile(file) {
+  const raw = readTextFile(file, 'findings 文件')
+  if (raw.error) return { error: raw.error }
+
+  let payload
+  try {
+    payload = JSON.parse(raw.text)
+  } catch {
+    return { error: `findings 文件不是合法 JSON: ${file}` }
+  }
+  if (!isPlainObject(payload)) return { error: `findings 文件必须是 JSON 对象: ${file}` }
+  if (!Array.isArray(payload.findings)) {
+    return { error: `findings 文件缺少 findings 数组: ${file}` }
+  }
+  if (payload.evidence !== undefined && !Array.isArray(payload.evidence)) {
+    return { error: `findings 文件里的 evidence 必须是数组: ${file}` }
+  }
+
+  return {
+    findings: payload.findings,
+    evidence: payload.evidence ?? [],
+  }
+}
+
 /** 插件 prepare 写的是信封 {request, stats}；扁平请求则直接用顶层字段。 */
 function requestOf(payload) {
   return isPlainObject(payload.request) ? payload.request : payload
@@ -454,6 +501,15 @@ function runRecord(argv, deps, io) {
   if (options.model !== undefined && !nonEmpty(options.model)) {
     return argError(io, 'record', '--model 必须是非空字符串')
   }
+  if (options.provider !== undefined && !nonEmpty(options.provider)) {
+    return argError(io, 'record', '--provider 必须是非空字符串')
+  }
+  if (options.form !== undefined && !nonEmpty(options.form)) {
+    return argError(io, 'record', '--form 必须是非空字符串')
+  }
+  if (options.findings !== undefined && !nonEmpty(options.findings)) {
+    return argError(io, 'record', '--findings 必须是非空文件路径')
+  }
   const round = parseRound(options.round)
   if (round.error) return argError(io, 'record', round.error)
   const duration = parseDuration(options['duration-ms'])
@@ -497,6 +553,17 @@ function runRecord(argv, deps, io) {
   }
 
   const extracted = extractFindings(response)
+  // 兜底文件先读先校验：传了坏文件就明确失败，不静默忽略。
+  const fallback = options.findings === undefined ? null : readFindingsFile(options.findings)
+  if (fallback !== null && fallback.error) return argError(io, 'record', fallback.error)
+
+  // 只有响应里根本没有 ```json 块时才走兜底；有块但解析失败仍按解析失败处理。
+  const usedFallback = fallback !== null && !hasJsonFence(response)
+  if (usedFallback) {
+    extracted.findings = fallback.findings
+    extracted.evidence = fallback.evidence
+    extracted.warn = null
+  }
   if (extracted.warn !== null) io.err(`record: 提示: ${extracted.warn}`)
 
   const root = nonEmpty(options.root) ? options.root : nonEmpty(deps.cwd) ? deps.cwd : process.cwd()
@@ -524,7 +591,8 @@ function runRecord(argv, deps, io) {
     nonce: request.nonce,
     findings: extracted.findings,
     evidence: extracted.evidence,
-    form: 'cli',
+    form: nonEmpty(options.form) ? options.form : 'cli',
+    provider: nonEmpty(options.provider) ? options.provider : 'unknown',
     model: nonEmpty(options.model)
       ? options.model
       : nonEmpty(request.model)
@@ -546,7 +614,12 @@ function runRecord(argv, deps, io) {
 
   try {
     const file = writeRecord(reviewsDir(root), record)
-    io.out(`已写入审核记录: ${file}`)
+    // 插件端要薄转发：--json 时只输出记录本体，便于调用方直接 JSON.parse。
+    if (options.json === true) {
+      io.out(JSON.stringify(JSON.parse(readFileSync(file, 'utf8'))))
+    } else {
+      io.out(`已写入审核记录: ${file}`)
+    }
     return 0
   } catch (error) {
     io.err(`record: 写入失败: ${messageOf(error)}`)

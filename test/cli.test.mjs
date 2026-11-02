@@ -466,6 +466,133 @@ test('record: 高风险追加规则来自 <root>/.dsh/pipeline.json，policyVers
   assert.equal(saved.policyVersion, PACKAGE_VERSION)
 })
 
+/** 只是分析 + 判定行，没有 ```json 块——插件薄转发时的典型响应。 */
+function plainReviewText(verdict = 'APPROVE', sha = SHA) {
+  return ['分析：变更符合验收依据。', `${NONCE} VERDICT: ${verdict} SHA: ${sha}`, ''].join('\n')
+}
+
+/** 直接写请求/响应文件，用于控制响应里有没有 json 块。 */
+function writeInputs(dir, request, response) {
+  const requestFile = join(dir, 'request.json')
+  const responseFile = join(dir, 'response.txt')
+  writeFileSync(requestFile, JSON.stringify(request), 'utf8')
+  writeFileSync(responseFile, response, 'utf8')
+  return { requestFile, responseFile }
+}
+
+const RECORD_REQUEST = { pr: 7, head_sha: SHA, nonce: NONCE, diff: 'diff --git a/x b/x\n+1' }
+
+test('record: 响应无 ```json 块时用 --findings 兜底', () => {
+  const root = tmp()
+  const findings = [
+    { severity: 'major', file: 'lib/a.mjs', line: 3, message: '缺少边界检查' },
+  ]
+  const evidence = ['cmd: node --test']
+  const inputs = writeInputs(root, RECORD_REQUEST, plainReviewText())
+  const findingsFile = join(root, 'findings.json')
+  writeFileSync(findingsFile, JSON.stringify({ findings, evidence }), 'utf8')
+
+  const io = makeIO()
+  const code = run(
+    ['record', '--request', inputs.requestFile, '--response', inputs.responseFile, '--findings', findingsFile, '--root', root],
+    io,
+    { cwd: root },
+  )
+  assert.equal(code, 0, io.state.err)
+
+  const saved = readRecord(recordFile(reviewsDir(root), 7, SHA))
+  assert.deepEqual(saved.findings, findings)
+  assert.deepEqual(saved.evidence, evidence)
+})
+
+test('record: --findings 文件不是合法 JSON 时退出 2 且给出中文错误', () => {
+  const root = tmp()
+  const inputs = writeInputs(root, RECORD_REQUEST, plainReviewText())
+  const findingsFile = join(root, 'broken.json')
+  writeFileSync(findingsFile, '{"findings": [', 'utf8')
+
+  const io = makeIO()
+  const code = run(
+    ['record', '--request', inputs.requestFile, '--response', inputs.responseFile, '--findings', findingsFile, '--root', root],
+    io,
+    { cwd: root },
+  )
+  assert.equal(code, 2)
+  assert.match(io.state.err, /findings 文件不是合法 JSON/)
+  assert.doesNotMatch(io.state.err, /SyntaxError/)
+  assert.equal(existsSync(reviewsDir(root)), false)
+})
+
+test('record: --findings 文件缺 findings 数组时退出 2', () => {
+  const root = tmp()
+  const inputs = writeInputs(root, RECORD_REQUEST, plainReviewText())
+  const findingsFile = join(root, 'findings.json')
+  writeFileSync(findingsFile, JSON.stringify({ evidence: ['cmd: node --test'] }), 'utf8')
+
+  const io = makeIO()
+  const code = run(
+    ['record', '--request', inputs.requestFile, '--response', inputs.responseFile, '--findings', findingsFile, '--root', root],
+    io,
+    { cwd: root },
+  )
+  assert.equal(code, 2)
+  assert.match(io.state.err, /缺少 findings 数组/)
+  assert.equal(existsSync(reviewsDir(root)), false)
+})
+
+test('record: --provider / --form 落盘，缺省为 unknown / cli', () => {
+  const root = tmp()
+  const inputs = writeInputs(root, RECORD_REQUEST, plainReviewText())
+  const explicit = makeIO()
+  assert.equal(
+    run(
+      ['record', '--request', inputs.requestFile, '--response', inputs.responseFile, '--root', root, '--provider', 'codebuddy', '--form', 'plugin'],
+      explicit,
+      { cwd: root },
+    ),
+    0,
+    explicit.state.err,
+  )
+  const saved = readRecord(recordFile(reviewsDir(root), 7, SHA))
+  assert.equal(saved.provider, 'codebuddy')
+  assert.equal(saved.form, 'plugin')
+
+  const defaultRoot = tmp()
+  const defaultInputs = writeInputs(defaultRoot, RECORD_REQUEST, plainReviewText())
+  const io = makeIO()
+  assert.equal(
+    run(['record', '--request', defaultInputs.requestFile, '--response', defaultInputs.responseFile, '--root', defaultRoot], io, {
+      cwd: defaultRoot,
+    }),
+    0,
+    io.state.err,
+  )
+  const fallback = readRecord(recordFile(reviewsDir(defaultRoot), 7, SHA))
+  assert.equal(fallback.provider, 'unknown')
+  assert.equal(fallback.form, 'cli')
+})
+
+test('record: --json 输出可被 JSON.parse，含 verdict，且不打印「已写入审核记录」', () => {
+  const root = tmp()
+  const inputs = writeInputs(root, RECORD_REQUEST, plainReviewText('REJECT'))
+  const io = makeIO()
+
+  assert.equal(
+    run(['record', '--request', inputs.requestFile, '--response', inputs.responseFile, '--root', root, '--json'], io, {
+      cwd: root,
+    }),
+    0,
+    io.state.err,
+  )
+  assert.doesNotMatch(io.state.out, /已写入审核记录/)
+
+  const printed = JSON.parse(io.state.out)
+  assert.equal(printed.verdict, 'REJECT')
+  assert.equal(printed.pr, 7)
+  assert.equal(printed.head_sha, SHA)
+  assert.deepEqual(printed, JSON.parse(readFileSync(recordFile(reviewsDir(root), 7, SHA), 'utf8')))
+})
+
 test('status: 输出记录数与最近一条结论', () => {
   const root = tmp()
   writeRecord(
