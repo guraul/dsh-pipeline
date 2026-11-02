@@ -27,7 +27,7 @@ import {
 } from '../lib/git.mjs'
 import { runMerge as runMergeFlow } from '../lib/merge.mjs'
 import { mergePolicy } from '../lib/policy.mjs'
-import { NONCE_PATTERN, extractFindings, parseVerdict } from '../lib/review.mjs'
+import { NONCE_PATTERN, analyzeVerdict, extractFindings } from '../lib/review.mjs'
 import {
   MAX_ROUND,
   PACKAGE_VERSION,
@@ -82,6 +82,8 @@ record 选项:
   --form <名>        记录的形态标记（缺省 cli）
   --duration-ms <n>  本次审核耗时（毫秒，可选）
   --json             把写出的记录完整对象打到 stdout（不再打印「已写入审核记录」）
+
+  判定行无法解析或提交不匹配时仍写一条 ESCALATE 记录，退出码 1（审计轨迹不丢）。
 
 status 选项:
   --root <dir>       仓库根目录（必填）
@@ -540,22 +542,25 @@ function runRecord(argv, deps, io) {
   if (responseFile.error) return argError(io, 'record', responseFile.error)
   const response = responseFile.text
 
-  const verdict = parseVerdict(response, { nonce: request.nonce, diff: request.diff })
-  if (!verdict.ok) {
-    return argError(io, 'record', '无法从响应中解析出唯一且带正确标记的判定行')
-  }
-  if (verdict.sha !== request.head_sha) {
-    return argError(
-      io,
-      'record',
-      `判定针对提交 ${verdict.sha}，与请求提交 ${request.head_sha} 不一致`,
-    )
+  // 兜底文件先读先校验：传了坏文件就明确失败，不静默忽略。
+  // 它是「参数/环境错误」，必须先于判定失败处理，否则一条坏路径会被误当成判定问题。
+  const fallback = options.findings === undefined ? null : readFindingsFile(options.findings)
+  if (fallback !== null && fallback.error) return argError(io, 'record', fallback.error)
+
+  const analysis = analyzeVerdict(response, { nonce: request.nonce, diff: request.diff })
+  // 判定不可用不阻断落盘：审计轨迹不能因为「模型没按格式回答」而断掉。
+  // 记录写成 ESCALATE，退出码仍是 1（闸门拒绝）；只有落盘失败才是 2。
+  let escalation = null
+  if (!analysis.ok) {
+    escalation = { errorCode: 'E_PARSE', reason: analysis.reason }
+  } else if (analysis.sha !== request.head_sha) {
+    escalation = {
+      errorCode: 'E_SHA_MISMATCH',
+      reason: `判定针对提交 ${analysis.sha}，与请求提交 ${request.head_sha} 不一致`,
+    }
   }
 
   const extracted = extractFindings(response)
-  // 兜底文件先读先校验：传了坏文件就明确失败，不静默忽略。
-  const fallback = options.findings === undefined ? null : readFindingsFile(options.findings)
-  if (fallback !== null && fallback.error) return argError(io, 'record', fallback.error)
 
   // 只有响应里根本没有 ```json 块时才走兜底；有块但解析失败仍按解析失败处理。
   const usedFallback = fallback !== null && !hasJsonFence(response)
@@ -564,7 +569,20 @@ function runRecord(argv, deps, io) {
     extracted.evidence = fallback.evidence
     extracted.warn = null
   }
-  if (extracted.warn !== null) io.err(`record: 提示: ${extracted.warn}`)
+  if (escalation === null && extracted.warn !== null) io.err(`record: 提示: ${extracted.warn}`)
+
+  let findings = extracted.findings
+  let evidence = extracted.evidence
+  if (escalation !== null) {
+    if (escalation.errorCode === 'E_PARSE') {
+      // 解析失败意味着响应内容不可信：不保留从它里面抽出的任何结论，只留解析器给的原因。
+      findings = []
+      evidence = [escalation.reason]
+    } else {
+      // 提交不匹配时响应本身可解析，findings/evidence 保留，另追加不匹配原因。
+      evidence = [...evidence, escalation.reason]
+    }
+  }
 
   const root = nonEmpty(options.root) ? options.root : nonEmpty(deps.cwd) ? deps.cwd : process.cwd()
   let policy
@@ -586,11 +604,11 @@ function runRecord(argv, deps, io) {
     policyVersion: PACKAGE_VERSION,
     pr: request.pr,
     round: round.value,
-    verdict: verdict.verdict,
+    verdict: escalation === null ? analysis.verdict : 'ESCALATE',
     head_sha: request.head_sha,
     nonce: request.nonce,
-    findings: extracted.findings,
-    evidence: extracted.evidence,
+    findings,
+    evidence,
     form: nonEmpty(options.form) ? options.form : 'cli',
     provider: nonEmpty(options.provider) ? options.provider : 'unknown',
     model: nonEmpty(options.model)
@@ -606,8 +624,10 @@ function runRecord(argv, deps, io) {
     createdAt: new Date().toISOString(),
   }
   if (duration.value !== undefined) record.durationMs = duration.value
-  // 命中高风险不改判定（判定是 reviewer 的结论），只标注合并必须人工放行。
-  if (policy.hit) record.errorCode = 'E_POLICY'
+  // 命中高风险不改判定（判定是 reviewer 的结论），只标注合并必须人工放行；
+  // 但判定本身不可用时错误码以解析/不一致为准，那才是这条记录的成因。
+  if (escalation !== null) record.errorCode = escalation.errorCode
+  else if (policy.hit) record.errorCode = 'E_POLICY'
   if (typeof request.traceId === 'string' && request.traceId.length > 0) {
     record.traceId = request.traceId
   }
@@ -619,6 +639,11 @@ function runRecord(argv, deps, io) {
       io.out(JSON.stringify(JSON.parse(readFileSync(file, 'utf8'))))
     } else {
       io.out(`已写入审核记录: ${file}`)
+    }
+    // 记录已落盘但判定不可用：退出 1，让调用方走人工，而不是把审计轨迹丢掉。
+    if (escalation !== null) {
+      io.err(`record: ${escalation.errorCode}: ${escalation.reason}；已按 ESCALATE 落盘`)
+      return 1
     }
     return 0
   } catch (error) {
