@@ -15,10 +15,22 @@ TEST_LOG="$(mktemp -t dsh-pack-test)"
 
 cleanup() {
   rm -f "$TEST_LOG"
+  # 构建标识只在打包期间存在，打完就删（不进仓库、不留残留）
+  rm -f build.json
 }
 trap cleanup EXIT
 
 version="$(node -e "process.stdout.write(JSON.parse(require('node:fs').readFileSync('package.json','utf8')).version)")"
+
+# 构建标识：版本号常年不变，靠它区分「哪一次打包」
+git_sha="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+dirty=false
+if [ -n "$(git status --porcelain 2>/dev/null)" ]; then dirty=true; fi
+built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+cat > build.json <<JSON
+{"gitSha":"$git_sha","builtAt":"$built_at","dirty":$dirty}
+JSON
+echo "==> 构建标识: ${git_sha} ${built_at} dirty=${dirty}"
 
 echo "==> 门禁: node --test"
 set +e
