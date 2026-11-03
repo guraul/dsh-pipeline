@@ -93,7 +93,8 @@ record 选项:
   --findings <file>  响应里没有 json 代码块时的兜底（{\"findings\":[...],\"evidence\":[...]}）
   --round <n>        审核轮次（1..${MAX_ROUND}，默认 1）
   --root <dir>       仓库根目录（默认当前工作目录），记录写入 <root>/.dsh-web/reviews
-  --model <名>       产生判定的模型（缺省取请求里的 model）
+  --name <文件名>    自定义落盘文件名（默认 <pr>-<sha>.json；分片审核用它直接写分片名，
+                     避免「先写规范名再删除」的窗口）
   --provider <名>    产出判定的提供方（缺省 unknown）
   --form <名>        记录的形态标记（缺省 cli）
   --duration-ms <n>  本次审核耗时（毫秒，可选）
@@ -340,6 +341,7 @@ const RECORD_VALUE_FLAGS = new Set([
   'provider',
   'form',
   'duration-ms',
+  'name',
 ])
 const RECORD_BOOL_FLAGS = new Set(['json'])
 const STATUS_VALUE_FLAGS = new Set(['root'])
@@ -662,7 +664,7 @@ function runRecord(argv, deps, io) {
   }
 
   try {
-    const file = writeRecord(reviewsDir(root), record)
+    const file = writeRecord(reviewsDir(root), record, { name: options.name })
     // 插件端要薄转发：--json 时只输出记录本体，便于调用方直接 JSON.parse。
     if (options.json === true) {
       io.out(JSON.stringify(JSON.parse(readFileSync(file, 'utf8'))))
