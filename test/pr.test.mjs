@@ -162,3 +162,55 @@ test('pr: 参数错误退出 2（含 --root 缺值）', () => {
     assert.match(io.state.err, /pr:/)
   }
 })
+
+test('pr: --issue 允许非数字分支（如 task/pipeline-gh），正文仍写 Closes #42', () => {
+  const root = tmp()
+  withRepo(root)
+  const { runner, calls } = makeRunner({ branch: 'task/pipeline-gh' })
+  const io = makeIO()
+
+  const code = run(['pr', '--root', root, '--issue', '42'], io, runner)
+  assert.equal(code, 0, io.state.err)
+
+  const create = calls.find((c) => c.command === 'gh' && c.args.includes('create'))
+  assert.ok(create, '应调用 gh pr create')
+  const bodyIndex = create.args.indexOf('--body')
+  assert.match(create.args[bodyIndex + 1], /Closes #42/)
+})
+
+test('pr: 分支不是 task/* 时，即使给了 --issue 也拒绝', () => {
+  const root = tmp()
+  withRepo(root)
+  const { runner, calls } = makeRunner({ branch: 'feature/x' })
+  const io = makeIO()
+
+  const code = run(['pr', '--root', root, '--issue', '42'], io, runner)
+  assert.equal(code, 2)
+  assert.match(io.state.err, /task\/\*/)
+  assert.equal(calls.some((c) => c.command === 'gh' && c.args.includes('create')), false)
+})
+
+test('pr: --issue 非法值一律退出 2（不被分支号掩盖）', () => {
+  const root = tmp()
+  withRepo(root)
+  const { runner, calls } = makeRunner({ branch: 'task/12-add-login' })
+  const io = makeIO()
+
+  for (const bad of ['0', '-1', 'abc', '0x2a']) {
+    const code = run(['pr', '--root', root, '--issue', bad], io, runner)
+    assert.equal(code, 2, `--issue ${bad} 应退出 2`)
+  }
+  assert.equal(calls.some((c) => c.command === 'gh' && c.args.includes('create')), false)
+})
+
+test('pr: --issue 与分支名里的号冲突时报错，不静默忽略', () => {
+  const root = tmp()
+  withRepo(root)
+  const { runner, calls } = makeRunner({ branch: 'task/12-add-login' })
+  const io = makeIO()
+
+  const code = run(['pr', '--root', root, '--issue', '99'], io, runner)
+  assert.equal(code, 2)
+  assert.match(io.state.err, /不一致/)
+  assert.equal(calls.some((c) => c.command === 'gh' && c.args.includes('create')), false)
+})

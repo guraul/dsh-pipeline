@@ -65,12 +65,15 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
   pr         推送当前 task 分支并创建 PR
 
 task 用法:
-  dsh-pipeline task <issue号> [--root <dir>]
+  dsh-pipeline task <issue号> [--slug <slug>] [--root <dir>]
+  --slug <slug>      手动指定分支/目录后缀（缺省由 issue 标题生成；中文标题会退化成哈希，可读性差时用它）。
+                     会规范化：转小写、非字母数字折成 '-'、截断到 40 字符
   --root <dir>       仓库根目录（缺省取主工作区；在 worktree 里运行会自动上溯）
   幂等：worktree 已存在时只打印路径；路径被别的目录占用时报错退出 2。
 
 pr 用法:
-  dsh-pipeline pr [--root <dir>]
+  dsh-pipeline pr [--issue <号>] [--root <dir>]
+  --issue <号>       分支名不含 issue 号时（如 task/pipeline-gh）用它指定 PR 要关哪个 issue
   --root <dir>       仓库根目录（缺省取当前 task worktree 的顶层目录）
   当前分支必须是 task/<号>-<slug>；PR 已存在时只打印链接。
 
@@ -347,9 +350,9 @@ const RECORD_VALUE_FLAGS = new Set([
 const RECORD_BOOL_FLAGS = new Set(['json'])
 const STATUS_VALUE_FLAGS = new Set(['root'])
 const STATUS_BOOL_FLAGS = new Set()
-const TASK_VALUE_FLAGS = new Set(['root'])
+const TASK_VALUE_FLAGS = new Set(['root', 'slug'])
 const TASK_BOOL_FLAGS = new Set()
-const PR_VALUE_FLAGS = new Set(['root'])
+const PR_VALUE_FLAGS = new Set(['root', 'issue'])
 const PR_BOOL_FLAGS = new Set()
 
 function emit(io, lines) {
@@ -769,6 +772,7 @@ function runTask(argv, deps, io) {
 
   const result = runTaskFlow({
     issue: Number(first),
+    slug: parsed.options.slug,
     root: parsed.options.root,
     cwd: nonEmpty(deps.cwd) ? deps.cwd : process.cwd(),
     runner: deps.runner,
@@ -790,9 +794,13 @@ function runPr(argv, deps, io) {
   if (parsed.options.root !== undefined && !nonEmpty(parsed.options.root)) {
     return argError(io, 'pr', '--root 必须是非空目录路径')
   }
+  if (parsed.options.issue !== undefined && !/^[1-9][0-9]*$/.test(String(parsed.options.issue))) {
+    return argError(io, 'pr', `--issue 必须是正整数: ${String(parsed.options.issue)}`)
+  }
 
   const result = runPrFlow({
     root: parsed.options.root,
+    issue: parsed.options.issue === undefined ? undefined : Number(parsed.options.issue),
     cwd: nonEmpty(deps.cwd) ? deps.cwd : process.cwd(),
     runner: deps.runner,
   })

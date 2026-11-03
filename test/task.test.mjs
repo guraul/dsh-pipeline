@@ -205,3 +205,29 @@ test('task: 参数错误一律退出 2', () => {
     assert.match(io.state.err, /task:/)
   }
 })
+
+test('task: --slug 覆盖分支与目录后缀（中文标题也能得到可读 slug）', () => {
+  const root = tmp()
+  withRepo(root)
+  const { runner, calls } = makeRunner()
+  const io = makeIO()
+
+  assert.equal(run(['task', '12', '--slug', 'Pipeline-Migrate', '--root', root], io, runner), 0)
+  const worktree = join(root, '.worktrees', '12-pipeline-migrate')
+  assert.match(io.state.out, /分支: {5}task\/12-pipeline-migrate/)
+  assert.ok(io.state.out.includes(worktree))
+  assert.ok(
+    calls.some((c) => c.command === 'git' && c.args.includes('worktree') && c.args.some((a) => a.includes('12-pipeline-migrate'))),
+  )
+})
+
+test('task: --slug 非法时退出 2，不创建任何东西', () => {
+  const root = tmp()
+  withRepo(root)
+  const { runner, calls } = makeRunner()
+  const io = makeIO()
+
+  assert.equal(run(['task', '12', '--slug', '!!!', '--root', root], io, runner), 2)
+  assert.match(io.state.err, /--slug 不合法/)
+  assert.equal(calls.some((c) => c.command === 'git' && c.args.includes('worktree')), false)
+})
