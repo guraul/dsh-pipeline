@@ -66,7 +66,8 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
 
 task 用法:
   dsh-pipeline task <issue号> [--slug <slug>] [--root <dir>]
-  --slug <slug>      手动指定分支/目录后缀（缺省由 issue 标题生成；中文标题会退化成哈希，可读性差时用它）
+  --slug <slug>      手动指定分支/目录后缀（缺省由 issue 标题生成；中文标题会退化成哈希，可读性差时用它）。
+                     会规范化：转小写、非字母数字折成 '-'、截断到 40 字符
   --root <dir>       仓库根目录（缺省取主工作区；在 worktree 里运行会自动上溯）
   幂等：worktree 已存在时只打印路径；路径被别的目录占用时报错退出 2。
 
@@ -792,6 +793,9 @@ function runPr(argv, deps, io) {
   if (parsed.error) return argError(io, 'pr', parsed.error)
   if (parsed.options.root !== undefined && !nonEmpty(parsed.options.root)) {
     return argError(io, 'pr', '--root 必须是非空目录路径')
+  }
+  if (parsed.options.issue !== undefined && !/^[1-9][0-9]*$/.test(String(parsed.options.issue))) {
+    return argError(io, 'pr', `--issue 必须是正整数: ${String(parsed.options.issue)}`)
   }
 
   const result = runPrFlow({
