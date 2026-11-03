@@ -64,7 +64,8 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
   status     查看审核记录概况
   doctor     检查各仓装的共享包是不是同一个构建（比对 build.json）
   --repo <a,b>       要检查的仓库根（逗号分隔；缺省当前目录）
-  --expect <sha>     期望的构建 sha（不一致则退出 1）；--json 输出机器可读
+  --json             机器可读输出（退出码与人读模式一致）
+  --expect <sha>     期望的构建 sha（可传 7 位短 sha；不一致则退出 1）
   task       从 issue 创建 task/<号>-<slug> 分支与 worktree
   prepare    准备交付（未实现）
   pr         推送当前 task 分支并创建 PR
@@ -731,42 +732,58 @@ function collectRecords(root) {
   return { records, invalid }
 }
 
-/** doctor：--repo <dir> 可重复；缺省查当前目录。 */
+/** doctor：检查各仓装的共享包是不是同一个构建。 */
 function runDoctor(argv, deps, io) {
   const parsed = parseArgs(argv, new Set(['repo', 'expect']), new Set(['json']))
   if (parsed.error) return argError(io, 'doctor', parsed.error)
 
   const raw = parsed.options.repo
-  // 逗号分隔多值（parseArgs 不接受重复参数，保持其它子命令的口径一致）
+  // 逗号分隔多值（parseArgs 不接受重复参数，保持其它子命令的口径一致）；
+  // 缺省用当前目录，与其他子命令一致（deps.cwd 可能没传）。
+  const cwd = nonEmpty(deps.cwd) ? deps.cwd : process.cwd()
   const roots =
     raw === undefined
-      ? [deps.cwd]
+      ? [cwd]
       : String(raw)
           .split(',')
           .map((item) => item.trim())
           .filter((item) => item.length > 0)
-  if (roots.some((r) => typeof r !== 'string' || r.length === 0)) {
-    return argError(io, 'doctor', '--repo 需要非空目录路径')
-  }
+  if (roots.length === 0) return argError(io, 'doctor', '--repo 至少需要一个非空目录路径')
 
   const { rows, baseline, drift } = diagnose(roots)
+  const allSource = rows.length > 0 && rows.every((row) => row.source === true)
+
   if (parsed.options.json === true) {
-    io.out(JSON.stringify({ baseline, drift, rows: rows.map((r) => ({ root: r.root, installed: r.installed, build: r.build })) }, null, 2))
+    io.out(
+      JSON.stringify(
+        {
+          baseline,
+          drift,
+          rows: rows.map((row) => ({
+            root: row.root,
+            installed: row.installed,
+            source: row.source === true,
+            build: row.build,
+          })),
+        },
+        null,
+        2,
+      ),
+    )
   } else {
     for (const row of rows) io.out(`${row.root}\t${describeRow(row)}`)
-    if (baseline === null) {
-      if (rows.every((row) => row.source === true)) {
-        io.out('doctor: 全部是源码目录，没有可比的安装（无需处理）')
-        return 0
-      }
+    if (baseline === null && !allSource) {
       io.out('doctor: 没有任何仓装的包带构建标识（旧版本包，需重新打包并刷新）')
-      return 1
     }
   }
 
-  const expected = parsed.options.expect
-  if (expected !== undefined && baseline !== expected) {
-    io.err(`doctor: 基准构建 ${baseline.slice(0, 7)} 与期望 ${String(expected).slice(0, 7)} 不一致`)
+  // 退出码在两种输出模式之间必须一致：CI 常用 --json，不能因为换了输出格式就当成功
+  if (allSource) return 0
+  if (baseline === null) return 1
+
+  const expected = nonEmpty(parsed.options.expect) ? String(parsed.options.expect).toLowerCase() : null
+  if (expected !== null && !buildMatchesExpected(baseline, expected)) {
+    io.err(`doctor: 基准构建 ${baseline.slice(0, 7)} 与期望 ${expected.slice(0, 7)} 不一致`)
     return 1
   }
   if (drift.length > 0) {
@@ -774,6 +791,12 @@ function runDoctor(argv, deps, io) {
     return 1
   }
   return 0
+}
+
+/** --expect 允许传短 sha（输出里都是 7 位），任一方向前缀匹配即算一致。 */
+function buildMatchesExpected(actual, expected) {
+  if (actual === expected) return true
+  return actual.startsWith(expected) || expected.startsWith(actual)
 }
 
 function runStatus(argv, deps, io) {

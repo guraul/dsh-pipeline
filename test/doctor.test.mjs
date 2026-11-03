@@ -84,3 +84,26 @@ test('doctor：包源码目录报告「源码目录」而不是未安装', (t) =
   assert.equal(row.source, true)
   assert.match(describeRow(row), /源码目录/)
 })
+
+test('doctor：新包 + 旧包混装时，旧包计入漂移（否则会静默通过）', (t) => {
+  const base = tmp()
+  t.after(() => rmSync(base, { recursive: true, force: true }))
+  const fresh = repoWithPackage(join(base, 'fresh'), BUILD_A)
+  const stale = repoWithPackage(join(base, 'stale'), null)
+
+  const { baseline, drift } = diagnose([fresh, stale])
+  assert.equal(baseline, BUILD_A.gitSha)
+  assert.deepEqual(drift, [stale], '装了旧包的仓必须算漂移')
+})
+
+test('doctor：全部是源码目录时无漂移（没有可比的安装）', (t) => {
+  const base = tmp()
+  t.after(() => rmSync(base, { recursive: true, force: true }))
+  const src = join(base, 'src')
+  mkdirSync(src, { recursive: true })
+  writeFileSync(join(src, 'package.json'), JSON.stringify({ name: '@guraul/dsh-pipeline' }))
+
+  const { baseline, drift } = diagnose([src])
+  assert.equal(baseline, null)
+  assert.deepEqual(drift, [])
+})
