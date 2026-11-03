@@ -44,12 +44,14 @@ import {
   writeSkipAudit,
 } from '../lib/record.mjs'
 import { runTask as runTaskFlow } from '../lib/task.mjs'
+import { describeBuild } from '../lib/build-info.mjs'
+import { describeRow, diagnose } from '../lib/doctor.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8'))
 
-const IMPLEMENTED = new Set(['gate', 'merge', 'record', 'status', 'task', 'pr'])
-const SUBCOMMANDS = ['task', 'prepare', 'pr', 'merge', 'gate', 'record', 'status']
+const IMPLEMENTED = new Set(['doctor', 'gate', 'merge', 'record', 'status', 'task', 'pr'])
+const SUBCOMMANDS = ['task', 'prepare', 'pr', 'merge', 'gate', 'record', 'status', 'doctor']
 
 const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单一实现
 
@@ -60,6 +62,10 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
   merge      闸门通过后合并 PR（固定 --squash）并清理现场
   record     把审核响应落盘为记录
   status     查看审核记录概况
+  doctor     检查各仓装的共享包是不是同一个构建（比对 build.json）
+  --repo <a,b>       要检查的仓库根（逗号分隔；缺省当前目录）
+  --json             机器可读输出（退出码与人读模式一致）
+  --expect <sha>     期望的构建 sha（可传 7 位短 sha；不一致则退出 1）
   task       从 issue 创建 task/<号>-<slug> 分支与 worktree
   prepare    准备交付（未实现）
   pr         推送当前 task 分支并创建 PR
@@ -726,6 +732,73 @@ function collectRecords(root) {
   return { records, invalid }
 }
 
+/** doctor：检查各仓装的共享包是不是同一个构建。 */
+function runDoctor(argv, deps, io) {
+  const parsed = parseArgs(argv, new Set(['repo', 'expect']), new Set(['json']))
+  if (parsed.error) return argError(io, 'doctor', parsed.error)
+
+  const raw = parsed.options.repo
+  // 逗号分隔多值（parseArgs 不接受重复参数，保持其它子命令的口径一致）；
+  // 缺省用当前目录，与其他子命令一致（deps.cwd 可能没传）。
+  const cwd = nonEmpty(deps.cwd) ? deps.cwd : process.cwd()
+  const roots =
+    raw === undefined
+      ? [cwd]
+      : String(raw)
+          .split(',')
+          .map((item) => item.trim())
+          .filter((item) => item.length > 0)
+  if (roots.length === 0) return argError(io, 'doctor', '--repo 至少需要一个非空目录路径')
+
+  const { rows, baseline, drift } = diagnose(roots)
+  const allSource = rows.length > 0 && rows.every((row) => row.source === true)
+
+  if (parsed.options.json === true) {
+    io.out(
+      JSON.stringify(
+        {
+          baseline,
+          drift,
+          rows: rows.map((row) => ({
+            root: row.root,
+            installed: row.installed,
+            source: row.source === true,
+            build: row.build,
+          })),
+        },
+        null,
+        2,
+      ),
+    )
+  } else {
+    for (const row of rows) io.out(`${row.root}\t${describeRow(row)}`)
+    if (baseline === null && !allSource) {
+      io.out('doctor: 没有任何仓装的包带构建标识（旧版本包，需重新打包并刷新）')
+    }
+  }
+
+  // 退出码在两种输出模式之间必须一致：CI 常用 --json，不能因为换了输出格式就当成功
+  if (allSource) return 0
+  if (baseline === null) return 1
+
+  const expected = nonEmpty(parsed.options.expect) ? String(parsed.options.expect).toLowerCase() : null
+  if (expected !== null && !buildMatchesExpected(baseline, expected)) {
+    io.err(`doctor: 基准构建 ${baseline.slice(0, 7)} 与期望 ${expected.slice(0, 7)} 不一致`)
+    return 1
+  }
+  if (drift.length > 0) {
+    io.err(`doctor: 以下仓装的不是同一构建（基准 ${baseline.slice(0, 7)}）: ${drift.join(', ')}`)
+    return 1
+  }
+  return 0
+}
+
+/** --expect 允许传短 sha（输出里都是 7 位），任一方向前缀匹配即算一致。 */
+function buildMatchesExpected(actual, expected) {
+  if (actual === expected) return true
+  return actual.startsWith(expected) || expected.startsWith(actual)
+}
+
 function runStatus(argv, deps, io) {
   const parsed = parseArgs(argv, STATUS_VALUE_FLAGS, STATUS_BOOL_FLAGS)
   if (parsed.error) return argError(io, 'status', parsed.error)
@@ -833,7 +906,7 @@ export function runCli(argv, deps = {}) {
     return 0
   }
   if (first === '-v' || first === '--version') {
-    io.out(pkg.version)
+    io.out(`${pkg.version} (${describeBuild()})`)
     return 0
   }
   if (!IMPLEMENTED.has(first)) {
@@ -852,6 +925,7 @@ export function runCli(argv, deps = {}) {
     if (first === 'record') return runRecord(rest, deps, io)
     if (first === 'task') return runTask(rest, deps, io)
     if (first === 'pr') return runPr(rest, deps, io)
+    if (first === 'doctor') return runDoctor(rest, deps, io)
     return runStatus(rest, deps, io)
   } catch (error) {
     io.err(`dsh-pipeline ${first}: ${messageOf(error)}`)

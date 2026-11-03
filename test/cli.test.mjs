@@ -113,7 +113,10 @@ test('--help 与 --version 行为保持不变', () => {
 
   const version = makeIO()
   assert.equal(run(['--version'], version), 0)
-  assert.equal(version.state.out.trim(), PACKAGE_VERSION)
+  // 版本行现在带构建标识：「0.1.0 (源码运行)」或「0.1.0 (abc1234 2026-11-03T…)」
+  const line = version.state.out.trim()
+  assert.ok(line.startsWith(`${PACKAGE_VERSION} (`), `版本行应以「${PACKAGE_VERSION} (」开头，实际: ${line}`)
+  assert.ok(line.endsWith(')'), `版本行应以「)」结尾，实际: ${line}`)
   assert.equal(version.state.err, '')
 })
 
