@@ -415,7 +415,7 @@ function runMerge(argv, deps, io) {
         checkout: (cwd, options = {}) => checkout(cwd, { ...options, runner }),
         fetch: (cwd, options = {}) => gitFetch(cwd, { ...options, runner }),
         mergeFF: (cwd, options = {}) => mergeFF(cwd, { ...options, runner }),
-        deleteBranch: (cwd, name) => deleteBranch(cwd, name, { runner }),
+        deleteBranch: (cwd, name, options = {}) => deleteBranch(cwd, name, { ...options, runner }),
       },
     },
   })
