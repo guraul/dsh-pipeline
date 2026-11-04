@@ -441,6 +441,33 @@ test('分支在 linked worktree：仍正常移除，且不碰主工作区', () =
   assert.match(result.steps.find((item) => item.name === 'worktree').detail, /已移除 worktree/)
 })
 
+test('worktree 建在仓库外的 --worktrees-dir：清理仍按分支找到并移除它', () => {
+  const { root, file } = approvedRoot()
+  const gh = fakeGh()
+  // 清理只认 `git worktree list` 里分支对应的路径，与 worktree 建在仓内还是仓外无关
+  const external = '/Users/x/workspace/dsh-pipeline-worktrees/22-worktrees-dir'
+  const git = fakeGit({
+    worktrees: [
+      { path: root, head: OTHER_SHA, branch: 'main', detached: false, bare: false },
+      { path: external, head: SHA, branch: BRANCH, detached: false, bare: false },
+    ],
+  })
+
+  const result = runMerge({
+    pr: PR,
+    root,
+    recordPath: file,
+    headSha: SHA,
+    deps: depsOf(gh, git),
+  })
+
+  assert.equal(result.ok, true, JSON.stringify(result.steps, null, 2))
+  const removed = git.calls.find((call) => call.op === 'worktreeRemove')
+  assert.equal(removed.path, external, '移除的是仓库外目录里的 worktree')
+  assert.equal(removed.cwd, root, '仍从主工作区执行移除')
+  assert.match(result.steps.find((item) => item.name === 'worktree').detail, /已移除 worktree/)
+})
+
 // —— 快进前确认主工作区分支：PR 分支被 checkout 在主工作区时不能直接 merge --ff-only ——
 
 /** 主工作区停在 PR 分支、另有一个无关 worktree：模拟上一个 PR 收尾留下的现场。 */

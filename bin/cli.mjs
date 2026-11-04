@@ -75,10 +75,14 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
   review     生成审核请求（prepare）、审核提示词（prompt）并把判定落成记录（publish）
 
 task 用法:
-  dsh-pipeline task <issue号> [--slug <slug>] [--root <dir>]
+  dsh-pipeline task <issue号> [--slug <slug>] [--root <dir>] [--worktrees-dir <dir>]
   --slug <slug>      手动指定分支/目录后缀（缺省由 issue 标题生成；中文标题会退化成哈希，可读性差时用它）。
                      会规范化：转小写、非字母数字折成 '-'、截断到 40 字符
   --root <dir>       仓库根目录（缺省取主工作区；在 worktree 里运行会自动上溯）
+  --worktrees-dir <dir>  worktree 的父目录，内部仍拼 <号>-<slug>；缺省 <root>/.worktrees。
+                     相对路径按 --root 解析成绝对路径；目录不存在会自动创建（mkdir -p），已存在则复用。
+                     为什么需要它：宿主会从主仓加载源码（如 memx 在仓内切分支会让宿主加载到未合并代码），
+                     用它把 worktree 建在仓库外即可避开。
   幂等：worktree 已存在时只打印路径；路径被别的目录占用时报错退出 2。
 
 pr 用法:
@@ -382,7 +386,7 @@ const RECORD_VALUE_FLAGS = new Set([
 const RECORD_BOOL_FLAGS = new Set(['json'])
 const STATUS_VALUE_FLAGS = new Set(['root'])
 const STATUS_BOOL_FLAGS = new Set()
-const TASK_VALUE_FLAGS = new Set(['root', 'slug'])
+const TASK_VALUE_FLAGS = new Set(['root', 'slug', 'worktrees-dir'])
 const TASK_BOOL_FLAGS = new Set()
 const PR_VALUE_FLAGS = new Set(['root', 'issue'])
 const PR_BOOL_FLAGS = new Set()
@@ -1174,12 +1178,14 @@ function runStatus(argv, deps, io) {
 }
 
 /**
- * task：issue 号是位置参数（唯一一个），其余走 --root。
+ * task：issue 号是位置参数（唯一一个），其余走 --root / --worktrees-dir。
  * 参数错误一律 2，流程失败也一律 2——task 没有「闸门拒绝」这种中间态。
  */
 function runTask(argv, deps, io) {
   const [first, ...rest] = argv
-  if (first === undefined) return argError(io, 'task', '用法: dsh-pipeline task <issue号> [--root <dir>]')
+  if (first === undefined) {
+    return argError(io, 'task', '用法: dsh-pipeline task <issue号> [--slug <slug>] [--root <dir>] [--worktrees-dir <dir>]')
+  }
   if (first.startsWith('--')) return argError(io, 'task', `缺少 issue 号（用法: dsh-pipeline task <issue号>）`)
   if (!/^[1-9][0-9]*$/.test(first)) return argError(io, 'task', `issue 号必须是正整数: ${first}`)
 
@@ -1188,11 +1194,15 @@ function runTask(argv, deps, io) {
   if (parsed.options.root !== undefined && !nonEmpty(parsed.options.root)) {
     return argError(io, 'task', '--root 必须是非空目录路径')
   }
+  if (parsed.options['worktrees-dir'] !== undefined && !nonEmpty(parsed.options['worktrees-dir'])) {
+    return argError(io, 'task', '--worktrees-dir 必须是非空目录路径')
+  }
 
   const result = runTaskFlow({
     issue: Number(first),
     slug: parsed.options.slug,
     root: parsed.options.root,
+    worktreesDir: parsed.options['worktrees-dir'],
     cwd: nonEmpty(deps.cwd) ? deps.cwd : process.cwd(),
     runner: deps.runner,
     sleep: deps.sleep,

@@ -1,9 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 
 import { runCli } from '../bin/cli.mjs'
 
@@ -230,4 +230,101 @@ test('task: --slug 非法时退出 2，不创建任何东西', () => {
   assert.equal(run(['task', '12', '--slug', '!!!', '--root', root], io, runner), 2)
   assert.match(io.state.err, /--slug 不合法/)
   assert.equal(calls.some((c) => c.command === 'git' && c.args.includes('worktree')), false)
+})
+
+test('task: --worktrees-dir 绝对路径时 worktree 建在该目录下，容器目录自动创建', () => {
+  const root = tmp()
+  withRepo(root)
+  const container = join(tmp(), 'outer', 'wt')
+  const { runner, calls } = makeRunner()
+  const io = makeIO()
+
+  assert.equal(run(['task', '12', '--root', root, '--worktrees-dir', container], io, runner), 0)
+
+  const worktree = join(container, '12-add-login')
+  assert.ok(io.state.out.includes(worktree))
+  const add = calls.find((call) => sub(call.args)[0] === 'worktree' && sub(call.args)[1] === 'add')
+  assert.deepEqual(add.args, ['-C', root, 'worktree', 'add', '-b', 'task/12-add-login', worktree, 'origin/main'])
+  assert.ok(existsSync(container), '不存在的容器目录应按 mkdir -p 语义创建')
+  assert.equal(existsSync(join(root, '.worktrees')), false, '缺省目录不应被顺手创建')
+})
+
+test('task: --worktrees-dir 相对路径按 --root 解析成绝对路径', () => {
+  const root = tmp()
+  withRepo(root)
+  const { runner, calls } = makeRunner()
+  const io = makeIO()
+
+  assert.equal(run(['task', '12', '--root', root, '--worktrees-dir', 'ext-wt'], io, runner), 0)
+
+  const worktree = join(root, 'ext-wt', '12-add-login')
+  assert.ok(isAbsolute(worktree))
+  assert.ok(io.state.out.includes(worktree))
+  const add = calls.find((call) => sub(call.args)[0] === 'worktree' && sub(call.args)[1] === 'add')
+  assert.equal(sub(add.args)[4], worktree)
+  assert.ok(existsSync(join(root, 'ext-wt')))
+})
+
+test('task: 不给 --worktrees-dir 时默认仍是 <root>/.worktrees（行为不变）', () => {
+  const root = tmp()
+  withRepo(root)
+  const { runner, calls } = makeRunner()
+  const io = makeIO()
+
+  assert.equal(run(['task', '12', '--root', root], io, runner), 0)
+
+  const worktree = join(root, '.worktrees', '12-add-login')
+  assert.ok(io.state.out.includes(worktree))
+  const add = calls.find((call) => sub(call.args)[0] === 'worktree' && sub(call.args)[1] === 'add')
+  assert.equal(sub(add.args)[4], worktree)
+  assert.equal(
+    existsSync(join(root, '.worktrees')),
+    false,
+    '缺省路径不由本包 mkdir（仍交给 git worktree add），失败时不留下空目录',
+  )
+})
+
+test('task: --worktrees-dir 容器已存在时直接复用，不报错', () => {
+  const root = tmp()
+  withRepo(root)
+  const container = join(tmp(), 'exists-wt')
+  mkdirSync(container, { recursive: true })
+  const { runner, calls } = makeRunner()
+  const io = makeIO()
+
+  assert.equal(run(['task', '12', '--root', root, '--worktrees-dir', container], io, runner), 0)
+
+  assert.ok(io.state.out.includes(join(container, '12-add-login')))
+  assert.ok(calls.some((call) => sub(call.args)[0] === 'worktree' && sub(call.args)[1] === 'add'))
+})
+
+test('task: --worktrees-dir 下同一 issue 重复调用仍幂等，只打印已有路径', () => {
+  const root = tmp()
+  withRepo(root)
+  const container = join(tmp(), 'idem-wt')
+  const worktree = join(container, '12-add-login')
+  const { runner, calls } = makeRunner({ worktrees: [{ path: worktree, branch: 'task/12-add-login' }] })
+  const io = makeIO()
+
+  assert.equal(run(['task', '12', '--root', root, '--worktrees-dir', container], io, runner), 0)
+
+  assert.match(io.state.out, /worktree 已存在/)
+  assert.ok(io.state.out.includes(worktree))
+  assert.equal(calls.some((call) => sub(call.args)[0] === 'fetch'), false)
+  assert.equal(calls.some((call) => sub(call.args)[0] === 'worktree' && sub(call.args)[1] === 'add'), false)
+})
+
+test('task: --worktrees-dir 空值退出 2，不发出任何命令', () => {
+  const root = tmp()
+  withRepo(root)
+  const { runner, calls } = makeRunner()
+  for (const argv of [
+    ['task', '12', '--root', root, '--worktrees-dir'],
+    ['task', '12', '--root', root, '--worktrees-dir', '   '],
+  ]) {
+    const io = makeIO()
+    assert.equal(run(argv, io, runner), 2, `argv: ${argv.join(' ')}`)
+    assert.match(io.state.err, /--worktrees-dir/)
+  }
+  assert.equal(calls.length, 0, '参数错误不该发出任何命令')
 })
