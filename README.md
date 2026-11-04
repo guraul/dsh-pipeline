@@ -2,7 +2,7 @@
 
 统一交付与审核流程的单一实现，包名 `@guraul/dsh-pipeline`。
 `bin/cli.mjs` 负责参数分发，流程与外部命令封装在 `lib/`。
-已实现：`gate` / `merge` / `record` / `status` / `task` / `pr`（`prepare` 未实现）。
+已实现：`gate` / `merge` / `record` / `status` / `task` / `pr` / `review`（顶层 `prepare` 仍是未实现占位）。
 设计与版本策略见下。
 
 - ADR：`self-dsh-plugins` 的 [docs/adr/0003-pipeline-单一实现与版本策略.md](https://github.com/guraul/self-dsh-plugins/blob/main/docs/adr/0003-pipeline-%E5%8D%95%E4%B8%80%E5%AE%9E%E7%8E%B0%E4%B8%8E%E7%89%88%E6%9C%AC%E7%AD%96%E7%95%A5.md)
@@ -12,6 +12,23 @@
 `.github/workflows/ci.yml` 在 `push`（任意分支）与 `pull_request` 上跑 `node --test`（Node 24，pnpm `--frozen-lockfile`）。
 
 **CI 只跑测试；审核闸门与合并只在本地。** 按 ADR-0003 §5，`gate` / `merge` 属于本地闸门，不在 CI 中执行，CI 也不跑 `scripts/pack.sh`、不上传任何产物。
+
+## 没有 review.sh 的消费仓：`review` 一趟出请求与记录
+
+`review` 把「生成审核请求 → 判定落成记录」收进本包，消费仓不必再跨仓调 `dsh-subagents`：
+
+```bash
+# 1) 生成审核请求：读 PR 的 head 提交、改动文件与 diff，写 <root>/.tmp/review/<N>/request.json
+#    stdout 三行：请求文件路径、nonce、head 前 7 位
+dsh-pipeline review prepare --pr <N> --root <本仓> [--model <名>] [--round <n>] [--out <文件>]
+
+# 2) 判定落盘：读 reviewer 的响应，写 <root>/.dsh-web/reviews/<N>-<sha>.json
+dsh-pipeline review publish --pr <N> --response <响应文件> --root <本仓> [--provider <名>] [--form <名>]
+```
+
+- 请求 JSON 字段：`{pr, head_sha, round, nonce, model, provider, form, files, diff}`；`nonce` 是 12 位 base32（`A-Z2-7`）一次性标记。`.tmp/` 已被忽略，请求文件不入库。
+- `publish` 复用 `record` 的落盘逻辑（同一条代码路径，不是第二套实现）：判定行解析不出、或判定 SHA 与请求不符时**仍写一条 ESCALATE 记录**并退出 1，审计轨迹不丢。
+- `--request` 缺省为 `<root>/.tmp/review/<N>/request.json`；`--round` 与请求里的 `round` 不一致时报错退出 2（拿错请求文件当场失败），没给则沿用请求里的 `round`。
 
 ## 本仓怎么合并自己的 PR
 

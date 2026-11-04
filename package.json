@@ -2,7 +2,7 @@
   "name": "@guraul/dsh-pipeline",
   "version": "0.1.0",
   "private": true,
-  "description": "统一交付与审核流程的单一实现（task / pr / merge / gate / record / status / doctor）",
+  "description": "统一交付与审核流程的单一实现（task / pr / merge / gate / record / status / doctor / review）",
   "type": "module",
   "bin": {
     "dsh-pipeline": "bin/cli.mjs"

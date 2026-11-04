@@ -34,7 +34,7 @@ test('prView：argv 固定，JSON 解析进 data', () => {
         '--repo',
         REPO,
         '--json',
-        'number,title,state,isDraft,headRefName,headRefOid,baseRefName,mergeable,url',
+        'number,title,state,isDraft,headRefName,headRefOid,baseRefName,mergeable,url,files',
       ],
       options: {},
     },
@@ -84,6 +84,20 @@ test('prChecks / prList / issueView：子命令与参数各自固定', () => {
     '--json',
     'number,title,state,url,body',
   ])
+})
+
+test('prDiff：argv 固定，返回原始 diff 文本，非法编号不发命令', () => {
+  const runner = recorder({ status: 0, stdout: 'diff --git a/x b/x\n+1\n', stderr: '' })
+  const result = gh.prDiff(12, { repo: REPO, runner })
+
+  assert.deepEqual(runner.calls[0].args, ['pr', 'diff', '12', '--repo', REPO])
+  assert.equal(result.ok, true)
+  assert.equal(result.data, 'diff --git a/x b/x\n+1\n')
+
+  const idle = recorder({ status: 0, stdout: '', stderr: '' })
+  assert.equal(gh.prDiff(0, { repo: REPO, runner: idle }).code, 'E_INPUT')
+  assert.equal(gh.prDiff(1, { repo: 'bad repo', runner: idle }).code, 'E_INPUT')
+  assert.equal(idle.calls.length, 0)
 })
 
 test('prMerge：一定是 --squash，且没有任何改写合并方式的参数', () => {
@@ -203,6 +217,7 @@ test('导出面固定：只有具名操作，没有接受 argv 的通用入口',
     'prChecks',
     'prComment',
     'prCreate',
+    'prDiff',
     'prList',
     'prMerge',
     'prReview',
@@ -225,7 +240,7 @@ test('导出面固定：只有具名操作，没有接受 argv 的通用入口',
     '--repo',
     REPO,
     '--json',
-    'number,title,state,isDraft,headRefName,headRefOid,baseRefName,mergeable,url',
+    'number,title,state,isDraft,headRefName,headRefOid,baseRefName,mergeable,url,files',
   ])
 })
 
