@@ -173,6 +173,50 @@ test('review prepare：gh 没给 files 时从 diff 头还原改动文件，不�
   assert.deepEqual(JSON.parse(readFileSync(requestPath(root), 'utf8')).files, ['x/y.js'])
 })
 
+test('review prepare：只有 diff --git 头的 diff（纯重命名 / 二进制）也能解析出路径', () => {
+  const renamed = makeRoot()
+  const renameRunner = ghRunner({
+    view: { number: 7, headRefOid: SHA },
+    diff:
+      'diff --git a/lib/old.mjs b/lib/new.mjs\nsimilarity index 100%\nrename from lib/old.mjs\nrename to lib/new.mjs\n',
+  })
+  const renameIO = makeIO()
+
+  assert.equal(
+    run(['review', 'prepare', '--pr', '7', '--root', renamed], renameIO, { runner: renameRunner.runner }),
+    0,
+    renameIO.state.err,
+  )
+  assert.deepEqual(JSON.parse(readFileSync(requestPath(renamed), 'utf8')).files, ['lib/new.mjs'])
+
+  const binary = makeRoot()
+  const binaryRunner = ghRunner({
+    view: { number: 7, headRefOid: SHA },
+    diff: 'diff --git a/img/logo.png b/img/logo.png\nnew file mode 100644\nindex 0000000..abcd1234\nBinary files /dev/null and b/img/logo.png differ\n',
+  })
+  const binaryIO = makeIO()
+
+  assert.equal(
+    run(['review', 'prepare', '--pr', '7', '--root', binary], binaryIO, { runner: binaryRunner.runner }),
+    0,
+    binaryIO.state.err,
+  )
+  assert.deepEqual(JSON.parse(readFileSync(requestPath(binary), 'utf8')).files, ['img/logo.png'])
+})
+
+test('review prepare：diff 非空却解析不出改动文件时退出 2，不写 request.json', () => {
+  const root = makeRoot()
+  const { runner } = ghRunner({ view: { number: 7, headRefOid: SHA }, diff: '没有文件头的正文\n+1\n' })
+  const io = makeIO()
+
+  assert.equal(run(['review', 'prepare', '--pr', '7', '--root', root], io, { runner }), 2)
+  assert.match(io.state.err, /无法从 diff 解析改动文件/)
+  assert.match(io.state.err, /拒绝写出空 files 的请求/)
+  assert.equal(io.state.out, '')
+  assert.equal(existsSync(requestPath(root)), false, '解析不出改动文件时不许落 request.json')
+  assert.equal(existsSync(join(root, '.tmp')), false, '连 .tmp 目录都不该创建')
+})
+
 test('review prepare：缺 --pr 报错退出 2，不发 gh 也不写文件', () => {
   const root = makeRoot()
   const { runner, calls } = ghRunner({ view: VIEW_OK, diff: DIFF })

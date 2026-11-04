@@ -529,12 +529,21 @@ function issueNumberOf(issue) {
   return null
 }
 
-/** 请求没带 files 时从 diff 的 `+++ b/<path>` 头还原，避免高风险判定因缺文件列表而静默放行。 */
+/**
+ * 请求没带 files 时从 diff 还原改动文件，避免高风险判定因缺文件列表而静默放行。
+ * 优先取 `+++ b/<path>`；纯重命名 / 二进制变更这类没有 `+++` 行的 diff，
+ * 兜底取 `diff --git a/<old> b/<new>` 头里 b/ 后的那段（新路径）。
+ */
 function diffPaths(diff) {
   const paths = new Set()
   for (const line of String(diff ?? '').split('\n')) {
-    const match = /^\+\+\+ b\/(.+)$/.exec(line)
-    if (match) paths.add(match[1])
+    const plus = /^\+\+\+ b\/(.+)$/.exec(line)
+    if (plus) {
+      paths.add(plus[1])
+      continue
+    }
+    const header = /^diff --git "?a\/(.+?)"? "?b\/(.+?)"?$/.exec(line)
+    if (header) paths.add(header[2])
   }
   return [...paths]
 }
@@ -783,6 +792,12 @@ function runReviewPrepare(argv, deps, io) {
         .filter((path) => typeof path === 'string' && path.length > 0)
     : []
   const files = fromGh.length > 0 ? fromGh : diffPaths(diff)
+
+  // files 空着会让高风险判定静默放行：diff 有内容却一个文件都解析不出来，
+  // 说明解析口径跟不上这份 diff，宁可拒绝也不落盘请求文件。
+  if (files.length === 0 && diff.length > 0) {
+    return argError(io, sub, '无法从 diff 解析改动文件，拒绝写出空 files 的请求')
+  }
 
   const request = {
     pr: pr.value,
