@@ -235,8 +235,30 @@ test('merge: 闸门通过后调用 gh pr merge 且固定 --squash，随后清理
     ['worktree', 'list', '--porcelain'],
     ['fetch', '--prune', 'origin'],
     ['merge', '--ff-only', 'origin/main'],
-    ['branch', '-d', '--', 'task/7'],
+    ['branch', '-D', '--', 'task/7'],
   ])
+})
+
+test('merge 收尾删分支透传 force：实际执行的是 branch -D（回归 #12）', () => {
+  const root = tmp()
+  withRepo(root)
+  const file = writeApprovedRecord(root)
+  const io = makeIO()
+  const { runner, calls } = stubRunner(root)
+
+  assert.equal(
+    run(['merge', '--pr', '7', '--root', root, '--record', file, '--head-sha', SHA], io, { runner }),
+    0,
+  )
+
+  // 断言真实发出的 git argv，而不是 lib 层收到的 options：
+  // CLI 适配层吞掉 { force: true } 时，只有这里能看出来。
+  const branchCalls = calls
+    .filter((call) => call.command === 'git')
+    .map((call) => call.args.slice(2))
+    .filter((args) => args[0] === 'branch')
+
+  assert.deepEqual(branchCalls, [['branch', '-D', '--', 'task/7']])
 })
 
 test('merge: 闸门拒绝时不调用 gh，退出码 1', () => {
