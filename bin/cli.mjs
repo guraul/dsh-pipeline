@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url'
 
 import { loadConfig } from '../lib/config.mjs'
 import { evaluateGate } from '../lib/gate.mjs'
-import { prChecks, prDiff, prMerge, prView } from '../lib/gh.mjs'
+import { issueView, prChecks, prDiff, prMerge, prView } from '../lib/gh.mjs'
 import {
   checkout,
   currentBranch,
@@ -34,7 +34,14 @@ import {
 import { runMerge as runMergeFlow } from '../lib/merge.mjs'
 import { mergePolicy } from '../lib/policy.mjs'
 import { runPr as runPrFlow } from '../lib/pr.mjs'
-import { NONCE_PATTERN, analyzeVerdict, buildPrompt, extractFindings, makeNonce } from '../lib/review.mjs'
+import {
+  NONCE_PATTERN,
+  analyzeVerdict,
+  buildPrompt,
+  detectIssueFromBody,
+  extractFindings,
+  makeNonce,
+} from '../lib/review.mjs'
 import { resolveRoles } from '../lib/roles.mjs'
 import {
   MAX_ROUND,
@@ -92,7 +99,7 @@ pr 用法:
   当前分支必须是 task/<号>-<slug>；PR 已存在时只打印链接。
 
 review 用法:
-  dsh-pipeline review prepare --pr <n> [--root <dir>] [--model <m>] [--round <n>] [--out <file>]
+  dsh-pipeline review prepare --pr <n> [--issue <号>] [--root <dir>] [--model <m>] [--round <n>] [--out <file>]
                                [--facts <文件>] [--include <路径,路径,...>]
   dsh-pipeline review publish --pr <n> --response <file> [--request <file>] [--round <n>]
                                [--root <dir>] [--model <m>] [--provider <p>] [--form <f>]
@@ -100,7 +107,13 @@ review 用法:
 
   prepare  用 gh 读 PR 的 head 提交、改动文件与 diff，生成请求 JSON（含 12 位 base32 nonce）
            到 <root>/.tmp/review/<pr>/request.json（--out 可改路径）；
-           stdout 三行：请求文件路径、nonce、head 前 7 位。
+           stdout 三行：请求文件路径、nonce、head 前 7 位（取不到 issue 时末尾再补一行提示）。
+           --issue <号> 指定被审 PR 对应的 issue，用 gh issue view 取 {number, title, body}
+           写进请求的 issue 字段，供 review prompt 渲染「验收依据（issue 正文）」；
+           缺省自动探测：用 gh pr view 的 body 拿 PR 正文，从形如 Closes #123 / Fixes #123 /
+           Resolved #123 的行里取第一个号；
+           探测不到或 gh 取失败时不写 issue 字段、不失败（请求照常产出），
+           并在 stdout 三行之后补一行「提示: 未取到 issue 正文（reviewer 的验收依据会是空的）」。
            --facts <文件> 把文件内容作为纯文本写进请求的 facts 字段（缺省不加该字段）；
            --include <路径,路径,...> 逐个读文件写进请求的 includes 数组（每项 {path, content}，
            path 保持调用方给的原样）；任一路径读不到或取值为空即退出 2，不写请求文件。
@@ -390,7 +403,7 @@ const TASK_VALUE_FLAGS = new Set(['root', 'slug', 'worktrees-dir'])
 const TASK_BOOL_FLAGS = new Set()
 const PR_VALUE_FLAGS = new Set(['root', 'issue'])
 const PR_BOOL_FLAGS = new Set()
-const REVIEW_PREPARE_VALUE_FLAGS = new Set(['pr', 'root', 'model', 'round', 'out', 'facts', 'include'])
+const REVIEW_PREPARE_VALUE_FLAGS = new Set(['pr', 'issue', 'root', 'model', 'round', 'out', 'facts', 'include'])
 const REVIEW_PREPARE_BOOL_FLAGS = new Set()
 const REVIEW_PUBLISH_VALUE_FLAGS = new Set([
   'pr',
@@ -767,6 +780,10 @@ function runReviewPrepare(argv, deps, io) {
   if (pr.error) return argError(io, sub, pr.error)
   const round = parseRound(options.round)
   if (round.error) return argError(io, sub, round.error)
+  // --issue 可选但给了就必须是正整数：空值 / 0 / abc 当场拒绝，不静默退回自动探测
+  if (options.issue !== undefined && !/^[1-9][0-9]*$/.test(options.issue)) {
+    return argError(io, sub, `--issue 必须是正整数: ${options.issue}`)
+  }
   if (options.model !== undefined && !nonEmpty(options.model)) {
     return argError(io, sub, '--model 必须是非空字符串')
   }
@@ -831,6 +848,11 @@ function runReviewPrepare(argv, deps, io) {
     return argError(io, sub, `PR #${pr.value} 没有可用的 head 提交: ${String(headSha)}`)
   }
 
+  // issue 号：显式 --issue 优先；缺省从 PR 正文的 Closes / Fixes / Resolved #N 行探测。
+  // 探测不出号不是错误——请求照常产出，只在 stdout 末尾提示验收依据会是空的。
+  const issueNumber =
+    options.issue !== undefined ? Number(options.issue) : detectIssueFromBody(view.data?.body)
+
   const diffResult = prDiff(pr.value, { repo, runner })
   if (!diffResult.ok) return argError(io, sub, `无法读取 PR #${pr.value} 的 diff: ${diffResult.error}`)
   const diff = typeof diffResult.data === 'string' ? diffResult.data : ''
@@ -850,6 +872,21 @@ function runReviewPrepare(argv, deps, io) {
     return argError(io, sub, '无法从 diff 解析改动文件，拒绝写出空 files 的请求')
   }
 
+  // issue 正文是 reviewer 的验收依据：取到号后用 gh issue view 取 {number, title, body}。
+  // 探测不到号或 gh 取失败都不阻断——不写该字段，末尾提示一行即可。
+  let issue = null
+  if (issueNumber !== null) {
+    const result = issueView(issueNumber, { repo, runner })
+    if (result.ok && isPlainObject(result.data)) {
+      const data = result.data
+      issue = {
+        number: Number.isInteger(data.number) && data.number > 0 ? data.number : issueNumber,
+        title: typeof data.title === 'string' ? data.title : '',
+        body: typeof data.body === 'string' ? data.body : '',
+      }
+    }
+  }
+
   const request = {
     pr: pr.value,
     head_sha: headSha,
@@ -865,6 +902,8 @@ function runReviewPrepare(argv, deps, io) {
   // 证据包是可选字段：没给参数就一个键都不加，旧消费方读到的请求逐字节不变。
   if (facts !== undefined) request.facts = facts
   if (includes !== undefined) request.includes = includes
+  // issue 同样是可选字段：取不到正文就一个键都不加，buildPrompt 那段输出 (空)
+  if (issue !== null) request.issue = issue
 
   const target =
     options.out !== undefined ? options.out : join(root, '.tmp', 'review', String(pr.value), 'request.json')
@@ -878,6 +917,8 @@ function runReviewPrepare(argv, deps, io) {
   io.out(`请求文件: ${target}`)
   io.out(`nonce: ${request.nonce}`)
   io.out(`head: ${headSha.slice(0, 7)}`)
+  // 取不到 issue 正文不是失败，但必须让调用方看见：reviewer 的验收依据会是空的
+  if (issue === null) io.out('提示: 未取到 issue 正文（reviewer 的验收依据会是空的）')
   return 0
 }
 

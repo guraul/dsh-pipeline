@@ -5,6 +5,7 @@ import {
   DIFF_END,
   NONCE_PATTERN,
   buildPrompt,
+  detectIssueFromBody,
   extractFindings,
   makeNonce,
   parseVerdict,
@@ -203,4 +204,18 @@ test('reviewAction 映射三种判定', () => {
   assert.equal(reviewAction('REJECT'), 'request-changes')
   assert.equal(reviewAction('ESCALATE'), 'none')
   assert.equal(reviewAction('UNKNOWN'), 'none')
+})
+
+test('detectIssueFromBody：只认 Closes/Fixes/Resolved 行里的第一个号', () => {
+  assert.equal(detectIssueFromBody('Closes #123'), 123)
+  assert.equal(detectIssueFromBody('背景说明\n\nFixes: #45\n'), 45)
+  assert.equal(detectIssueFromBody('resolved #7 与 closes #8'), 7)
+  assert.equal(detectIssueFromBody('CLOSES #6'), 6)
+  assert.equal(detectIssueFromBody('相关讨论 #99\n本行没有关键字 #88\nCloses #55'), 55)
+  assert.equal(detectIssueFromBody('没有任何关闭关键字 #12'), null)
+  assert.equal(detectIssueFromBody('closing #12 / prefix #13 / fixes#14 都不算'), null)
+  assert.equal(detectIssueFromBody('Closes #0'), null)
+  assert.equal(detectIssueFromBody(''), null)
+  assert.equal(detectIssueFromBody(null), null)
+  assert.equal(detectIssueFromBody(undefined), null)
 })
