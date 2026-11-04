@@ -46,8 +46,8 @@ function makeRoot({ repo = 'owner/repo' } = {}) {
   return root
 }
 
-/** 假 gh：pr view / pr diff 各给一份预设输出，其余命令一律失败。 */
-function ghRunner({ view, diff, viewStatus = 0, diffStatus = 0 } = {}) {
+/** 假 gh：pr view / pr diff / issue view 各给一份预设输出，其余命令一律失败。 */
+function ghRunner({ view, diff, issue, viewStatus = 0, diffStatus = 0, issueStatus = 0 } = {}) {
   const calls = []
   const runner = (command, args) => {
     calls.push({ command, args: [...args] })
@@ -61,6 +61,13 @@ function ghRunner({ view, diff, viewStatus = 0, diffStatus = 0 } = {}) {
     }
     if (args[0] === 'pr' && args[1] === 'diff') {
       return { status: diffStatus, stdout: diff ?? '', stderr: diffStatus === 0 ? '' : 'gh pr diff 失败' }
+    }
+    if (args[0] === 'issue' && args[1] === 'view') {
+      return {
+        status: issueStatus,
+        stdout: JSON.stringify(issue ?? null),
+        stderr: issueStatus === 0 ? '' : 'gh issue view 失败',
+      }
     }
     return { status: 1, stdout: '', stderr: `未预期的 gh 调用: ${args.join(' ')}` }
   }
@@ -115,7 +122,11 @@ function reviewText(verdict, sha, nonce = NONCE) {
 
 test('review prepare：生成请求 JSON，nonce/head/files 正确，stdout 正好三行', () => {
   const root = makeRoot()
-  const { runner, calls } = ghRunner({ view: VIEW_OK, diff: DIFF })
+  const { runner, calls } = ghRunner({
+    view: { ...VIEW_OK, body: '背景说明\n\nCloses #42\n' },
+    diff: DIFF,
+    issue: { number: 42, title: '补回 issue 正文', body: '验收：reviewer 必须能看到这段' },
+  })
   const io = makeIO()
 
   const code = run(['review', 'prepare', '--pr', '7', '--root', root], io, { runner, cwd: '/别的目录' })
@@ -133,32 +144,129 @@ test('review prepare：生成请求 JSON，nonce/head/files 正确，stdout 正�
   assert.equal(request.form, null)
   assert.deepEqual(request.files, ['lib/a.mjs', 'test/a.test.mjs'])
   assert.equal(request.diff, DIFF)
+  assert.deepEqual(request.issue, { number: 42, title: '补回 issue 正文', body: '验收：reviewer 必须能看到这段' })
 
   const lines = io.state.out.trim().split('\n')
-  assert.equal(lines.length, 3, `stdout 应正好三行，实际: ${io.state.out}`)
+  assert.equal(lines.length, 3, `取到 issue 正文时 stdout 应正好三行，实际: ${io.state.out}`)
   assert.equal(lines[0], `请求文件: ${file}`)
   assert.equal(lines[1], `nonce: ${request.nonce}`)
   assert.equal(lines[2], `head: ${SHA.slice(0, 7)}`)
   assert.equal(io.state.err, '')
 
-  // 外部调用只走 gh：一次 pr view（head + 改动文件），一次 pr diff
+  // 外部调用只走 gh：一次 pr view（head + 改动文件 + 正文），一次 pr diff，一次 issue view
   assert.deepEqual(
     calls.map((call) => call.args.slice(0, 3)),
     [
       ['pr', 'view', '7'],
       ['pr', 'diff', '7'],
+      ['issue', 'view', '42'],
     ],
   )
   assert.deepEqual(calls[0].args.slice(3, 6), ['--repo', 'owner/repo', '--json'])
   assert.ok(calls[0].args[6].includes('headRefOid'), 'pr view 应请求 headRefOid')
   assert.ok(calls[0].args[6].includes('files'), 'pr view 应请求改动文件')
+  assert.ok(calls[0].args[6].includes('body'), 'pr view 应请求 PR 正文（自动探测 issue 号用）')
   assert.deepEqual(calls[1].args.slice(3), ['--repo', 'owner/repo'])
+  assert.deepEqual(calls[2].args.slice(3), ['--repo', 'owner/repo', '--json', 'number,title,state,url,body'])
 
   // nonce 一次性：再跑一次必须换一个标记
   const again = makeIO()
   assert.equal(run(['review', 'prepare', '--pr', '7', '--root', root], again, { runner, cwd: root }), 0)
   const second = JSON.parse(readFileSync(file, 'utf8'))
   assert.notEqual(second.nonce, request.nonce)
+})
+
+test('review prepare：--issue 显式指定时取该 issue 正文写进请求', () => {
+  const root = makeRoot()
+  const { runner, calls } = ghRunner({
+    view: VIEW_OK, // 正文里没有关闭关键字，只有显式 --issue 能取到号
+    diff: DIFF,
+    issue: { number: 42, title: '补回 issue 正文', body: '验收标准甲' },
+  })
+  const io = makeIO()
+
+  const code = run(['review', 'prepare', '--pr', '7', '--issue', '42', '--root', root], io, { runner })
+  assert.equal(code, 0, io.state.err)
+
+  const request = JSON.parse(readFileSync(requestPath(root), 'utf8'))
+  assert.deepEqual(request.issue, { number: 42, title: '补回 issue 正文', body: '验收标准甲' })
+
+  const lines = io.state.out.trim().split('\n')
+  assert.equal(lines.length, 3, `取到 issue 正文时不该有提示行，实际: ${io.state.out}`)
+  assert.equal(io.state.out.includes('未取到 issue 正文'), false)
+
+  const issueCall = calls.find((call) => call.args[0] === 'issue')
+  assert.ok(issueCall, '应发出 gh issue view')
+  assert.deepEqual(issueCall.args, [
+    'issue',
+    'view',
+    '42',
+    '--repo',
+    'owner/repo',
+    '--json',
+    'number,title,state,url,body',
+  ])
+})
+
+test('review prepare：PR 正文里形如 Closes #N 的行自动探测 issue 号（取第一个号）', () => {
+  const root = makeRoot()
+  const { runner, calls } = ghRunner({
+    view: { ...VIEW_OK, body: '相关讨论见 #99\n\n这行没有关闭关键字 #88\nCloses #55 与 Fixes #34\n' },
+    diff: DIFF,
+    issue: { number: 55, title: '自动探测', body: '验收标准乙' },
+  })
+  const io = makeIO()
+
+  assert.equal(run(['review', 'prepare', '--pr', '7', '--root', root], io, { runner }), 0, io.state.err)
+
+  const request = JSON.parse(readFileSync(requestPath(root), 'utf8'))
+  assert.deepEqual(request.issue, { number: 55, title: '自动探测', body: '验收标准乙' })
+  assert.equal(io.state.out.includes('未取到 issue 正文'), false, '探测成功不该有提示行')
+
+  const issueCall = calls.find((call) => call.args[0] === 'issue')
+  assert.ok(issueCall, '应发出 gh issue view')
+  assert.deepEqual(issueCall.args.slice(0, 3), ['issue', 'view', '55'])
+})
+
+test('review prepare：探测不到 issue 号时不写该字段，退出 0 且补一行提示', () => {
+  const root = makeRoot()
+  const { runner, calls } = ghRunner({ view: { ...VIEW_OK, body: '本 PR 不关联任何 issue' }, diff: DIFF })
+  const io = makeIO()
+
+  const code = run(['review', 'prepare', '--pr', '7', '--root', root], io, { runner })
+  assert.equal(code, 0, io.state.err)
+  assert.equal(io.state.err, '')
+
+  const request = JSON.parse(readFileSync(requestPath(root), 'utf8'))
+  assert.equal('issue' in request, false, '取不到就不该有 issue 字段')
+  assert.equal(calls.some((call) => call.args[0] === 'issue'), false, '没探测到号就不该发 issue view')
+
+  const lines = io.state.out.trim().split('\n')
+  assert.equal(lines.length, 4, `应为三行 + 一行提示，实际: ${io.state.out}`)
+  assert.equal(lines[3], '提示: 未取到 issue 正文（reviewer 的验收依据会是空的）')
+})
+
+test('review prepare：gh issue view 失败不阻断，请求照常产出并提示', () => {
+  const root = makeRoot()
+  const { runner, calls } = ghRunner({
+    view: { ...VIEW_OK, body: 'Closes #42' },
+    diff: DIFF,
+    issueStatus: 1,
+  })
+  const io = makeIO()
+
+  const code = run(['review', 'prepare', '--pr', '7', '--root', root], io, { runner })
+  assert.equal(code, 0, `gh 取 issue 失败不该阻断: ${io.state.err}`)
+  assert.equal(existsSync(requestPath(root)), true, '请求文件照常产出')
+
+  const request = JSON.parse(readFileSync(requestPath(root), 'utf8'))
+  assert.equal(request.pr, 7)
+  assert.equal('issue' in request, false, 'gh 失败时不写 issue 字段')
+  assert.ok(calls.some((call) => call.args[0] === 'issue'), '探测到号后确实尝试过 issue view')
+
+  const lines = io.state.out.trim().split('\n')
+  assert.equal(lines.length, 4, `应为三行 + 一行提示，实际: ${io.state.out}`)
+  assert.equal(lines[3], '提示: 未取到 issue 正文（reviewer 的验收依据会是空的）')
 })
 
 test('review prepare：gh 没给 files 时从 diff 头还原改动文件，不让 files 空着', () => {
@@ -669,6 +777,22 @@ test('review prompt：--role 取仓库配置里该角色的 instructions，未�
   assert.equal(bad.state.out, '')
 })
 
+test('review prompt：请求带 issue 正文时渲染验收依据段，取不到时输出 (空)', () => {
+  const root = makeRoot()
+  const heading = '验收依据（issue 正文）:'
+
+  const withIssue = writeRequest(root, { issue: { number: 42, title: '补回 issue 正文', body: '验收标准甲' } })
+  const ok = makeIO()
+  assert.equal(run(['review', 'prompt', '--request', withIssue], ok, { cwd: root }), 0, ok.state.err)
+  assert.ok(ok.state.out.includes(`${heading}\n验收标准甲`), `应贴进 issue 正文，实际:\n${ok.state.out}`)
+
+  const withoutIssue = writeRequest(root)
+  const empty = makeIO()
+  assert.equal(run(['review', 'prompt', '--request', withoutIssue], empty, { cwd: root }), 0, empty.state.err)
+  assert.ok(empty.state.out.includes(`${heading}\n(空)`), `没有 issue 正文时应输出 (空)，实际:\n${empty.state.out}`)
+  assert.equal(empty.state.out.includes('验收标准甲'), false)
+})
+
 // ---------- 动作分发 ----------
 
 test('review：缺动作、-- 开头的动作与未知动作一律退出 2', () => {
@@ -700,6 +824,11 @@ test('review prepare：--pr 非法与未知选项退出 2', () => {
   const badRound = makeIO()
   assert.equal(run(['review', 'prepare', '--pr', '7', '--root', root, '--round', '9'], badRound, { runner }), 2)
   assert.match(badRound.state.err, /--round 必须是 1\.\.3/)
+
+  const badIssue = makeIO()
+  assert.equal(run(['review', 'prepare', '--pr', '7', '--root', root, '--issue', 'abc'], badIssue, { runner }), 2)
+  assert.match(badIssue.state.err, /--issue 必须是正整数/)
+  assert.equal(badIssue.state.out, '')
 
   assert.equal(calls.length, 0, '参数没过校验时不许发 gh')
 })

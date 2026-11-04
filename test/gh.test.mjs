@@ -34,7 +34,7 @@ test('prView：argv 固定，JSON 解析进 data', () => {
         '--repo',
         REPO,
         '--json',
-        'number,title,state,isDraft,headRefName,headRefOid,baseRefName,mergeable,url,files',
+        'number,title,state,isDraft,headRefName,headRefOid,baseRefName,mergeable,url,files,body',
       ],
       options: {},
     },
@@ -240,7 +240,7 @@ test('导出面固定：只有具名操作，没有接受 argv 的通用入口',
     '--repo',
     REPO,
     '--json',
-    'number,title,state,isDraft,headRefName,headRefOid,baseRefName,mergeable,url,files',
+    'number,title,state,isDraft,headRefName,headRefOid,baseRefName,mergeable,url,files,body',
   ])
 })
 
