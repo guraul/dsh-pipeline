@@ -13,7 +13,7 @@
  * runner 可注入，测试用假 runner 断言实际发出的命令，不碰真实 gh/git。
  */
 import { mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { loadConfig } from '../lib/config.mjs'
@@ -87,12 +87,16 @@ pr 用法:
 
 review 用法:
   dsh-pipeline review prepare --pr <n> [--root <dir>] [--model <m>] [--round <n>] [--out <file>]
+                               [--facts <文件>] [--include <路径,路径,...>]
   dsh-pipeline review publish --pr <n> --response <file> [--request <file>] [--round <n>]
                                [--root <dir>] [--model <m>] [--provider <p>] [--form <f>]
 
   prepare  用 gh 读 PR 的 head 提交、改动文件与 diff，生成请求 JSON（含 12 位 base32 nonce）
            到 <root>/.tmp/review/<pr>/request.json（--out 可改路径）；
            stdout 三行：请求文件路径、nonce、head 前 7 位。
+           --facts <文件> 把文件内容作为纯文本写进请求的 facts 字段（缺省不加该字段）；
+           --include <路径,路径,...> 逐个读文件写进请求的 includes 数组（每项 {path, content}，
+           path 保持调用方给的原样）；任一路径读不到或取值为空即退出 2，不写请求文件。
   publish  读 --response 并落盘 <root>/.dsh-web/reviews/<pr>-<sha>.json，复用 record 的落盘逻辑；
            --request 缺省为 <root>/.tmp/review/<pr>/request.json；
            --round 与请求里的 round 不一致时报错退出 2，没给则沿用请求里的 round。
@@ -375,7 +379,7 @@ const TASK_VALUE_FLAGS = new Set(['root', 'slug'])
 const TASK_BOOL_FLAGS = new Set()
 const PR_VALUE_FLAGS = new Set(['root', 'issue'])
 const PR_BOOL_FLAGS = new Set()
-const REVIEW_PREPARE_VALUE_FLAGS = new Set(['pr', 'root', 'model', 'round', 'out'])
+const REVIEW_PREPARE_VALUE_FLAGS = new Set(['pr', 'root', 'model', 'round', 'out', 'facts', 'include'])
 const REVIEW_PREPARE_BOOL_FLAGS = new Set()
 const REVIEW_PUBLISH_VALUE_FLAGS = new Set([
   'pr',
@@ -761,6 +765,40 @@ function runReviewPrepare(argv, deps, io) {
   }
   const root = resolveReviewRoot(options.root, deps)
 
+  // 证据包先读、后发 gh：读不到是调用方的参数错误，要在打网络之前就失败，
+  // 更不能落盘一个缺证据的请求文件。相对路径按 --root 解析（与消费仓口径一致）。
+  const readEvidence = (file, label) => {
+    const target = isAbsolute(file) ? file : join(root, file)
+    try {
+      return { text: readFileSync(target, 'utf8') }
+    } catch {
+      return { error: `${label} 指定的文件读不到: ${target}` }
+    }
+  }
+
+  let facts
+  if (options.facts !== undefined) {
+    if (!nonEmpty(options.facts)) return argError(io, sub, '--facts 必须是非空文件路径')
+    const read = readEvidence(options.facts, '--facts')
+    if (read.error) return argError(io, sub, read.error)
+    facts = read.text
+  }
+
+  let includes
+  if (options.include !== undefined) {
+    // 空值不是「没有」，是写错了：--include= / --include=,, 一律拒绝，不静默跳过。
+    const paths = options.include.split(',').map((item) => item.trim())
+    if (paths.some((path) => path.length === 0)) {
+      return argError(io, sub, '--include 需要一个或多个文件路径（逗号分隔）')
+    }
+    includes = []
+    for (const path of paths) {
+      const read = readEvidence(path, '--include')
+      if (read.error) return argError(io, sub, read.error)
+      includes.push({ path, content: read.text })
+    }
+  }
+
   let config
   try {
     config = loadConfig(root).config
@@ -811,6 +849,9 @@ function runReviewPrepare(argv, deps, io) {
     files,
     diff,
   }
+  // 证据包是可选字段：没给参数就一个键都不加，旧消费方读到的请求逐字节不变。
+  if (facts !== undefined) request.facts = facts
+  if (includes !== undefined) request.includes = includes
 
   const target =
     options.out !== undefined ? options.out : join(root, '.tmp', 'review', String(pr.value), 'request.json')
