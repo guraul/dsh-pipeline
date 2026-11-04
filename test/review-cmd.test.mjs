@@ -1,5 +1,5 @@
 /**
- * review 子命令（prepare / publish）的行为测试。
+ * review 子命令（prepare / publish / prompt）的行为测试。
  *
  * 全部注入假 runner 断言「实际发出的 gh 命令」，不触网；
  * publish 的落盘断言读真实文件——审计轨迹有没有丢，只有文件能证明。
@@ -551,16 +551,134 @@ test('review publish：参数校验一律退出 2，且不产生任何记录', (
   assert.equal(existsSync(reviewsDir(root)), false, '参数错误时不许留下半条记录')
 })
 
+// ---------- prompt ----------
+
+test('review prompt：未给 --out 时提示词打到 stdout，退出 0', () => {
+  const root = makeRoot()
+  const file = writeRequest(root, {
+    facts: '事实甲：本 PR 只改 CLI 与测试',
+    includes: [{ path: 'docs/spec.md', content: '随附正文不该出现在提示词里' }],
+  })
+  const io = makeIO()
+
+  const code = run(['review', 'prompt', '--request', file], io, { cwd: root })
+  assert.equal(code, 0, io.state.err)
+  assert.equal(io.state.err, '')
+
+  const out = io.state.out
+  assert.ok(out.includes('<<<DIFF_BEGIN'))
+  assert.ok(out.includes('<<<DIFF_END>>>'))
+  assert.ok(out.includes('证据包（控制面补充的事实，可信）:'))
+  assert.ok(out.includes('事实甲：本 PR 只改 CLI 与测试'))
+  assert.ok(out.includes('随附文件: docs/spec.md'))
+  assert.ok(!out.includes('随附正文不该出现在提示词里'), '随附文件只列路径，不贴内容')
+  assert.ok(out.includes(`${NONCE} VERDICT: <APPROVE|REJECT|ESCALATE> SHA: ${SHA}`))
+})
+
+test('review prompt：--out 写文件并打印「已写入 <路径>」', () => {
+  const root = makeRoot()
+  const file = writeRequest(root)
+  const out = join(root, 'nested', 'prompt.md')
+  const io = makeIO()
+
+  const code = run(['review', 'prompt', '--request', file, '--out', out], io, { cwd: root })
+  assert.equal(code, 0, io.state.err)
+  assert.equal(io.state.out.trim(), `已写入 ${out}`)
+  assert.equal(io.state.err, '')
+
+  const written = readFileSync(out, 'utf8')
+  assert.ok(written.includes('<<<DIFF_BEGIN'))
+  assert.ok(written.includes('输出要求（必须逐字遵守）:'))
+})
+
+test('review prompt：缺 --request 退出 2，不读文件也不写提示词', () => {
+  const root = makeRoot()
+  writeRequest(root)
+
+  const missing = makeIO()
+  assert.equal(run(['review', 'prompt'], missing, { cwd: root }), 2)
+  assert.match(missing.state.err, /缺少必填参数 --request/)
+  assert.equal(missing.state.out, '')
+
+  const empty = makeIO()
+  assert.equal(run(['review', 'prompt', '--request', ''], empty, { cwd: root }), 2)
+  assert.match(empty.state.err, /缺少必填参数 --request/)
+
+  const out = join(root, 'never.md')
+  const withOut = makeIO()
+  assert.equal(run(['review', 'prompt', '--out', out], withOut, { cwd: root }), 2)
+  assert.match(withOut.state.err, /缺少必填参数 --request/)
+  assert.equal(existsSync(out), false, '参数没过校验时不许写文件')
+})
+
+test('review prompt：请求没有 facts/includes 时不出现那两段', () => {
+  const root = makeRoot()
+  const plain = writeRequest(root)
+  const io = makeIO()
+
+  assert.equal(run(['review', 'prompt', '--request', plain], io, { cwd: root }), 0, io.state.err)
+  assert.ok(!io.state.out.includes('证据包（控制面补充的事实，可信）:'))
+  assert.ok(!io.state.out.includes('随附文件:'))
+  assert.ok(io.state.out.includes('<<<DIFF_END>>>'))
+  assert.ok(io.state.out.includes('输出要求（必须逐字遵守）:'))
+})
+
+test('review prompt：有 facts 时两段排在 diff 之后、输出要求之前', () => {
+  const root = makeRoot()
+  const file = writeRequest(root, {
+    facts: '事实甲',
+    includes: [
+      { path: 'docs/spec.md', content: 'x' },
+      { path: 'docs/api.md', content: 'y' },
+    ],
+  })
+  const io = makeIO()
+
+  assert.equal(run(['review', 'prompt', '--request', file], io, { cwd: root }), 0, io.state.err)
+  const out = io.state.out
+  const diffEnd = out.indexOf('<<<DIFF_END>>>')
+  const facts = out.indexOf('证据包（控制面补充的事实，可信）:')
+  const includes = out.indexOf('随附文件: docs/spec.md, docs/api.md')
+  const output = out.indexOf('输出要求（必须逐字遵守）:')
+  assert.ok(diffEnd !== -1 && facts !== -1 && includes !== -1 && output !== -1)
+  assert.ok(diffEnd < facts, '证据包必须排在 diff 之后')
+  assert.ok(facts < includes, '随附文件排在证据包之后')
+  assert.ok(includes < output, '两段都必须排在输出要求之前')
+})
+
+test('review prompt：--role 取仓库配置里该角色的 instructions，未知角色退出 2', () => {
+  const root = makeRoot()
+  writeFileSync(
+    join(root, '.dsh', 'pipeline.json'),
+    JSON.stringify({ repo: 'owner/repo', roles: { reviewer: { instructions: '按验收依据逐条核对' } } }),
+    'utf8',
+  )
+  const file = writeRequest(root)
+
+  const ok = makeIO()
+  assert.equal(
+    run(['review', 'prompt', '--request', file, '--role', 'reviewer'], ok, { cwd: root }),
+    0,
+    ok.state.err,
+  )
+  assert.ok(ok.state.out.includes('按验收依据逐条核对'))
+
+  const bad = makeIO()
+  assert.equal(run(['review', 'prompt', '--request', file, '--role', 'admin'], bad, { cwd: root }), 2)
+  assert.match(bad.state.err, /未知角色: admin/)
+  assert.equal(bad.state.out, '')
+})
+
 // ---------- 动作分发 ----------
 
 test('review：缺动作、-- 开头的动作与未知动作一律退出 2', () => {
   const io = makeIO()
   assert.equal(run(['review'], io), 2)
-  assert.match(io.state.err, /review <prepare\|publish>/)
+  assert.match(io.state.err, /review <prepare\|publish\|prompt>/)
 
   const flagFirst = makeIO()
   assert.equal(run(['review', '--pr', '7'], flagFirst), 2)
-  assert.match(flagFirst.state.err, /review <prepare\|publish>/)
+  assert.match(flagFirst.state.err, /review <prepare\|publish\|prompt>/)
 
   const unknown = makeIO()
   assert.equal(run(['review', 'publishx'], unknown), 2)

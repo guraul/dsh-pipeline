@@ -6,7 +6,8 @@
  * gate 走 decideGate()；merge 整条流程（闸门 → CI → squash 合并 → 清理现场）交给
  * lib/merge.mjs，合并方式由 gh.prMerge 固定为 --squash；
  * task / pr 的流程分别交给 lib/task.mjs 与 lib/pr.mjs；
- * review 的 publish 复用 runRecord（与 record 同一条落盘路径），prepare 只编排 gh 读取。
+ * review 的 publish 复用 runRecord（与 record 同一条落盘路径），prepare 只编排 gh 读取，
+ * prompt 只读请求文件并复用 buildPrompt（不发外部命令、不写请求）。
  *
  * 输出约定：面向人的信息走 stdout，错误与警告走 stderr，全部中文。
  * 退出码：0 通过 / 1 闸门拒绝 / 2 参数或环境错误。
@@ -33,7 +34,8 @@ import {
 import { runMerge as runMergeFlow } from '../lib/merge.mjs'
 import { mergePolicy } from '../lib/policy.mjs'
 import { runPr as runPrFlow } from '../lib/pr.mjs'
-import { NONCE_PATTERN, analyzeVerdict, extractFindings, makeNonce } from '../lib/review.mjs'
+import { NONCE_PATTERN, analyzeVerdict, buildPrompt, extractFindings, makeNonce } from '../lib/review.mjs'
+import { resolveRoles } from '../lib/roles.mjs'
 import {
   MAX_ROUND,
   PACKAGE_VERSION,
@@ -70,7 +72,7 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
   task       从 issue 创建 task/<号>-<slug> 分支与 worktree
   prepare    准备交付（未实现）
   pr         推送当前 task 分支并创建 PR
-  review     生成审核请求（prepare）并把判定落成记录（publish）
+  review     生成审核请求（prepare）、审核提示词（prompt）并把判定落成记录（publish）
 
 task 用法:
   dsh-pipeline task <issue号> [--slug <slug>] [--root <dir>]
@@ -90,6 +92,7 @@ review 用法:
                                [--facts <文件>] [--include <路径,路径,...>]
   dsh-pipeline review publish --pr <n> --response <file> [--request <file>] [--round <n>]
                                [--root <dir>] [--model <m>] [--provider <p>] [--form <f>]
+  dsh-pipeline review prompt --request <file> [--out <file>] [--role <名>]
 
   prepare  用 gh 读 PR 的 head 提交、改动文件与 diff，生成请求 JSON（含 12 位 base32 nonce）
            到 <root>/.tmp/review/<pr>/request.json（--out 可改路径）；
@@ -101,6 +104,10 @@ review 用法:
            --request 缺省为 <root>/.tmp/review/<pr>/request.json；
            --round 与请求里的 round 不一致时报错退出 2，没给则沿用请求里的 round。
            判定行无法解析或提交不匹配时仍写一条 ESCALATE 记录，退出码 1（审计轨迹不丢）。
+  prompt   读 --request 指定的请求 JSON，用 buildPrompt 组出审核提示词（不发任何外部命令）；
+           --request 必填、没有缺省回退（拿错请求文件的代价是把错提示词发给 reviewer）；
+           未给 --out 打到 stdout，给了就写文件并打印「已写入 <路径>」；
+           --role <名> 取该角色的 instructions（默认角色 + .dsh/pipeline.json 的 roles 覆盖），未知角色退出 2。
 
 gate / merge 选项:
   --pr <n>           PR 编号（必填）
@@ -392,6 +399,8 @@ const REVIEW_PUBLISH_VALUE_FLAGS = new Set([
   'form',
 ])
 const REVIEW_PUBLISH_BOOL_FLAGS = new Set()
+const REVIEW_PROMPT_VALUE_FLAGS = new Set(['request', 'out', 'role'])
+const REVIEW_PROMPT_BOOL_FLAGS = new Set()
 
 function emit(io, lines) {
   for (const line of lines) {
@@ -957,15 +966,77 @@ function runReviewPublish(argv, deps, io) {
   return runRecord(forward, deps, io)
 }
 
-/** review：动作是位置参数（prepare / publish），选项交给各自的解析。 */
+/**
+ * review prompt：只读请求 JSON，用 buildPrompt 组出审核提示词，不发任何外部命令。
+ *
+ * --request 必须显式给，不做 .tmp/review/<pr>/request.json 的缺省回退：
+ * 提示词一旦发给 reviewer 就收不回来，「拿错文件」的代价远高于多打一个参数。
+ * --role 从仓库配置里取该角色的 instructions（默认角色 + roles 覆盖），未知角色退出 2。
+ */
+function runReviewPrompt(argv, deps, io) {
+  const sub = 'review prompt'
+  const parsed = parseArgs(argv, REVIEW_PROMPT_VALUE_FLAGS, REVIEW_PROMPT_BOOL_FLAGS)
+  if (parsed.error) return argError(io, sub, parsed.error)
+  const options = parsed.options
+
+  if (!nonEmpty(options.request)) return argError(io, sub, '缺少必填参数 --request')
+  if (options.out !== undefined && !nonEmpty(options.out)) {
+    return argError(io, sub, '--out 必须是非空文件路径')
+  }
+  if (options.role !== undefined && !nonEmpty(options.role)) {
+    return argError(io, sub, '--role 必须是非空角色名')
+  }
+
+  const raw = readTextFile(options.request, '请求文件')
+  if (raw.error) return argError(io, sub, raw.error)
+  let payload
+  try {
+    payload = JSON.parse(raw.text)
+  } catch {
+    return argError(io, sub, `请求文件不是合法 JSON: ${options.request}`)
+  }
+  if (!isPlainObject(payload)) return argError(io, sub, '请求内容必须是 JSON 对象')
+
+  let role = {}
+  if (options.role !== undefined) {
+    try {
+      const { config } = loadConfig(resolveReviewRoot(undefined, deps))
+      const roles = resolveRoles(config)
+      if (!Object.hasOwn(roles, options.role)) {
+        return argError(io, sub, `未知角色: ${options.role}`)
+      }
+      role = roles[options.role]
+    } catch (error) {
+      return argError(io, sub, messageOf(error))
+    }
+  }
+
+  const prompt = buildPrompt({ request: requestOf(payload), role })
+
+  if (options.out === undefined) {
+    io.out(prompt)
+    return 0
+  }
+  try {
+    mkdirSync(dirname(options.out), { recursive: true })
+    writeFileSync(options.out, `${prompt}\n`, 'utf8')
+  } catch (error) {
+    return argError(io, sub, `写入提示词失败: ${messageOf(error)}`)
+  }
+  io.out(`已写入 ${options.out}`)
+  return 0
+}
+
+/** review：动作是位置参数（prepare / publish / prompt），选项交给各自的解析。 */
 function runReview(argv, deps, io) {
   const [action, ...rest] = argv
   if (action === undefined || action.startsWith('--')) {
-    return argError(io, 'review', '用法: dsh-pipeline review <prepare|publish> [选项]')
+    return argError(io, 'review', '用法: dsh-pipeline review <prepare|publish|prompt> [选项]')
   }
   if (action === 'prepare') return runReviewPrepare(rest, deps, io)
   if (action === 'publish') return runReviewPublish(rest, deps, io)
-  return argError(io, 'review', `未知动作: ${action}（允许 prepare / publish）`)
+  if (action === 'prompt') return runReviewPrompt(rest, deps, io)
+  return argError(io, 'review', `未知动作: ${action}（允许 prepare / publish / prompt）`)
 }
 
 /** 读取 <root>/.dsh-web/reviews 下的有效记录及无法解析的数量。 */
