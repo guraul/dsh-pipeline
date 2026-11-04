@@ -142,3 +142,26 @@ test('task: 显式 --root 指向 linked worktree 时折回主工作区', () => {
   assert.ok(existsSync(target), '显式传入 worktree 路径也应把容器放回主工作区')
   assert.equal(existsSync(nested), false)
 })
+
+test('task: --worktrees-dir 指向仓库外的目录：真实建出 worktree，且幂等', () => {
+  const { main } = fixture()
+  const container = join(realpathSync(mkdtempSync(join(tmpdir(), 'dsh-wt-'))), 'nested', 'wt')
+  const target = join(container, `${ISSUE}-${SLUG}`)
+
+  const first = callTask(['task', String(ISSUE), '--root', main, '--worktrees-dir', container], main)
+  assert.equal(first.code, 0, first.err)
+  assert.ok(first.out.includes(target), first.out)
+  assert.ok(existsSync(target), '仓库外的 worktree 应真实创建')
+  assert.ok(existsSync(container), '不存在的容器目录应按 mkdir -p 创建')
+  assert.equal(existsSync(join(main, '.worktrees')), false, '缺省目录不应被顺手创建')
+
+  const list = runGit(main, ['worktree', 'list', '--porcelain'])
+  assert.ok(list.includes(`worktree ${target}`), 'worktree 列表应包含仓库外路径')
+
+  const second = callTask(['task', String(ISSUE), '--root', main, '--worktrees-dir', container], main)
+  assert.equal(second.code, 0, second.err)
+  assert.match(second.out, /worktree 已存在/)
+
+  const branches = runGit(main, ['branch', '--list', `task/${ISSUE}-${SLUG}`])
+  assert.equal(branches.trim().split('\n').length, 1, '幂等重跑不该建出第二条分支')
+})
