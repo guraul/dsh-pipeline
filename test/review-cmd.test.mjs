@@ -274,6 +274,102 @@ test('review prepare：读不到 PR 或 diff 时退出 2，不写请求文件', 
   assert.equal(existsSync(requestPath(root)), false)
 })
 
+test('review prepare：--facts 写进请求的 facts 字段，缺省不加该字段', () => {
+  const root = makeRoot()
+  const factsFile = join(root, 'facts.txt')
+  writeFileSync(factsFile, '背景：本 PR 只改 CLI 与测试。\n第二行事实。', 'utf8')
+  const { runner } = ghRunner({ view: VIEW_OK, diff: DIFF })
+
+  const withFacts = makeIO()
+  assert.equal(
+    run(['review', 'prepare', '--pr', '7', '--root', root, '--facts', factsFile], withFacts, { runner }),
+    0,
+    withFacts.state.err,
+  )
+  const request = JSON.parse(readFileSync(requestPath(root), 'utf8'))
+  assert.equal(request.facts, '背景：本 PR 只改 CLI 与测试。\n第二行事实。')
+
+  const withoutFacts = makeIO()
+  assert.equal(run(['review', 'prepare', '--pr', '7', '--root', root], withoutFacts, { runner }), 0)
+  const plain = JSON.parse(readFileSync(requestPath(root), 'utf8'))
+  assert.equal('facts' in plain, false, '没给 --facts 时请求里不该有 facts 字段')
+})
+
+test('review prepare：--include 多路径逐个读入，path 保持调用方给的原样', () => {
+  const root = makeRoot()
+  writeFileSync(join(root, 'spec.md'), '# 规格\n- A\n', 'utf8')
+  writeFileSync(join(root, 'notes.txt'), '备注内容', 'utf8')
+  const { runner } = ghRunner({ view: VIEW_OK, diff: DIFF })
+  const io = makeIO()
+
+  const code = run(
+    ['review', 'prepare', '--pr', '7', '--root', root, '--include', `${join(root, 'spec.md')},${join(root, 'notes.txt')}`],
+    io,
+    { runner },
+  )
+  assert.equal(code, 0, io.state.err)
+
+  const request = JSON.parse(readFileSync(requestPath(root), 'utf8'))
+  assert.deepEqual(request.includes, [
+    { path: join(root, 'spec.md'), content: '# 规格\n- A\n' },
+    { path: join(root, 'notes.txt'), content: '备注内容' },
+  ])
+  assert.equal('facts' in request, false, '没给 --facts 时不该有 facts 字段')
+})
+
+test('review prepare：--include 有路径读不到时退出 2，不发 gh 也不写请求文件', () => {
+  const root = makeRoot()
+  const exists = join(root, 'exists.txt')
+  writeFileSync(exists, '存在', 'utf8')
+  const { runner, calls } = ghRunner({ view: VIEW_OK, diff: DIFF })
+  const io = makeIO()
+
+  const code = run(
+    ['review', 'prepare', '--pr', '7', '--root', root, '--include', `${exists},${join(root, 'missing.txt')}`],
+    io,
+    { runner },
+  )
+  assert.equal(code, 2)
+  assert.match(io.state.err, /--include 指定的文件读不到/)
+  assert.match(io.state.err, /missing\.txt/)
+  assert.equal(io.state.out, '')
+  assert.equal(calls.length, 0, '证据读不到时一个 gh 命令都不该发')
+  assert.equal(existsSync(requestPath(root)), false, '读不到文件时不许落 request.json')
+  assert.equal(existsSync(join(root, '.tmp')), false, '连 .tmp 目录都不该创建')
+})
+
+test('review prepare：--include= 空值退出 2，不发 gh 也不写请求文件', () => {
+  const root = makeRoot()
+  const { runner, calls } = ghRunner({ view: VIEW_OK, diff: DIFF })
+
+  for (const empty of ['', ',,,']) {
+    const io = makeIO()
+    const code = run(['review', 'prepare', '--pr', '7', '--root', root, `--include=${empty}`], io, { runner })
+    assert.equal(code, 2, `--include=${empty} 应退出 2，实际 ${code}`)
+    assert.match(io.state.err, /--include 需要一个或多个文件路径/)
+    assert.equal(io.state.out, '')
+    assert.equal(existsSync(requestPath(root)), false)
+  }
+  assert.equal(calls.length, 0, '参数没过校验时不许发 gh')
+  assert.equal(existsSync(join(root, '.tmp')), false)
+})
+
+test('review prepare：--facts 文件读不到时退出 2，不发 gh 也不写请求文件', () => {
+  const root = makeRoot()
+  const { runner, calls } = ghRunner({ view: VIEW_OK, diff: DIFF })
+  const io = makeIO()
+
+  const code = run(
+    ['review', 'prepare', '--pr', '7', '--root', root, '--facts', join(root, 'no-such-facts.txt')],
+    io,
+    { runner },
+  )
+  assert.equal(code, 2)
+  assert.match(io.state.err, /--facts 指定的文件读不到/)
+  assert.equal(calls.length, 0)
+  assert.equal(existsSync(requestPath(root)), false)
+})
+
 // ---------- publish ----------
 
 test('review publish：按默认路径读请求并落盘，轮次与提供方取自请求', () => {
