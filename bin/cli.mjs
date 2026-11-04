@@ -5,19 +5,20 @@
  * 判定、读写、执行全部复用 lib/，本文件不复制任何业务规则：
  * gate 走 decideGate()；merge 整条流程（闸门 → CI → squash 合并 → 清理现场）交给
  * lib/merge.mjs，合并方式由 gh.prMerge 固定为 --squash；
- * task / pr 的流程分别交给 lib/task.mjs 与 lib/pr.mjs。
+ * task / pr 的流程分别交给 lib/task.mjs 与 lib/pr.mjs；
+ * review 的 publish 复用 runRecord（与 record 同一条落盘路径），prepare 只编排 gh 读取。
  *
  * 输出约定：面向人的信息走 stdout，错误与警告走 stderr，全部中文。
  * 退出码：0 通过 / 1 闸门拒绝 / 2 参数或环境错误。
  * runner 可注入，测试用假 runner 断言实际发出的命令，不碰真实 gh/git。
  */
-import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
+import { mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { loadConfig } from '../lib/config.mjs'
 import { evaluateGate } from '../lib/gate.mjs'
-import { prChecks, prMerge, prView } from '../lib/gh.mjs'
+import { prChecks, prDiff, prMerge, prView } from '../lib/gh.mjs'
 import {
   checkout,
   currentBranch,
@@ -32,7 +33,7 @@ import {
 import { runMerge as runMergeFlow } from '../lib/merge.mjs'
 import { mergePolicy } from '../lib/policy.mjs'
 import { runPr as runPrFlow } from '../lib/pr.mjs'
-import { NONCE_PATTERN, analyzeVerdict, extractFindings } from '../lib/review.mjs'
+import { NONCE_PATTERN, analyzeVerdict, extractFindings, makeNonce } from '../lib/review.mjs'
 import {
   MAX_ROUND,
   PACKAGE_VERSION,
@@ -50,8 +51,8 @@ import { describeRow, diagnose } from '../lib/doctor.mjs'
 const here = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8'))
 
-const IMPLEMENTED = new Set(['doctor', 'gate', 'merge', 'record', 'status', 'task', 'pr'])
-const SUBCOMMANDS = ['task', 'prepare', 'pr', 'merge', 'gate', 'record', 'status', 'doctor']
+const IMPLEMENTED = new Set(['doctor', 'gate', 'merge', 'record', 'status', 'task', 'pr', 'review'])
+const SUBCOMMANDS = ['task', 'prepare', 'pr', 'merge', 'gate', 'record', 'status', 'doctor', 'review']
 
 const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单一实现
 
@@ -69,6 +70,7 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
   task       从 issue 创建 task/<号>-<slug> 分支与 worktree
   prepare    准备交付（未实现）
   pr         推送当前 task 分支并创建 PR
+  review     生成审核请求（prepare）并把判定落成记录（publish）
 
 task 用法:
   dsh-pipeline task <issue号> [--slug <slug>] [--root <dir>]
@@ -82,6 +84,19 @@ pr 用法:
   --issue <号>       分支名不含 issue 号时（如 task/pipeline-gh）用它指定 PR 要关哪个 issue
   --root <dir>       仓库根目录（缺省取当前 task worktree 的顶层目录）
   当前分支必须是 task/<号>-<slug>；PR 已存在时只打印链接。
+
+review 用法:
+  dsh-pipeline review prepare --pr <n> [--root <dir>] [--model <m>] [--round <n>] [--out <file>]
+  dsh-pipeline review publish --pr <n> --response <file> [--request <file>] [--round <n>]
+                               [--root <dir>] [--model <m>] [--provider <p>] [--form <f>]
+
+  prepare  用 gh 读 PR 的 head 提交、改动文件与 diff，生成请求 JSON（含 12 位 base32 nonce）
+           到 <root>/.tmp/review/<pr>/request.json（--out 可改路径）；
+           stdout 三行：请求文件路径、nonce、head 前 7 位。
+  publish  读 --response 并落盘 <root>/.dsh-web/reviews/<pr>-<sha>.json，复用 record 的落盘逻辑；
+           --request 缺省为 <root>/.tmp/review/<pr>/request.json；
+           --round 与请求里的 round 不一致时报错退出 2，没给则沿用请求里的 round。
+           判定行无法解析或提交不匹配时仍写一条 ESCALATE 记录，退出码 1（审计轨迹不丢）。
 
 gate / merge 选项:
   --pr <n>           PR 编号（必填）
@@ -360,6 +375,19 @@ const TASK_VALUE_FLAGS = new Set(['root', 'slug'])
 const TASK_BOOL_FLAGS = new Set()
 const PR_VALUE_FLAGS = new Set(['root', 'issue'])
 const PR_BOOL_FLAGS = new Set()
+const REVIEW_PREPARE_VALUE_FLAGS = new Set(['pr', 'root', 'model', 'round', 'out'])
+const REVIEW_PREPARE_BOOL_FLAGS = new Set()
+const REVIEW_PUBLISH_VALUE_FLAGS = new Set([
+  'pr',
+  'root',
+  'response',
+  'request',
+  'round',
+  'model',
+  'provider',
+  'form',
+])
+const REVIEW_PUBLISH_BOOL_FLAGS = new Set()
 
 function emit(io, lines) {
   for (const line of lines) {
@@ -693,6 +721,197 @@ function runRecord(argv, deps, io) {
   }
 }
 
+/** review 两个动作共用的根目录口径：--root > 注入的 cwd > 当前工作目录。 */
+function resolveReviewRoot(value, deps) {
+  if (value !== undefined) return value
+  return nonEmpty(deps.cwd) ? deps.cwd : process.cwd()
+}
+
+/**
+ * review prepare：从 gh 取 PR 的 head 提交、改动文件与 diff，生成审核请求 JSON。
+ * 外部调用只走 lib/gh.mjs 的具名操作（prView / prDiff），本函数不直接 spawn。
+ */
+function runReviewPrepare(argv, deps, io) {
+  const sub = 'review prepare'
+  const parsed = parseArgs(argv, REVIEW_PREPARE_VALUE_FLAGS, REVIEW_PREPARE_BOOL_FLAGS)
+  if (parsed.error) return argError(io, sub, parsed.error)
+  const options = parsed.options
+
+  const pr = parsePr(options.pr)
+  if (pr.error) return argError(io, sub, pr.error)
+  const round = parseRound(options.round)
+  if (round.error) return argError(io, sub, round.error)
+  if (options.model !== undefined && !nonEmpty(options.model)) {
+    return argError(io, sub, '--model 必须是非空字符串')
+  }
+  if (options.out !== undefined && !nonEmpty(options.out)) {
+    return argError(io, sub, '--out 必须是非空文件路径')
+  }
+  if (options.root !== undefined && !nonEmpty(options.root)) {
+    return argError(io, sub, '--root 必须是非空目录路径')
+  }
+  const root = resolveReviewRoot(options.root, deps)
+
+  let config
+  try {
+    config = loadConfig(root).config
+  } catch (error) {
+    return argError(io, sub, `读取配置失败: ${messageOf(error)}`)
+  }
+  const repo = config.repo
+  if (typeof repo !== 'string' || repo.length === 0) {
+    return argError(io, sub, '未配置仓库标识（.dsh/pipeline.json 缺少 repo）')
+  }
+
+  const runner = deps.runner
+  const view = prView(pr.value, { repo, runner })
+  if (!view.ok) return argError(io, sub, `无法读取 PR #${pr.value}: ${view.error}`)
+  const headSha = view.data?.headRefOid
+  if (typeof headSha !== 'string' || !SHA_PATTERN.test(headSha)) {
+    return argError(io, sub, `PR #${pr.value} 没有可用的 head 提交: ${String(headSha)}`)
+  }
+
+  const diffResult = prDiff(pr.value, { repo, runner })
+  if (!diffResult.ok) return argError(io, sub, `无法读取 PR #${pr.value} 的 diff: ${diffResult.error}`)
+  const diff = typeof diffResult.data === 'string' ? diffResult.data : ''
+
+  // gh 给了改动文件就用它；没给时从 diff 的 `+++ b/<path>` 头还原——
+  // files 空着会让高风险判定静默放行，这层兜底不能省。
+  const fromGh = Array.isArray(view.data.files)
+    ? view.data.files
+        .map((item) => item?.path)
+        .filter((path) => typeof path === 'string' && path.length > 0)
+    : []
+  const files = fromGh.length > 0 ? fromGh : diffPaths(diff)
+
+  const request = {
+    pr: pr.value,
+    head_sha: headSha,
+    round: round.value,
+    nonce: makeNonce(),
+    model: nonEmpty(options.model) ? options.model : null,
+    // provider / form 由 publish 的同名参数决定，prepare 只占位留空
+    provider: null,
+    form: null,
+    files,
+    diff,
+  }
+
+  const target =
+    options.out !== undefined ? options.out : join(root, '.tmp', 'review', String(pr.value), 'request.json')
+  try {
+    mkdirSync(dirname(target), { recursive: true })
+    writeFileSync(target, `${JSON.stringify(request, null, 2)}\n`, 'utf8')
+  } catch (error) {
+    return argError(io, sub, `写入请求文件失败: ${messageOf(error)}`)
+  }
+
+  io.out(`请求文件: ${target}`)
+  io.out(`nonce: ${request.nonce}`)
+  io.out(`head: ${headSha.slice(0, 7)}`)
+  return 0
+}
+
+/**
+ * review publish：读审核响应并落盘。判定解析、审计兜底与写盘全部交给 runRecord——
+ * 与 `record` 是同一条代码路径，不是第二套实现；错误前缀沿用 record 也正因如此。
+ * 这里只做请求文件定位与轮次 / 提供方口径的前置校验。
+ */
+function runReviewPublish(argv, deps, io) {
+  const sub = 'review publish'
+  const parsed = parseArgs(argv, REVIEW_PUBLISH_VALUE_FLAGS, REVIEW_PUBLISH_BOOL_FLAGS)
+  if (parsed.error) return argError(io, sub, parsed.error)
+  const options = parsed.options
+
+  const pr = parsePr(options.pr)
+  if (pr.error) return argError(io, sub, pr.error)
+  if (!nonEmpty(options.response)) return argError(io, sub, '缺少必填参数 --response')
+  if (options.request !== undefined && !nonEmpty(options.request)) {
+    return argError(io, sub, '--request 必须是非空文件路径')
+  }
+  if (options.root !== undefined && !nonEmpty(options.root)) {
+    return argError(io, sub, '--root 必须是非空目录路径')
+  }
+  if (options.model !== undefined && !nonEmpty(options.model)) {
+    return argError(io, sub, '--model 必须是非空字符串')
+  }
+  if (options.provider !== undefined && !nonEmpty(options.provider)) {
+    return argError(io, sub, '--provider 必须是非空字符串')
+  }
+  if (options.form !== undefined && !nonEmpty(options.form)) {
+    return argError(io, sub, '--form 必须是非空字符串')
+  }
+  const explicitRound = options.round === undefined ? null : parseRound(options.round)
+  if (explicitRound !== null && explicitRound.error) return argError(io, sub, explicitRound.error)
+
+  const root = resolveReviewRoot(options.root, deps)
+  const requestFile =
+    options.request !== undefined
+      ? options.request
+      : join(root, '.tmp', 'review', String(pr.value), 'request.json')
+
+  const raw = readTextFile(requestFile, '请求文件')
+  if (raw.error) return argError(io, sub, raw.error)
+  let payload
+  try {
+    payload = JSON.parse(raw.text)
+  } catch {
+    return argError(io, sub, `请求文件不是合法 JSON: ${requestFile}`)
+  }
+  if (!isPlainObject(payload)) return argError(io, sub, '请求内容必须是 JSON 对象')
+  const request = requestOf(payload)
+
+  if (Number.isInteger(request.pr) && request.pr !== pr.value) {
+    return argError(io, sub, `--pr ${pr.value} 与请求中的 pr ${request.pr} 不符`)
+  }
+
+  // 轮次口径：显式 --round 必须与请求一致——拿错请求文件要当场失败，
+  // 不能把第 2 轮的判定静默写成第 1 轮（或反过来）。
+  let round
+  if (explicitRound !== null) {
+    if (request.round !== undefined && request.round !== explicitRound.value) {
+      return argError(io, sub, `--round ${explicitRound.value} 与请求中的轮次 ${String(request.round)} 不一致`)
+    }
+    round = explicitRound.value
+  } else if (request.round === undefined) {
+    round = 1
+  } else if (Number.isInteger(request.round) && request.round >= 1 && request.round <= MAX_ROUND) {
+    round = request.round
+  } else {
+    return argError(io, sub, `请求中的 round 必须是 1..${MAX_ROUND} 的整数: ${String(request.round)}`)
+  }
+
+  const forward = [
+    '--request',
+    requestFile,
+    '--response',
+    options.response,
+    '--root',
+    root,
+    '--round',
+    String(round),
+  ]
+  if (nonEmpty(options.model)) forward.push('--model', options.model)
+  // provider / form：publish 参数优先，缺省取请求里的值，都没有才落到 record 的默认值
+  const provider = nonEmpty(options.provider) ? options.provider : request.provider
+  if (nonEmpty(provider)) forward.push('--provider', provider)
+  const form = nonEmpty(options.form) ? options.form : request.form
+  if (nonEmpty(form)) forward.push('--form', form)
+
+  return runRecord(forward, deps, io)
+}
+
+/** review：动作是位置参数（prepare / publish），选项交给各自的解析。 */
+function runReview(argv, deps, io) {
+  const [action, ...rest] = argv
+  if (action === undefined || action.startsWith('--')) {
+    return argError(io, 'review', '用法: dsh-pipeline review <prepare|publish> [选项]')
+  }
+  if (action === 'prepare') return runReviewPrepare(rest, deps, io)
+  if (action === 'publish') return runReviewPublish(rest, deps, io)
+  return argError(io, 'review', `未知动作: ${action}（允许 prepare / publish）`)
+}
+
 /** 读取 <root>/.dsh-web/reviews 下的有效记录及无法解析的数量。 */
 function collectRecords(root) {
   const dir = reviewsDir(root)
@@ -925,6 +1144,7 @@ export function runCli(argv, deps = {}) {
     if (first === 'record') return runRecord(rest, deps, io)
     if (first === 'task') return runTask(rest, deps, io)
     if (first === 'pr') return runPr(rest, deps, io)
+    if (first === 'review') return runReview(rest, deps, io)
     if (first === 'doctor') return runDoctor(rest, deps, io)
     return runStatus(rest, deps, io)
   } catch (error) {
