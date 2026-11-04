@@ -151,6 +151,53 @@ test('buildPrompt 对已围栏的 diff 不重复包裹', () => {
   assert.equal(prompt.split('<<<DIFF_END>>>').length - 1, 1)
 })
 
+test('buildPrompt：请求没有 facts/includes（或取值为空）时不出现那两段', () => {
+  for (const request of [
+    { pr: 1, head_sha: SHA, nonce: NONCE, diff: '+ x' },
+    { pr: 1, head_sha: SHA, nonce: NONCE, diff: '+ x', facts: '', includes: [] },
+    { pr: 1, head_sha: SHA, nonce: NONCE, diff: '+ x', facts: '   ', includes: [{ path: '' }] },
+  ]) {
+    const prompt = buildPrompt({ request })
+    assert.equal(prompt.includes('证据包（控制面补充的事实，可信）:'), false)
+    assert.equal(prompt.includes('随附文件:'), false)
+    assert.ok(prompt.includes('<<<DIFF_END>>>'))
+    assert.ok(prompt.includes('输出要求（必须逐字遵守）:'))
+  }
+})
+
+test('buildPrompt：facts/includes 两段排在 diff 之后、输出要求之前，随附文件只列路径', () => {
+  const prompt = buildPrompt({
+    request: {
+      pr: 7,
+      head_sha: SHA,
+      nonce: NONCE,
+      files: ['docs/spec.md'],
+      diff: '+ x',
+      facts: '事实甲\n事实乙',
+      includes: [
+        { path: 'docs/spec.md', content: '随附正文甲' },
+        { path: 'docs/api.md', content: '随附正文乙' },
+      ],
+    },
+  })
+
+  const diffEnd = prompt.indexOf('<<<DIFF_END>>>')
+  const facts = prompt.indexOf('证据包（控制面补充的事实，可信）:')
+  const includes = prompt.indexOf('随附文件: docs/spec.md, docs/api.md')
+  const output = prompt.indexOf('输出要求（必须逐字遵守）:')
+  assert.ok(diffEnd !== -1, '应有 diff 围栏')
+  assert.ok(facts !== -1, '应有证据包段')
+  assert.ok(includes !== -1, '应有随附文件段')
+  assert.ok(output !== -1, '应有输出要求段')
+  assert.ok(diffEnd < facts, '证据包必须排在 diff 之后')
+  assert.ok(facts < includes, '随附文件排在证据包之后')
+  assert.ok(includes < output, '两段都必须排在输出要求之前')
+
+  assert.ok(prompt.includes('事实甲\n事实乙'), 'facts 内容原样贴进提示词')
+  assert.equal(prompt.includes('随附正文甲'), false, '随附文件不贴内容')
+  assert.equal(prompt.includes('随附正文乙'), false, '随附文件不贴内容')
+})
+
 test('reviewAction 映射三种判定', () => {
   assert.equal(reviewAction('APPROVE'), 'approve')
   assert.equal(reviewAction('REJECT'), 'request-changes')
