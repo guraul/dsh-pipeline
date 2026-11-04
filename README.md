@@ -18,17 +18,21 @@
 `review` 把「生成审核请求 → 判定落成记录」收进本包，消费仓不必再跨仓调 `dsh-subagents`：
 
 ```bash
-# 1) 生成审核请求：读 PR 的 head 提交、改动文件与 diff，写 <root>/.tmp/review/<N>/request.json
+# 1) 生成审核请求：用 gh 取 PR 的 head 提交、改动文件与 diff，
+#    写 <root>/.tmp/review/<N>/request.json（含 12 位 base32 nonce）
 #    stdout 三行：请求文件路径、nonce、head 前 7 位
-dsh-pipeline review prepare --pr <N> --root <本仓> [--model <名>] [--round <n>] [--out <文件>]
+dsh-pipeline review prepare --pr <N> [--root <dir>] [--model <名>] [--round <n>] [--out <文件>]
 
-# 2) 判定落盘：读 reviewer 的响应，写 <root>/.dsh-web/reviews/<N>-<sha>.json
-dsh-pipeline review publish --pr <N> --response <响应文件> --root <本仓> [--provider <名>] [--form <名>]
+# 2) 复核后转交 record 落盘：<root>/.dsh-web/reviews/<N>-<sha>.json
+dsh-pipeline review publish --pr <N> --response <响应文件> [--request <文件>] [--round <n>] [--root <dir>] [--model <名>] [--provider <名>] [--form <名>]
 ```
 
 - 请求 JSON 字段：`{pr, head_sha, round, nonce, model, provider, form, files, diff}`；`nonce` 是 12 位 base32（`A-Z2-7`）一次性标记。`.tmp/` 已被忽略，请求文件不入库。
-- `publish` 复用 `record` 的落盘逻辑（同一条代码路径，不是第二套实现）：判定行解析不出、或判定 SHA 与请求不符时**仍写一条 ESCALATE 记录**并退出 1，审计轨迹不丢。
+- `publish` 复核后转交 `record` 落盘（复用 `record`，不另起一套落盘逻辑）：判定行解析不出、或判定 SHA 与请求不符时**仍写一条 ESCALATE 记录**并退出 1，审计轨迹不丢。
 - `--request` 缺省为 `<root>/.tmp/review/<N>/request.json`；`--round` 与请求里的 `round` 不一致时报错退出 2（拿错请求文件当场失败），没给则沿用请求里的 `round`。
+- **落盘口径**：`--root` 取**主工作区**——请求落 `<root>/.tmp/review/<N>/`、记录落 `<root>/.dsh-web/reviews/`，都写进主仓，不会随工作树（worktree）清理被删；转发壳固定把 root 指到主工作区。
+
+**消费仓接入现状**：`agent-mobile`、`homebase` 已有 `scripts/pipeline/review.sh` 转发壳（只做参数校验再转给本包）；`self-dsh-plugins` 仍用自有实现（多 `--facts` / `--include` / 提示词生成），属已知欠账，正在统一到本包。
 
 ## 本仓怎么合并自己的 PR
 
