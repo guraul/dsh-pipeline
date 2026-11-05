@@ -478,6 +478,62 @@ test('review prepare：--facts 文件读不到时退出 2，不发 gh 也不写�
   assert.equal(existsSync(requestPath(root)), false)
 })
 
+test('review prepare：--include 重复路径去重，只留首见条目且保持首次出现的顺序', () => {
+  const root = makeRoot()
+  const a = join(root, 'a.txt')
+  const b = join(root, 'b.txt')
+  writeFileSync(a, '甲内容', 'utf8')
+  writeFileSync(b, '乙内容', 'utf8')
+  const { runner } = ghRunner({ view: VIEW_OK, diff: DIFF })
+
+  const repeated = makeIO()
+  const code = run(
+    ['review', 'prepare', '--pr', '7', '--root', root, '--include', `${a},${b},${a},${b}`],
+    repeated,
+    { runner },
+  )
+  assert.equal(code, 0, repeated.state.err)
+  assert.deepEqual(
+    JSON.parse(readFileSync(requestPath(root), 'utf8')).includes,
+    [
+      { path: a, content: '甲内容' },
+      { path: b, content: '乙内容' },
+    ],
+    '重复路径应只留首见条目且保持首次出现的顺序',
+  )
+
+  const duplicated = makeIO()
+  const code2 = run(['review', 'prepare', '--pr', '7', '--root', root, '--include', `${a},${a}`], duplicated, {
+    runner,
+  })
+  assert.equal(code2, 0, duplicated.state.err)
+  assert.deepEqual(JSON.parse(readFileSync(requestPath(root), 'utf8')).includes, [
+    { path: a, content: '甲内容' },
+  ])
+})
+
+test('review prepare：--facts / --include 指向空文件或纯空白文件时退出 2，不发 gh 也不写请求文件', () => {
+  const root = makeRoot()
+  const emptyFile = join(root, 'empty.txt')
+  const blankFile = join(root, 'blank.txt')
+  writeFileSync(emptyFile, '', 'utf8')
+  writeFileSync(blankFile, '  \n\t \n', 'utf8')
+  const { runner, calls } = ghRunner({ view: VIEW_OK, diff: DIFF })
+
+  for (const flag of ['--facts', '--include']) {
+    for (const file of [emptyFile, blankFile]) {
+      const io = makeIO()
+      const code = run(['review', 'prepare', '--pr', '7', '--root', root, flag, file], io, { runner })
+      assert.equal(code, 2, `${flag} 指向 ${file} 应退出 2，实际 ${code}`)
+      assert.match(io.state.err, new RegExp(`${flag} 指定的文件内容为空`))
+      assert.equal(io.state.out, '')
+      assert.equal(existsSync(requestPath(root)), false, '内容为空时不许落 request.json')
+    }
+  }
+  assert.equal(calls.length, 0, '证据内容为空时一个 gh 命令都不该发')
+  assert.equal(existsSync(join(root, '.tmp')), false, '连 .tmp 目录都不该创建')
+})
+
 // ---------- publish ----------
 
 test('review publish：按默认路径读请求并落盘，轮次与提供方取自请求', () => {
@@ -791,6 +847,31 @@ test('review prompt：请求带 issue 正文时渲染验收依据段，取不到
   assert.equal(run(['review', 'prompt', '--request', withoutIssue], empty, { cwd: root }), 0, empty.state.err)
   assert.ok(empty.state.out.includes(`${heading}\n(空)`), `没有 issue 正文时应输出 (空)，实际:\n${empty.state.out}`)
   assert.equal(empty.state.out.includes('验收标准甲'), false)
+})
+
+test('review prompt：请求缺 nonce 或 head_sha 时退出 2，提示缺哪个字段且不渲染提示词', () => {
+  const root = makeRoot()
+  const base = { pr: 7, round: 1, model: null, provider: null, form: null, files: ['lib/a.mjs'], diff: DIFF }
+  const noNonce = join(root, 'req-no-nonce.json')
+  const noSha = join(root, 'req-no-head-sha.json')
+  writeFileSync(noNonce, JSON.stringify({ ...base, head_sha: SHA }), 'utf8')
+  writeFileSync(noSha, JSON.stringify({ ...base, nonce: NONCE }), 'utf8')
+
+  const nonceIO = makeIO()
+  assert.equal(run(['review', 'prompt', '--request', noNonce], nonceIO, { cwd: root }), 2)
+  assert.match(nonceIO.state.err, /请求缺少字段: nonce/)
+  assert.equal(nonceIO.state.out, '')
+
+  const shaIO = makeIO()
+  assert.equal(run(['review', 'prompt', '--request', noSha], shaIO, { cwd: root }), 2)
+  assert.match(shaIO.state.err, /请求缺少字段: head_sha/)
+  assert.equal(shaIO.state.out, '')
+
+  const out = join(root, 'never-prompt.md')
+  const withOut = makeIO()
+  assert.equal(run(['review', 'prompt', '--request', noNonce, '--out', out], withOut, { cwd: root }), 2)
+  assert.match(withOut.state.err, /请求缺少字段: nonce/)
+  assert.equal(existsSync(out), false, '请求缺字段时不许写提示词文件')
 })
 
 // ---------- 动作分发 ----------
