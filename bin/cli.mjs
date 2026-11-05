@@ -800,7 +800,12 @@ function runReviewPrepare(argv, deps, io) {
   const readEvidence = (file, label) => {
     const target = isAbsolute(file) ? file : join(root, file)
     try {
-      return { text: readFileSync(target, 'utf8') }
+      const text = readFileSync(target, 'utf8')
+      // 空内容与读不到同口径：没有证据却写成 content: ""，会让 reviewer 以为证据看过是空的
+      if (text.trim().length === 0) {
+        return { error: `${label} 指定的文件内容为空: ${target}` }
+      }
+      return { text }
     } catch {
       return { error: `${label} 指定的文件读不到: ${target}` }
     }
@@ -821,8 +826,10 @@ function runReviewPrepare(argv, deps, io) {
     if (paths.some((path) => path.length === 0)) {
       return argError(io, sub, '--include 需要一个或多个文件路径（逗号分隔）')
     }
+    // 重复路径只读一次、只留首见条目（Set 保持插入顺序），不产生两条相同 includes
+    const uniquePaths = [...new Set(paths)]
     includes = []
-    for (const path of paths) {
+    for (const path of uniquePaths) {
       const read = readEvidence(path, '--include')
       if (read.error) return argError(io, sub, read.error)
       includes.push({ path, content: read.text })
@@ -1042,6 +1049,14 @@ function runReviewPrompt(argv, deps, io) {
   }
   if (!isPlainObject(payload)) return argError(io, sub, '请求内容必须是 JSON 对象')
 
+  // 残缺请求渲染出来是 undefined VERDICT… SHA: undefined：缺字段当场拒绝，说清缺哪个
+  const request = requestOf(payload)
+  const missing = ['nonce', 'head_sha'].filter((field) => {
+    const value = request[field]
+    return typeof value !== 'string' || value.length === 0
+  })
+  if (missing.length > 0) return argError(io, sub, `请求缺少字段: ${missing.join(', ')}`)
+
   let role = {}
   if (options.role !== undefined) {
     try {
@@ -1056,7 +1071,7 @@ function runReviewPrompt(argv, deps, io) {
     }
   }
 
-  const prompt = buildPrompt({ request: requestOf(payload), role })
+  const prompt = buildPrompt({ request, role })
 
   if (options.out === undefined) {
     io.out(prompt)
