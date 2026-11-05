@@ -228,7 +228,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | 各仓 | 只保留一个 caller workflow（约 15 行），传 `service` / `remoteDir` / `buildCmd` / `artifactDir` / `healthUrl` / `keepReleases` |
 | 凭据 | 各仓 `secrets.DEPLOY_SSH_KEY`，caller 用 `secrets: inherit` |
 | 布局 | **统一**「`releases/<id>` + `dist` 软链 + 重启服务 + 验活 + 保留最近 N 个」 |
-| 回滚 | `rollback.yml` 的 `workflow_dispatch`，输入 release id；无输入取上一版 |
+| 回滚 | `rollback.yml`（`on: workflow_call`）：消费仓以 `workflow_dispatch` 调起并输入 release id，留空取上一版；不删旧 release（清理仍归 `deploy.yml` 按 `keepReleases` 执行） |
 
 **手工兜底**（GitHub 不可用时）。各仓在 caller workflow 同目录放一份 `DEPLOY.md`，内含可直接粘贴的命令，值从 caller 的 inputs 抄：
 
