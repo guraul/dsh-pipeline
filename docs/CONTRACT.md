@@ -89,6 +89,8 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 **已实现**：`task` / `pr` / `prepare`(占位) / `review prepare|prompt|publish` / `record` / `gate` / `merge` / `status` / `doctor`。
 
+**配置字段（P2 已实现）**：`worktreesDir` 已进 schema（见 §7.1），由 `task` 消费——缺省读配置、`--worktrees-dir` 优先；`review.*` / `checks.*` 仍为目标（P2）。
+
 **目标**：`review publish --post-review`、`selftest`、`check-all`、`shim install|check`、`hooks install`、`--legacy-exit-codes`（P2），以及 §10 的部署复用 workflow（P3）。
 
 硬规则：目标条目在实现合并前**不得**被入口 shim 调用，也不得在文档里写成可用；§9 的门禁项同理——`selftest` 落地前，CI 不得引用它。
@@ -155,7 +157,8 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
   "repo": "guraul/<name>",        // 可选；缺省 null（下游命令报“无法确定仓库”）
   "ci": [],                       // 可选；**已废弃**，CI 判定改走 gh pr checks
   "highRisk": ["…"],              // 可选；缺省 []
-  "roles": {}                     // 可选；review prompt 的角色定义
+  "roles": {},                    // 可选；review prompt 的角色定义
+  "worktreesDir": "~/workspace/<name>-worktrees"  // 可选；缺省 <主工作区>/.worktrees（P2 已实现）
 }
 ```
 
@@ -163,7 +166,6 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 ```jsonc
 {
-  "worktreesDir": "~/workspace/<name>-worktrees",  // 缺省 <主工作区>/.worktrees
   "review": {
     "postReview": true,
     "identity": { "ghConfigDir": "~/.config/gh-reviewer", "account": "guraul-review" },
@@ -177,7 +179,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 1. **未声明字段一律报错**（`E_CONFIG`）。新增字段顺序固定：**先改本包 schema → 再改本文件 → 最后改各仓配置**。顺序反了就是 2026-11-04 那次事故；
 2. `ci` 已废弃，新配置不要写；
-3. 仓库差异只能落在 `repo` / `highRisk` / `roles` 以及（P2 起）`worktreesDir` / `review.*` / `checks.*` 之内。
+3. 仓库差异只能落在 `repo` / `highRisk` / `roles` / `worktreesDir` 以及（P2 起）`review.*` / `checks.*` 之内。
 
 > 反面教材：2026-11-04 有人往本文件加了 `doctorRepos`，包判未知字段，`task`/`pr`/`merge` 三条同时失效，CI 不覆盖这类错误。
 
