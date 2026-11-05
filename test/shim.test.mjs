@@ -118,7 +118,7 @@ test('shim check：入口目录不存在 → 退 1，提示先跑 shim install',
   const result = run(['shim', 'check', '--root', root])
   assert.equal(result.code, 1)
   assert.equal(result.out, '')
-  assert.match(result.err, /不存在，请先运行 shim install/)
+  assert.match(result.err, /不存在或不是目录，请先运行 shim install/)
 })
 
 test('shim install：二次运行全部跳过，不重写文件', (t) => {
