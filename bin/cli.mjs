@@ -7,17 +7,18 @@
  * lib/merge.mjs，合并方式由 gh.prMerge 固定为 --squash；
  * task / pr 的流程分别交给 lib/task.mjs 与 lib/pr.mjs；
  * review 的 publish 复用 runRecord（与 record 同一条落盘路径），prepare 只编排 gh 读取，
+ * --post-review 在落盘成功后把判定发成 GitHub review（幂等，见 sendReview），
  * prompt 只读请求文件并复用 buildPrompt（不发外部命令、不写请求）；
  * selftest 只做参数编排与输出，检查逻辑在 lib/selftest.mjs（契约 §9，已实现 --shims / --config）；
  * shim 的渲染 / 写入 / 比对全在 lib/shim.mjs（契约 §8），这里只做动作与参数解析；
  * check-all 的逐包执行与汇总在 lib/check-all.mjs，这里只做包发现与参数解析。
  *
  * 输出约定：面向人的信息走 stdout，错误与警告走 stderr，全部中文。
- * 退出码：0 通过 / 1 闸门拒绝 / 2 参数或环境错误。
+ * 退出码：0 通过 / 1 闸门拒绝 / 2 参数或环境错误 / 3 环境错误（--post-review 的 gh 调用失败）。
  * runner 可注入，测试用假 runner 断言实际发出的命令，不碰真实 gh/git。
  */
 import { mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, isAbsolute, join } from 'node:path'
+import { dirname, isAbsolute, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { discoverPackages, runCheckAll as runCheckAllFlow } from '../lib/check-all.mjs'
@@ -48,9 +49,14 @@ import {
   NONCE_PATTERN,
   analyzeVerdict,
   buildPrompt,
+  buildReviewBody,
+  createPullReview,
   detectIssueFromBody,
   extractFindings,
+  listPullReviews,
   makeNonce,
+  reviewEvent,
+  reviewMarker,
 } from '../lib/review.mjs'
 import { resolveRoles } from '../lib/roles.mjs'
 import {
@@ -59,6 +65,7 @@ import {
   SCHEMA_VERSION,
   SHA_PATTERN,
   readRecord,
+  recordFile,
   reviewsDir,
   writeRecord,
   writeSkipAudit,
@@ -191,6 +198,7 @@ review 用法:
                                [--facts <文件>] [--include <路径,路径,...>]
   dsh-pipeline review publish --pr <n> --response <file> [--request <file>] [--round <n>]
                                [--root <dir>] [--model <m>] [--provider <p>] [--form <f>]
+                               [--post-review] [--dry-run]
   dsh-pipeline review prompt --request <file> [--out <file>] [--role <名>]
 
   prepare  用 gh 读 PR 的 head 提交、改动文件与 diff，生成请求 JSON（含 12 位 base32 nonce）
@@ -209,6 +217,11 @@ review 用法:
            --request 缺省为 <root>/.tmp/review/<pr>/request.json；
            --round 与请求里的 round 不一致时报错退出 2，没给则沿用请求里的 round。
            判定行无法解析或提交不匹配时仍写一条 ESCALATE 记录，退出码 1（审计轨迹不丢）。
+           --post-review 落盘成功后再把判定发成 GitHub review（幂等：同 SHA + 同标记只发一次），
+           event 按判定映射 APPROVE→APPROVE、REJECT→REQUEST_CHANGES、ESCALATE→COMMENT，
+           repo 取 .dsh/pipeline.json 的 repo（缺 repo 退 2）；发失败退 3，记录不回滚；
+           身份（GH_CONFIG_DIR 等）由 gh 自己读环境变量，本命令只透传、不处理。
+           --dry-run 不写盘、不发请求，只打印将要发送的 event 与 body 前 200 字。
   prompt   读 --request 指定的请求 JSON，用 buildPrompt 组出审核提示词（不发任何外部命令）；
            --request 必填、没有缺省回退（拿错请求文件的代价是把错提示词发给 reviewer）；
            未给 --out 打到 stdout，给了就写文件并打印「已写入 <路径>」；
@@ -503,7 +516,7 @@ const REVIEW_PUBLISH_VALUE_FLAGS = new Set([
   'provider',
   'form',
 ])
-const REVIEW_PUBLISH_BOOL_FLAGS = new Set()
+const REVIEW_PUBLISH_BOOL_FLAGS = new Set(['post-review', 'dry-run'])
 const REVIEW_PROMPT_VALUE_FLAGS = new Set(['request', 'out', 'role'])
 const REVIEW_PROMPT_BOOL_FLAGS = new Set()
 const SELFTEST_VALUE_FLAGS = new Set(['root'])
@@ -1106,6 +1119,11 @@ function runReviewPublish(argv, deps, io) {
     return argError(io, sub, `请求中的 round 必须是 1..${MAX_ROUND} 的整数: ${String(request.round)}`)
   }
 
+  // --dry-run：只预览将要发送的 event 与 body，不写盘、不发任何请求。
+  if (options['dry-run'] === true) {
+    return previewPostReview({ root, pr: pr.value, request, responseFile: options.response, io })
+  }
+
   const forward = [
     '--request',
     requestFile,
@@ -1123,7 +1141,120 @@ function runReviewPublish(argv, deps, io) {
   const form = nonEmpty(options.form) ? options.form : request.form
   if (nonEmpty(form)) forward.push('--form', form)
 
-  return runRecord(forward, deps, io)
+  const code = runRecord(forward, deps, io)
+  if (options['post-review'] !== true) return code
+  // 记录写了但判定不可用（退 1）：解析出来的结论不可信，没有可发的 event，
+  // 审计留盘即可——不能把 E_PARSE 的兜底 ESCALATE 当成 reviewer 的真实意见发出去。
+  if (code !== 0) return code
+  return sendReview({ root, pr: pr.value, headSha: request.head_sha, io, runner: deps.runner })
+}
+
+/**
+ * review publish --dry-run：判定解析与正式落盘同一条口径，但不写盘、不发请求，
+ * 只打印将要发送的 event 与 body 前 200 字。
+ *
+ * 判定不可用时按 ESCALATE 预览，但**不会**真的发 COMMENT：正式路径在
+ * `runReviewPublish` 里遇到 `code !== 0`（E_PARSE / E_SHA_MISMATCH 的兜底 ESCALATE）
+ * 会直接返回、只留审计记录——预览把这点说清楚，别让人以为真跑会发一条 COMMENT。
+ */
+function previewPostReview({ root, pr, request, responseFile, io }) {
+  // 与 runRecord 同一套前置校验：缺字段在预览阶段就退 2，别让用户等到真跑才发现。
+  if (!Number.isInteger(request.pr) || request.pr <= 0) {
+    return argError(io, 'review publish', `请求中的 pr 必须是正整数: ${String(request.pr)}`)
+  }
+  if (typeof request.head_sha !== 'string' || !SHA_PATTERN.test(request.head_sha)) {
+    return argError(io, 'review publish', `请求中的 head_sha 必须是 40 位小写十六进制: ${String(request.head_sha)}`)
+  }
+  if (typeof request.nonce !== 'string' || !NONCE_PATTERN.test(request.nonce)) {
+    return argError(io, 'review publish', `请求中的 nonce 必须是 12 位 base32 标记: ${String(request.nonce)}`)
+  }
+
+  const raw = readTextFile(responseFile, '响应文件')
+  if (raw.error) return argError(io, 'review publish', raw.error)
+
+  const analysis = analyzeVerdict(raw.text, { nonce: request.nonce, diff: request.diff })
+  const mismatch = analysis.ok && analysis.sha !== request.head_sha
+  const verdict = analysis.ok && !mismatch ? analysis.verdict : 'ESCALATE'
+  // 口径对齐 record：解析失败不保留响应里的任何结论；提交不匹配只丢判定、留 findings。
+  const findings = analysis.ok ? extractFindings(raw.text).findings : []
+
+  const event = reviewEvent(verdict)
+  const body = buildReviewBody({
+    nonce: request.nonce,
+    verdict,
+    headSha: request.head_sha,
+    findings,
+    recordPath: relative(root, recordFile(reviewsDir(root), pr, request.head_sha)),
+  })
+
+  io.out('review publish: --dry-run，不写盘、不发请求')
+  io.out(`event: ${event}`)
+  io.out(`body（前 200 字）:\n${body.slice(0, 200)}`)
+  return 0
+}
+
+/**
+ * review publish --post-review 的发送段：记录已落盘，把判定发成 GitHub review。
+ *
+ * 顺序固定：读回记录（拿 verdict / findings）→ 校验配置里的 repo → 列已有 review（幂等）→ POST。
+ * 任何一步的 gh 失败都是环境错误：退 3、记录不回滚，并明确告知「记录已写，review 未发出」；
+ * 没有 repo 是用法 / 配置错误：退 2。GH_CONFIG_DIR 等身份环境变量只透传给 gh，这里不处理。
+ */
+function sendReview({ root, pr, headSha, io, runner }) {
+  const file = recordFile(reviewsDir(root), pr, headSha)
+  let record
+  try {
+    record = readRecord(file)
+  } catch (error) {
+    io.err(`review publish: 读取审核记录失败: ${messageOf(error)}（review 未发出）`)
+    return 2
+  }
+
+  let repo
+  try {
+    repo = loadConfig(root).config.repo
+  } catch (error) {
+    io.err(`review publish: 读取配置失败: ${messageOf(error)}（记录已写入，review 未发出）`)
+    return 2
+  }
+  if (!nonEmpty(repo)) {
+    io.err('review publish: 配置 .dsh/pipeline.json 缺少 repo，无法发送 review（记录已写入，review 未发出）')
+    return 2
+  }
+
+  const marker = reviewMarker(headSha)
+  const listed = listPullReviews({ repo, pr, runner })
+  if (!listed.ok) {
+    io.err(listed.error)
+    io.err('review publish: 记录已写，review 未发出（读取已有 review 失败）')
+    return 3
+  }
+  const alreadyPosted = listed.data.some(
+    (item) =>
+      isPlainObject(item) && item.commit_id === headSha && String(item.body ?? '').includes(marker),
+  )
+  if (alreadyPosted) {
+    io.out('review publish: 已存在同 SHA 的 review，跳过发送')
+    return 0
+  }
+
+  const event = reviewEvent(record.verdict)
+  const body = buildReviewBody({
+    nonce: record.nonce,
+    verdict: record.verdict,
+    headSha,
+    findings: record.findings,
+    recordPath: relative(root, file),
+  })
+
+  const posted = createPullReview({ repo, pr, event, body, runner })
+  if (!posted.ok) {
+    io.err(posted.error)
+    io.err('review publish: 记录已写，review 未发出')
+    return 3
+  }
+  io.out(`review publish: 已发送 GitHub review（event=${event}）`)
+  return 0
 }
 
 /**
