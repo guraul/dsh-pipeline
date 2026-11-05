@@ -9,6 +9,8 @@ name: deploy
 # 健康检查有两种 health_check 模式：http 在 runner 上探 health_url（写对外地址，如 http://<host>:9928/）；
 # ssh 上服务器探本地端口——对外入口可能只收 HTTPS / 自签证书，runner 侧 curl 探不通，探本地端口更可靠
 # （此时 health_url 写服务器本地地址，如 http://127.0.0.1:9929/）。
+# health_check 验服务本身，public_health_url 验对外链路（Caddy/证书），两者互补：
+# Caddy 分流配错时 health_check 照样通过，只有从外部探对外地址才能发现。
 on:
   workflow_call:
     inputs:
@@ -38,6 +40,16 @@ on:
         required: false
         type: string
         default: 'http'
+      public_health_url:
+        description: '对外链路健康检查 URL（Caddy/证书），必须返回 200；留空则不做这一项'
+        required: false
+        type: string
+        default: ''
+      public_health_insecure:
+        description: '对外链路允许自签证书（curl -k）；换正式证书的仓传 false'
+        required: false
+        type: boolean
+        default: true
       keep_releases:
         description: '保留的 release / 快照数量'
         required: false
@@ -162,6 +174,7 @@ jobs:
             echo "${SSH} \"cd ${REMOTE_DIR} && ls -1dt releases/*/ | tail -n +$((KEEP_RELEASES + 1)) | xargs -r rm -rf\""
           fi
           echo "curl -sS -m 8 -o /dev/null -w '%{http_code}' ${HEALTH_URL}"
+          echo "若配置了 public_health_url，会在 Health check 之后额外探一次对外链路（Caddy/证书），非 200 即失败"
 
       - name: Setup deploy key
         if: ${{ !inputs.dry_run }}
@@ -257,6 +270,25 @@ jobs:
           fi
           echo "health -> $CODE"
           if [ "$CODE" != "200" ]; then echo "::error::健康检查失败: $CODE"; exit 1; fi
+
+      # 验对外链路（Caddy 分流 / 证书）：health_check 只验服务本身，这一步互补。
+      # -k 仅在 public_health_insecure=true（自签证书）时加，参数用变量拼，不写重复命令。
+      - name: Public health check
+        if: ${{ !inputs.dry_run && inputs.public_health_url != '' }}
+        env:
+          PUBLIC_HEALTH_URL: ${{ inputs.public_health_url }}
+          PUBLIC_HEALTH_INSECURE: ${{ inputs.public_health_insecure }}
+        run: |
+          CURL_OPTS=(-sS -m 10 -o /dev/null -w '%{http_code}')
+          if [ "$PUBLIC_HEALTH_INSECURE" = "true" ]; then
+            CURL_OPTS+=(-k)
+          fi
+          CODE=$(curl "${CURL_OPTS[@]}" "$PUBLIC_HEALTH_URL") || CODE=000
+          echo "public health -> $CODE"
+          if [ "$CODE" != "200" ]; then
+            echo "::error::对外链路健康检查失败: $CODE（URL: $PUBLIC_HEALTH_URL）"
+            exit 1
+          fi
 
       - name: Cleanup deploy history
         if: ${{ !inputs.dry_run && inputs.mode == 'inplace' }}
