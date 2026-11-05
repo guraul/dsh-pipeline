@@ -6,6 +6,9 @@ name: deploy
 # 服务器地址、SSH 密钥一律经 inputs / secrets 传入，本文件不写死任何主机或凭据。
 # mode=releases：rsync 进 releases/<id>/ → 切 dist 软链 → 重启 → 保留最近 N 份；
 # mode=inplace：原地覆盖（给不能换目录的服务用，快照进 .deploy-history 供回滚）。
+# 健康检查有两种 health_check 模式：http 在 runner 上探 health_url（写对外地址，如 http://<host>:9928/）；
+# ssh 上服务器探本地端口——对外入口可能只收 HTTPS / 自签证书，runner 侧 curl 探不通，探本地端口更可靠
+# （此时 health_url 写服务器本地地址，如 http://127.0.0.1:9929/）。
 on:
   workflow_call:
     inputs:
@@ -30,6 +33,11 @@ on:
         description: '健康检查 URL，必须返回 200'
         required: true
         type: string
+      health_check:
+        description: '健康检查模式：http 在 runner 上探 health_url；ssh 上服务器探本地端口'
+        required: false
+        type: string
+        default: 'http'
       keep_releases:
         description: '保留的 release / 快照数量'
         required: false
@@ -73,10 +81,15 @@ jobs:
       - name: Validate inputs
         env:
           MODE: ${{ inputs.mode }}
+          HEALTH_CHECK: ${{ inputs.health_check }}
         run: |
           case "$MODE" in
             releases|inplace) ;;
             *) echo "::error::mode 只能是 releases 或 inplace，当前: $MODE"; exit 1 ;;
+          esac
+          case "$HEALTH_CHECK" in
+            http|ssh) ;;
+            *) echo "::error::health_check 只能是 http 或 ssh，当前: $HEALTH_CHECK"; exit 2 ;;
           esac
 
       # pnpm 必须在 setup-node 之前：setup-node 的 cache: pnpm 要先跑 `pnpm store path`
@@ -226,13 +239,22 @@ jobs:
             "cd ${REMOTE_DIR} && systemctl daemon-reload && systemctl restart ${SERVICE}"
 
       # ---- 两种 mode 共用：健康检查必须 200 ----
+      # health_check=http 在 runner 上探；health_check=ssh 上服务器探本地端口。
+      # ssh 模式排在 Setup deploy key 之后（key 步骤必须先写好），sleep 2 也保留在分叉之前——
+      # 别把 sleep 2 和 key 步骤的顺序弄反。
       - name: Health check
         if: ${{ !inputs.dry_run }}
         env:
           HEALTH_URL: ${{ inputs.health_url }}
+          HEALTH_CHECK: ${{ inputs.health_check }}
+          HOST: ${{ steps.target.outputs.host }}
         run: |
           sleep 2
-          CODE=$(curl -sS -m 8 -o /dev/null -w '%{http_code}' "$HEALTH_URL")
+          if [ "$HEALTH_CHECK" = "ssh" ]; then
+            CODE=$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new "root@${HOST}" "curl -sS -m 8 -o /dev/null -w '%{http_code}' ${HEALTH_URL}") || CODE=000
+          else
+            CODE=$(curl -sS -m 8 -o /dev/null -w '%{http_code}' "$HEALTH_URL")
+          fi
           echo "health -> $CODE"
           if [ "$CODE" != "200" ]; then echo "::error::健康检查失败: $CODE"; exit 1; fi
 
