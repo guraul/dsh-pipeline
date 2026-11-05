@@ -66,3 +66,5 @@ dsh-pipeline merge --pr <N> --no-review --reason "<原因>"
 ```
 
 `--no-review` 必须配 `--reason`（与 `--record` 互斥）。这会写入一条跳过审计（`.dsh-web/reviews/skips/`），并按全局规则在 PR 上留评论说明为什么跳过；该 PR **不计入「已审核」**——它没有审核记录，追溯与统计时不得算作已审。跳过的前提、PR 评论模板与留痕细节见 `self-dsh-plugins` 的 [docs/pipeline/README.md](https://github.com/guraul/self-dsh-plugins/blob/main/docs/pipeline/README.md)。
+
+**`--force` 的边界**：它只豁免 CI 这一步（不再调用 `gh pr checks` 校验），审核闸门完全不受影响——闸门排在 CI 之前，顺序本身就是保证，所以没有审核记录的 PR 照样过不了闸门，`--force` 也替代不了 `--record`；合并步骤里 CI 会被标成「跳过」而非「通过」。它不写跳过审计、不在 PR 上留评论，因此**不能拿它替代 `--no-review --reason`**——想跳过审核仍必须走上面那条留痕路径。统计口径上，由 `--force` 合并的 PR **不计入「已审核且 CI 通过」**（CI 是跳过的），追溯时按「人工例外」单独记录。
