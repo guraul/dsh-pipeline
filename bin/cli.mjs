@@ -1153,8 +1153,9 @@ function runReviewPublish(argv, deps, io) {
  * review publish --dry-run：判定解析与正式落盘同一条口径，但不写盘、不发请求，
  * 只打印将要发送的 event 与 body 前 200 字。
  *
- * 判定不可用时按 ESCALATE 预览——正式跑同样会落一条 ESCALATE 记录、发 COMMENT，
- * 预览必须和真实结果一致，否则 dry-run 就失去了意义。
+ * 判定不可用时按 ESCALATE 预览，但**不会**真的发 COMMENT：正式路径在
+ * `runReviewPublish` 里遇到 `code !== 0`（E_PARSE / E_SHA_MISMATCH 的兜底 ESCALATE）
+ * 会直接返回、只留审计记录——预览把这点说清楚，别让人以为真跑会发一条 COMMENT。
  */
 function previewPostReview({ root, pr, request, responseFile, io }) {
   // 与 runRecord 同一套前置校验：缺字段在预览阶段就退 2，别让用户等到真跑才发现。

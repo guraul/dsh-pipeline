@@ -171,7 +171,8 @@ function cleanup(t, fixture) {
   return fixture
 }
 
-const LIST_CALL = `api\trepos/o/r/pulls/${PR}/reviews`
+// 分页调用：gh api --paginate -F per_page=100 --jq '.[] | {...}' repos/<repo>/pulls/<pr>/reviews
+const LIST_CALL = `api\t--paginate\t-F\tper_page=100\t--jq\t.[] | {commit_id: .commit_id, body: .body}\trepos/o/r/pulls/${PR}/reviews`
 
 test('不带 --post-review：只落盘，gh 一次都不调', (t) => {
   const fixture = cleanup(t, makeFixture())
@@ -211,9 +212,8 @@ test('event 映射：APPROVE / REJECT / ESCALATE 各发成对应 event', (t) => 
 
 test('已有同 SHA 且含标记的 review：跳过发送，不发 POST，退 0', (t) => {
   const fixture = cleanup(t, makeFixture())
-  const existing = JSON.stringify([
-    { commit_id: SHA, body: `判定已发过\n${MARKER}\n记录: ${RECORD_REL}` },
-  ])
+  // 列表接口现在按 NDJSON 解析（--paginate + --jq '.[]'），stub 原样回显，所以这里也给逐行 JSON
+  const existing = [JSON.stringify({ commit_id: SHA, body: `判定已发过\n${MARKER}\n记录: ${RECORD_REL}` })].join('\n')
   const result = runPublish(fixture, ['--post-review'], { STUB_REVIEWS_JSON: existing })
 
   assert.equal(result.status, 0, result.stderr)
@@ -304,4 +304,23 @@ test('列已有 review 失败：退 3，记录仍在，不发 POST', (t) => {
   assert.match(result.stderr, /记录已写，review 未发出/)
   assert.equal(ghCalls(fixture).length, 1, '列失败后不许再 POST')
   assert.ok(existsSync(recordPath(fixture)), '记录已落盘，不回滚')
+})
+
+test('幂等不受分页影响：目标 review 在第 2 页（>100 条之后）仍被认出来', (t) => {
+  const fixture = cleanup(t, makeFixture())
+  // 模拟 --paginate 把两页拼起来：第 1 页 100 条无关 review，第 2 页才有同 SHA 的那条。
+  // 若列表调用退回成「只取第一页」，这里会漏判并重复 POST。
+  const firstPage = Array.from({ length: 100 }, (_, i) =>
+    JSON.stringify({ commit_id: `sha-other-${i}`, body: `无关 review ${i}` }),
+  )
+  const secondPage = [
+    JSON.stringify({ commit_id: SHA, body: `已发过\n${MARKER}\n记录: ${RECORD_REL}` }),
+  ]
+  const result = runPublish(fixture, ['--post-review'], {
+    STUB_REVIEWS_JSON: [...firstPage, ...secondPage].join('\n'),
+  })
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /已存在同 SHA 的 review，跳过发送/)
+  assert.deepEqual(ghCalls(fixture), [LIST_CALL], '幂等命中时不许 POST')
 })
