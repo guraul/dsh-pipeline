@@ -24,6 +24,7 @@ import { discoverPackages, runCheckAll as runCheckAllFlow } from '../lib/check-a
 import { loadConfig } from '../lib/config.mjs'
 import { evaluateGate } from '../lib/gate.mjs'
 import { issueView, prChecks, prDiff, prMerge, prView } from '../lib/gh.mjs'
+import { checkHook, installHook } from '../lib/hooks.mjs'
 import {
   checkout,
   currentBranch,
@@ -73,6 +74,7 @@ const IMPLEMENTED = new Set([
   'check-all',
   'doctor',
   'gate',
+  'hooks',
   'merge',
   'record',
   'selftest',
@@ -95,6 +97,7 @@ const SUBCOMMANDS = [
   'selftest',
   'shim',
   'check-all',
+  'hooks',
 ]
 
 const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单一实现
@@ -112,6 +115,7 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
   --expect <sha>     期望的构建 sha（可传 7 位短 sha；不一致则退出 1）
   selftest   一致性自检（契约 §9；已实现 --shims / --config，--peer/--exit-codes 未实现）
   shim       生成 / 校验入口 shim（契约 §8）
+  hooks      安装 / 校验 pre-push 直推拦截钩子
   check-all  逐包跑 test / check / typecheck 并汇总（缺 node_modules 跳过不算失败）
   task       从 issue 创建 task/<号>-<slug> 分支与 worktree
   prepare    准备交付（未实现）
@@ -139,6 +143,20 @@ shim 用法:
   --root <dir>       仓库根目录（缺省主工作区；git 定位不到时退回当前目录）
   --force            仅 install：覆盖内容不同的已存在文件
   退出码: 0 一致 / 1 不一致或内容冲突 / 2 用法错误
+
+hooks 用法:
+  dsh-pipeline hooks install [--root <dir>] [--force] [--allow-main]
+  把 pre-push 钩子装进主仓 git 目录的 hooks/pre-push（用 rev-parse --git-common-dir 定位，
+  worktree 里也装到所有 worktree 共用的那一份；目录不存在则创建，权限 0755）。
+  钩子拦截直推 main / master：stdin 的 remote_ref 是 refs/heads/main（或 master）时
+  stderr 打一行拒绝原因并退出 1，其余放行。
+  已存在且内容不同：不是本工具装的（没有标记行）默认拒绝覆盖并退出 1，加 --force 才覆盖；
+  带标记行的旧版本直接覆盖（幂等）。新装打「hooks: 已安装 <路径>」，覆盖打「hooks: 已更新 <路径>」。
+  --allow-main       装一个不拦截的版本（确实需要直推的仓）
+  dsh-pipeline hooks check [--root <dir>]
+  校验已装钩子与本包当前版本生成的内容一致；未装退出 1 并提示 hooks install。
+  --root <dir>       仓库根目录（缺省主工作区；git 定位不到时退回当前目录）
+  退出码: 0 一致 / 1 未装、不一致或拒绝覆盖 / 2 用法或环境错误
 
 check-all 用法:
   dsh-pipeline check-all [--root <dir>] [--packages a,b,c] [--json]
@@ -502,6 +520,10 @@ const SHIM_INSTALL_VALUE_FLAGS = new Set(['root'])
 const SHIM_INSTALL_BOOL_FLAGS = new Set(['force'])
 const SHIM_CHECK_VALUE_FLAGS = new Set(['root'])
 const SHIM_CHECK_BOOL_FLAGS = new Set()
+const HOOKS_INSTALL_VALUE_FLAGS = new Set(['root'])
+const HOOKS_INSTALL_BOOL_FLAGS = new Set(['force', 'allow-main'])
+const HOOKS_CHECK_VALUE_FLAGS = new Set(['root'])
+const HOOKS_CHECK_BOOL_FLAGS = new Set()
 const CHECK_ALL_VALUE_FLAGS = new Set(['root', 'packages'])
 const CHECK_ALL_BOOL_FLAGS = new Set(['json'])
 
@@ -1399,6 +1421,53 @@ function runShim(argv, deps, io) {
 }
 
 /**
+ * hooks：动作是位置参数（install / check），生成、安装与比对在 lib/hooks.mjs。
+ * 根目录口径与 shim / selftest 一致（显式 --root > 主工作区 > 当前目录）。
+ * 退出码：0 成功 / 1 业务拒绝（未装、不一致、拒绝覆盖）/ 2 用法或环境错误。
+ */
+function runHooks(argv, deps, io) {
+  const [action, ...rest] = argv
+  if (action === undefined || action.startsWith('--')) {
+    return argError(io, 'hooks', '用法: dsh-pipeline hooks <install|check> [--root <dir>]')
+  }
+  if (action !== 'install' && action !== 'check') {
+    return argError(io, 'hooks', `未知动作: ${action}（允许 install / check）`)
+  }
+
+  const valueFlags = action === 'install' ? HOOKS_INSTALL_VALUE_FLAGS : HOOKS_CHECK_VALUE_FLAGS
+  const boolFlags = action === 'install' ? HOOKS_INSTALL_BOOL_FLAGS : HOOKS_CHECK_BOOL_FLAGS
+  const parsed = parseArgs(rest, valueFlags, boolFlags)
+  if (parsed.error) return argError(io, 'hooks', parsed.error)
+  const options = parsed.options
+  if (options.root !== undefined && !nonEmpty(options.root)) {
+    return argError(io, 'hooks', '--root 必须是非空目录路径')
+  }
+  const root = resolveSelftestRoot(options.root, deps)
+
+  if (action === 'install') {
+    const result = installHook(root, {
+      force: options.force === true,
+      allowMain: options['allow-main'] === true,
+      runner: deps.runner,
+    })
+    if (!result.ok) {
+      io.err(`hooks: ${result.error}`)
+      return result.code
+    }
+    io.out(`hooks: ${result.status === 'updated' ? '已更新' : '已安装'} ${result.path}`)
+    return 0
+  }
+
+  const result = checkHook(root, { runner: deps.runner })
+  if (!result.ok) {
+    io.err(`hooks: ${result.error}`)
+    return result.code
+  }
+  io.out(`hooks: 钩子与本包一致: ${result.path}`)
+  return 0
+}
+
+/**
  * check-all：参数编排与输出，逐包执行逻辑在 lib/check-all.mjs（串行，失败不中断）。
  * 包来源：--packages 显式指定；缺省自动发现 <root> 下含 package.json 的子目录。
  * 退出码：0 全部通过（含全跳过）/ 1 有失败 / 2 用法错误 / 3 找不到 pnpm。
@@ -1618,6 +1687,7 @@ export function runCli(argv, deps = {}) {
     if (first === 'doctor') return runDoctor(rest, deps, io)
     if (first === 'selftest') return runSelftest(rest, deps, io)
     if (first === 'shim') return runShim(rest, deps, io)
+    if (first === 'hooks') return runHooks(rest, deps, io)
     if (first === 'check-all') return runCheckAllCommand(rest, deps, io)
     return runStatus(rest, deps, io)
   } catch (error) {
