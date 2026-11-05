@@ -1,0 +1,251 @@
+name: deploy
+
+# 这是唯一部署实现：所有消费仓的部署只允许写一个 caller workflow 调用本文件，
+# 不得再在各自仓里复制部署步骤。手工兜底（GitHub 不可用时）见各仓 DEPLOY.md，
+# 命令里的值从 caller 的 inputs 里抄。
+# 服务器地址、SSH 密钥一律经 inputs / secrets 传入，本文件不写死任何主机或凭据。
+# mode=releases：rsync 进 releases/<id>/ → 切 dist 软链 → 重启 → 保留最近 N 份；
+# mode=inplace：原地覆盖（给不能换目录的服务用，快照进 .deploy-history 供回滚）。
+on:
+  workflow_call:
+    inputs:
+      service:
+        description: '服务器 systemd 服务名，如 serve-9928'
+        required: true
+        type: string
+      remote_dir:
+        description: '服务器上的部署根目录，如 /root/project/agent-mobile/agent-mobile-app'
+        required: true
+        type: string
+      work_dir:
+        description: '仓内构建目录，如 agent-mobile-app'
+        required: true
+        type: string
+      artifact_dir:
+        description: '产物目录，相对 work_dir，默认 dist'
+        required: false
+        type: string
+        default: 'dist'
+      health_url:
+        description: '健康检查 URL，必须返回 200'
+        required: true
+        type: string
+      keep_releases:
+        description: '保留的 release / 快照数量'
+        required: false
+        type: number
+        default: 5
+      dry_run:
+        description: '只打印将要执行的命令，不碰服务器'
+        required: false
+        type: boolean
+        default: false
+      node_version:
+        description: 'Node 版本'
+        required: false
+        type: string
+        default: '24.21.0'
+      mode:
+        description: '部署模式：releases（切软链）或 inplace（原地覆盖）'
+        required: false
+        type: string
+        default: 'releases'
+      ssh_host:
+        description: 'SSH 目标主机；留空则从 health_url 解析'
+        required: false
+        type: string
+        default: ''
+    secrets:
+      DEPLOY_SSH_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # workflow_call 的 input 不支持 choice 类型，取值在这里兜底校验
+      - name: Validate inputs
+        env:
+          MODE: ${{ inputs.mode }}
+        run: |
+          case "$MODE" in
+            releases|inplace) ;;
+            *) echo "::error::mode 只能是 releases 或 inplace，当前: $MODE"; exit 1 ;;
+          esac
+
+      # pnpm 必须在 setup-node 之前：setup-node 的 cache: pnpm 要先跑 `pnpm store path`
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.6.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: pnpm
+          cache-dependency-path: ${{ inputs.work_dir }}/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: ${{ inputs.work_dir }}
+        run: pnpm install --frozen-lockfile
+
+      - name: Quality gates (tsc + test)
+        working-directory: ${{ inputs.work_dir }}
+        run: |
+          pnpm exec tsc --noEmit
+          pnpm test
+
+      - name: Build
+        working-directory: ${{ inputs.work_dir }}
+        run: pnpm exec expo export --platform web --clear
+
+      # 部署目标：主机优先取 ssh_host，留空才从 health_url 解析；release id 用本次 run 的编号
+      - name: Resolve deploy target
+        id: target
+        env:
+          SSH_HOST: ${{ inputs.ssh_host }}
+          HEALTH_URL: ${{ inputs.health_url }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          HOST="$SSH_HOST"
+          if [ -z "$HOST" ]; then
+            HOST=$(printf '%s' "$HEALTH_URL" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#^[^/@]*@##; s#[:/].*$##')
+          fi
+          if [ -z "$HOST" ]; then echo "::error::无法解析 SSH 主机（ssh_host 为空且 health_url 里取不到）"; exit 1; fi
+          echo "host=$HOST" >> "$GITHUB_OUTPUT"
+          echo "release=gh-${RUN_ID}-${RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+
+      - name: Print deploy plan (dry run)
+        if: ${{ inputs.dry_run }}
+        env:
+          MODE: ${{ inputs.mode }}
+          SERVICE: ${{ inputs.service }}
+          REMOTE_DIR: ${{ inputs.remote_dir }}
+          WORK_DIR: ${{ inputs.work_dir }}
+          ARTIFACT_DIR: ${{ inputs.artifact_dir }}
+          HEALTH_URL: ${{ inputs.health_url }}
+          KEEP_RELEASES: ${{ inputs.keep_releases }}
+          HOST: ${{ steps.target.outputs.host }}
+          RELEASE: ${{ steps.target.outputs.release }}
+        run: |
+          SSH="ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new root@${HOST}"
+          echo "=== dry_run=true，以下命令本次不会执行 ==="
+          if [ "$MODE" = "inplace" ]; then
+            echo "${SSH} \"if [ -d ${REMOTE_DIR} ]; then mkdir -p ${REMOTE_DIR}/.deploy-history && tar -czf ${REMOTE_DIR}/.deploy-history/${RELEASE}-prev.tar.gz --exclude=node_modules --exclude=./node_modules --exclude=.deploy-history --exclude=./.deploy-history -C ${REMOTE_DIR} .; else mkdir -p ${REMOTE_DIR}/.deploy-history; fi\""
+            echo "rsync -az --delete --exclude=.deploy-history ${WORK_DIR}/${ARTIFACT_DIR}/ root@${HOST}:${REMOTE_DIR}/"
+            echo "${SSH} \"cd ${REMOTE_DIR} && systemctl daemon-reload && systemctl restart ${SERVICE}\""
+            echo "${SSH} \"cd ${REMOTE_DIR}/.deploy-history && ls -1t *.tar.gz 2>/dev/null | tail -n +$((KEEP_RELEASES + 1)) | xargs -r rm -rf\""
+          else
+            echo "rsync -az --delete ${WORK_DIR}/${ARTIFACT_DIR}/ root@${HOST}:${REMOTE_DIR}/releases/${RELEASE}/"
+            echo "${SSH} \"cd ${REMOTE_DIR} && ln -sfn releases/${RELEASE} dist && systemctl restart ${SERVICE}\""
+            echo "${SSH} \"cd ${REMOTE_DIR} && ls -1dt releases/*/ | tail -n +$((KEEP_RELEASES + 1)) | xargs -r rm -rf\""
+          fi
+          echo "curl -sS -m 8 -o /dev/null -w '%{http_code}' ${HEALTH_URL}"
+
+      - name: Setup deploy key
+        if: ${{ !inputs.dry_run }}
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+      # ---- mode=releases ----
+      - name: Upload release
+        if: ${{ !inputs.dry_run && inputs.mode == 'releases' }}
+        env:
+          WORK_DIR: ${{ inputs.work_dir }}
+          ARTIFACT_DIR: ${{ inputs.artifact_dir }}
+          REMOTE_DIR: ${{ inputs.remote_dir }}
+          HOST: ${{ steps.target.outputs.host }}
+          RELEASE: ${{ steps.target.outputs.release }}
+        run: |
+          rsync -az --delete -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new" \
+            "${WORK_DIR}/${ARTIFACT_DIR}/" "root@${HOST}:${REMOTE_DIR}/releases/${RELEASE}/"
+
+      - name: Flip symlink and restart
+        if: ${{ !inputs.dry_run && inputs.mode == 'releases' }}
+        env:
+          SERVICE: ${{ inputs.service }}
+          REMOTE_DIR: ${{ inputs.remote_dir }}
+          HOST: ${{ steps.target.outputs.host }}
+          RELEASE: ${{ steps.target.outputs.release }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new "root@${HOST}" \
+            "cd ${REMOTE_DIR} && ln -sfn releases/${RELEASE} dist && systemctl restart ${SERVICE}"
+
+      - name: Cleanup old releases
+        if: ${{ !inputs.dry_run && inputs.mode == 'releases' }}
+        env:
+          REMOTE_DIR: ${{ inputs.remote_dir }}
+          KEEP_RELEASES: ${{ inputs.keep_releases }}
+          HOST: ${{ steps.target.outputs.host }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new "root@${HOST}" \
+            "cd ${REMOTE_DIR} && ls -1dt releases/*/ | tail -n +$((KEEP_RELEASES + 1)) | xargs -r rm -rf"
+
+      # ---- mode=inplace：不建 releases 目录、不切软链 ----
+      - name: Snapshot current deployment
+        if: ${{ !inputs.dry_run && inputs.mode == 'inplace' }}
+        env:
+          REMOTE_DIR: ${{ inputs.remote_dir }}
+          HOST: ${{ steps.target.outputs.host }}
+          RELEASE: ${{ steps.target.outputs.release }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new "root@${HOST}" \
+            "if [ -d ${REMOTE_DIR} ]; then mkdir -p ${REMOTE_DIR}/.deploy-history && tar -czf ${REMOTE_DIR}/.deploy-history/${RELEASE}-prev.tar.gz --exclude=node_modules --exclude=./node_modules --exclude=.deploy-history --exclude=./.deploy-history -C ${REMOTE_DIR} .; else mkdir -p ${REMOTE_DIR}/.deploy-history; fi"
+
+      - name: Upload in place
+        if: ${{ !inputs.dry_run && inputs.mode == 'inplace' }}
+        env:
+          WORK_DIR: ${{ inputs.work_dir }}
+          ARTIFACT_DIR: ${{ inputs.artifact_dir }}
+          REMOTE_DIR: ${{ inputs.remote_dir }}
+          HOST: ${{ steps.target.outputs.host }}
+        run: |
+          rsync -az --delete --exclude=.deploy-history -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new" \
+            "${WORK_DIR}/${ARTIFACT_DIR}/" "root@${HOST}:${REMOTE_DIR}/"
+
+      - name: Restart service (inplace)
+        if: ${{ !inputs.dry_run && inputs.mode == 'inplace' }}
+        env:
+          SERVICE: ${{ inputs.service }}
+          REMOTE_DIR: ${{ inputs.remote_dir }}
+          HOST: ${{ steps.target.outputs.host }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new "root@${HOST}" \
+            "cd ${REMOTE_DIR} && systemctl daemon-reload && systemctl restart ${SERVICE}"
+
+      # ---- 两种 mode 共用：健康检查必须 200 ----
+      - name: Health check
+        if: ${{ !inputs.dry_run }}
+        env:
+          HEALTH_URL: ${{ inputs.health_url }}
+        run: |
+          sleep 2
+          CODE=$(curl -sS -m 8 -o /dev/null -w '%{http_code}' "$HEALTH_URL")
+          echo "health -> $CODE"
+          if [ "$CODE" != "200" ]; then echo "::error::健康检查失败: $CODE"; exit 1; fi
+
+      - name: Cleanup deploy history
+        if: ${{ !inputs.dry_run && inputs.mode == 'inplace' }}
+        env:
+          REMOTE_DIR: ${{ inputs.remote_dir }}
+          KEEP_RELEASES: ${{ inputs.keep_releases }}
+          HOST: ${{ steps.target.outputs.host }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new "root@${HOST}" \
+            "cd ${REMOTE_DIR}/.deploy-history && ls -1t *.tar.gz 2>/dev/null | tail -n +$((KEEP_RELEASES + 1)) | xargs -r rm -rf"
+
+# mode=inplace 的回滚：把上一份快照解回 <remote_dir> 再重启，不是切 dist 软链
+#   ssh root@<host> "tar -xzf <remote_dir>/.deploy-history/<上一份>-prev.tar.gz -C <remote_dir> && systemctl restart <service>"
+# （该服务的依赖提升在仓根 node_modules，切目录会让依赖解析断掉）
