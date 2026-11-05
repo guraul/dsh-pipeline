@@ -133,7 +133,8 @@ jobs:
               *) TARGET="releases/${RELEASE%/}" ;;
             esac
             if ! grep -Fxq "$TARGET" <<< "$LIST"; then
-              echo "::error::指定的 release 不在现有列表里: $TARGET"; exit 1
+              echo "::error::指定的 release 不在现有列表里: $TARGET"
+              echo "可用版本（新→旧）:"; printf '%s\n' "$LIST"; exit 1
             fi
           else
             # 留空：取列表里排在当前版本后面的第一个 = ls -1dt 新→旧序里紧邻的更旧版本 = 上一版
@@ -162,7 +163,7 @@ jobs:
             printf '%s\n' "$LIST"
             echo "当前: $CURRENT"
             echo "目标: $TARGET"
-            echo "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new root@${HOST} \"cd ${REMOTE_DIR} && ln -sfn ${TARGET} && systemctl restart ${SERVICE}\""
+            echo "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new root@${HOST} \"cd ${REMOTE_DIR} && ln -sfn ${TARGET} dist && systemctl restart ${SERVICE}\""
             echo "健康检查: ${HEALTH_URL}（mode=${HEALTH_CHECK}，非 200 即失败）"
             if [ -n "$PUBLIC_HEALTH_URL" ]; then
               echo "对外链路检查: ${PUBLIC_HEALTH_URL}（配置了 public_health_url 就再探一次，非 200 即失败）"
@@ -179,7 +180,7 @@ jobs:
           TARGET: ${{ steps.select.outputs.target }}
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new "root@${HOST}" \
-            "cd ${REMOTE_DIR} && ln -sfn ${TARGET} && systemctl restart ${SERVICE}"
+            "cd ${REMOTE_DIR} && ln -sfn ${TARGET} dist && systemctl restart ${SERVICE}"
 
       # 与 deploy.yml 同口径：health_check=http 在 runner 上探；ssh 上服务器探本地端口；
       # sleep 2 保留在分叉之前。配了 public_health_url 就在下面再探一次对外链路。
@@ -197,7 +198,7 @@ jobs:
             CODE=$(curl -sS -m 8 -o /dev/null -w '%{http_code}' "$HEALTH_URL")
           fi
           echo "health -> $CODE"
-          if [ "$CODE" != "200" ]; then echo "::error::健康检查失败: $CODE"; exit 1; fi
+          if [ "$CODE" != "200" ]; then echo "::error::健康检查失败: $CODE（mode=${HEALTH_CHECK}，${HEALTH_URL}）"; exit 1; fi
 
       - name: Public health check
         if: ${{ !inputs.dry_run && inputs.public_health_url != '' }}
