@@ -8,7 +8,8 @@
  * task / pr 的流程分别交给 lib/task.mjs 与 lib/pr.mjs；
  * review 的 publish 复用 runRecord（与 record 同一条落盘路径），prepare 只编排 gh 读取，
  * prompt 只读请求文件并复用 buildPrompt（不发外部命令、不写请求）；
- * selftest 只做参数编排与输出，检查逻辑在 lib/selftest.mjs（契约 §9，当前仅 --config）。
+ * selftest 只做参数编排与输出，检查逻辑在 lib/selftest.mjs（契约 §9，已实现 --shims / --config）；
+ * shim 的渲染 / 写入 / 比对全在 lib/shim.mjs（契约 §8），这里只做动作与参数解析。
  *
  * 输出约定：面向人的信息走 stdout，错误与警告走 stderr，全部中文。
  * 退出码：0 通过 / 1 闸门拒绝 / 2 参数或环境错误。
@@ -39,6 +40,7 @@ import { mergePolicy } from '../lib/policy.mjs'
 import { runPr as runPrFlow } from '../lib/pr.mjs'
 import { resolveMainRoot } from '../lib/repo.mjs'
 import { PENDING_CHECKS, runChecks } from '../lib/selftest.mjs'
+import { SHIM_ENTRIES, checkShims, installShims } from '../lib/shim.mjs'
 import {
   NONCE_PATTERN,
   analyzeVerdict,
@@ -65,8 +67,8 @@ import { describeRow, diagnose } from '../lib/doctor.mjs'
 const here = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8'))
 
-const IMPLEMENTED = new Set(['doctor', 'gate', 'merge', 'record', 'selftest', 'status', 'task', 'pr', 'review'])
-const SUBCOMMANDS = ['task', 'prepare', 'pr', 'merge', 'gate', 'record', 'status', 'doctor', 'review', 'selftest']
+const IMPLEMENTED = new Set(['doctor', 'gate', 'merge', 'record', 'selftest', 'shim', 'status', 'task', 'pr', 'review'])
+const SUBCOMMANDS = ['task', 'prepare', 'pr', 'merge', 'gate', 'record', 'status', 'doctor', 'review', 'selftest', 'shim']
 
 const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单一实现
 
@@ -81,21 +83,34 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
   --repo <a,b>       要检查的仓库根（逗号分隔；缺省当前目录）
   --json             机器可读输出（退出码与人读模式一致）
   --expect <sha>     期望的构建 sha（可传 7 位短 sha；不一致则退出 1）
-  selftest   一致性自检（契约 §9；当前只实现 --config，--shims/--peer/--exit-codes 未实现）
+  selftest   一致性自检（契约 §9；已实现 --shims / --config，--peer/--exit-codes 未实现）
+  shim       生成 / 校验入口 shim（契约 §8）
   task       从 issue 创建 task/<号>-<slug> 分支与 worktree
   prepare    准备交付（未实现）
   pr         推送当前 task 分支并创建 PR
   review     生成审核请求（prepare）、审核提示词（prompt）并把判定落成记录（publish）
 
 selftest 用法:
-  dsh-pipeline selftest [--config | --fast] [--json] [--root <dir>]
+  dsh-pipeline selftest [--shims | --config | --fast] [--json] [--root <dir>]
+  --shims            6 个入口 == 按当前包版本渲染后的模板（<root>/scripts/pipeline 不存在即失败）
   --config           校验 <root>/.dsh/pipeline.json：能被 schema 接受、没有未声明字段
-  --fast             当前等价于 --config（契约 §9 目标是 --shims --config，--shims 后续补）
+  --fast             等价于 --shims --config（契约 §9 的 pre-push 用法）
   --json             输出 {"ok":true|false,"root":"…","checks":[{"name":"…","ok":…,"detail":"…"}]}
                      （退出码与人读模式一致）
   --root <dir>       仓库根目录（缺省主工作区；git 定位不到时退回当前目录）
-  --shims / --peer / --exit-codes  已识别但尚未实现：传入即报「尚未实现」并退出 2，不静默忽略
-  退出码: 0 通过（没有配置文件也退 0）/ 1 配置不合规 / 2 用法错误或检查项未实现
+  --peer / --exit-codes  已识别但尚未实现：传入即报「尚未实现」并退出 2，不静默忽略
+  退出码: 0 通过（没有配置文件也退 0）/ 1 检查不通过 / 2 用法错误或检查项未实现
+
+shim 用法:
+  dsh-pipeline shim install [--root <dir>] [--force]
+  在 <root>/scripts/pipeline/ 生成 6 个入口（权限 0755）；已存在且内容相同则跳过，
+  内容不同且没给 --force 时报错退出 1。成功每个文件打一行「写入: <相对路径>」。
+  dsh-pipeline shim check [--root <dir>]
+  用当前包版本渲染模板后与磁盘逐字节比对（契约 §8）；不一致退出 1，
+  <root>/scripts/pipeline 不存在时提示先跑 shim install。
+  --root <dir>       仓库根目录（缺省主工作区；git 定位不到时退回当前目录）
+  --force            仅 install：覆盖内容不同的已存在文件
+  退出码: 0 一致 / 1 不一致或内容冲突 / 2 用法错误
 
 task 用法:
   dsh-pipeline task <issue号> [--slug <slug>] [--root <dir>] [--worktrees-dir <dir>]
@@ -435,7 +450,7 @@ const REVIEW_PUBLISH_BOOL_FLAGS = new Set()
 const REVIEW_PROMPT_VALUE_FLAGS = new Set(['request', 'out', 'role'])
 const REVIEW_PROMPT_BOOL_FLAGS = new Set()
 const SELFTEST_VALUE_FLAGS = new Set(['root'])
-// --shims / --peer / --exit-codes 只是「被识别」：传了要报尚未实现退 2，不能落进未知选项
+// --peer / --exit-codes 只是「被识别」：传了要报尚未实现退 2，不能落进未知选项
 const SELFTEST_BOOL_FLAGS = new Set([
   'config',
   'fast',
@@ -444,6 +459,10 @@ const SELFTEST_BOOL_FLAGS = new Set([
   'peer',
   'exit-codes',
 ])
+const SHIM_INSTALL_VALUE_FLAGS = new Set(['root'])
+const SHIM_INSTALL_BOOL_FLAGS = new Set(['force'])
+const SHIM_CHECK_VALUE_FLAGS = new Set(['root'])
+const SHIM_CHECK_BOOL_FLAGS = new Set()
 
 function emit(io, lines) {
   for (const line of lines) {
@@ -1251,8 +1270,9 @@ function resolveSelftestRoot(value, deps) {
 
 /**
  * selftest：契约 §9 的一致性门禁。
- * 本单只实现 --config（--fast 与它等价）；其余检查项只识别不执行，明确报错退 2。
- * 退出码：0 通过（含「无配置文件跳过」）/ 1 配置不合规 / 2 用法错误或检查项未实现。
+ * --shims / --config 已实现（--fast 等价于 --shims --config）；其余检查项只识别不执行，
+ * 明确报错退 2。检查逻辑在 lib/selftest.mjs，--shims 的比对复用 lib/shim.mjs。
+ * 退出码：0 通过（含「无配置文件跳过」）/ 1 检查不通过 / 2 用法错误或检查项未实现。
  */
 function runSelftest(argv, deps, io) {
   const parsed = parseArgs(argv, SELFTEST_VALUE_FLAGS, SELFTEST_BOOL_FLAGS)
@@ -1265,13 +1285,18 @@ function runSelftest(argv, deps, io) {
   if (options.root !== undefined && !nonEmpty(options.root)) {
     return argError(io, 'selftest', '--root 必须是非空目录路径')
   }
-  // 没有检查项就没有任何可判定的结论：报用法错误，不静默退 0
-  if (options.config !== true && options.fast !== true) {
-    return argError(io, 'selftest', '未指定检查项（当前可用 --config 或 --fast）')
+
+  // --fast 就是「--shims --config」这一组；没有检查项就报用法错误，不静默退 0
+  const checks =
+    options.fast === true
+      ? ['shims', 'config']
+      : [...(options.shims === true ? ['shims'] : []), ...(options.config === true ? ['config'] : [])]
+  if (checks.length === 0) {
+    return argError(io, 'selftest', '未指定检查项（当前可用 --shims / --config / --fast）')
   }
 
   const root = resolveSelftestRoot(options.root, deps)
-  const result = runChecks(root, ['config'])
+  const result = runChecks(root, checks)
 
   // 失败原文始终走 stderr：--json 只改 stdout 的形态，不改退出码也不吞错误
   for (const check of result.checks) {
@@ -1280,6 +1305,56 @@ function runSelftest(argv, deps, io) {
   }
   if (options.json === true) io.out(JSON.stringify({ ok: result.ok, root, checks: result.checks }))
   return result.ok ? 0 : 1
+}
+
+/**
+ * shim：动作是位置参数（install / check），渲染与比对逻辑在 lib/shim.mjs。
+ * 根目录口径与 selftest 一致（显式 --root > 主工作区 > 当前目录）。
+ * 退出码：0 成功 / 1 内容冲突或不一致 / 2 用法错误。
+ */
+function runShim(argv, deps, io) {
+  const [action, ...rest] = argv
+  if (action === undefined || action.startsWith('--')) {
+    return argError(io, 'shim', '用法: dsh-pipeline shim <install|check> [--root <dir>] [--force]')
+  }
+  if (action !== 'install' && action !== 'check') {
+    return argError(io, 'shim', `未知动作: ${action}（允许 install / check）`)
+  }
+
+  const valueFlags = action === 'install' ? SHIM_INSTALL_VALUE_FLAGS : SHIM_CHECK_VALUE_FLAGS
+  const boolFlags = action === 'install' ? SHIM_INSTALL_BOOL_FLAGS : SHIM_CHECK_BOOL_FLAGS
+  const parsed = parseArgs(rest, valueFlags, boolFlags)
+  if (parsed.error) return argError(io, 'shim', parsed.error)
+  const options = parsed.options
+  if (options.root !== undefined && !nonEmpty(options.root)) {
+    return argError(io, 'shim', '--root 必须是非空目录路径')
+  }
+  const root = resolveSelftestRoot(options.root, deps)
+
+  if (action === 'install') {
+    const result = installShims(root, { force: options.force === true })
+    if (!result.ok) {
+      for (const name of result.conflicts) {
+        io.err(`shim: 已存在且内容不同: ${name}（确认后加 --force 覆盖）`)
+      }
+      return 1
+    }
+    for (const rel of result.written) io.out(`写入: ${rel}`)
+    io.out(`shim: 已生成 ${SHIM_ENTRIES.length} 个入口`)
+    return 0
+  }
+
+  const result = checkShims(root)
+  if (result.missingDir) {
+    io.err(`shim: ${result.dir} 不存在或不是目录，请先运行 shim install`)
+    return 1
+  }
+  if (!result.ok) {
+    for (const name of result.mismatches) io.err(`shim: 与模板不一致: ${name}`)
+    return 1
+  }
+  io.out(`shim: ${SHIM_ENTRIES.length} 个入口与模板一致`)
+  return 0
 }
 
 function runStatus(argv, deps, io) {
@@ -1417,6 +1492,7 @@ export function runCli(argv, deps = {}) {
     if (first === 'review') return runReview(rest, deps, io)
     if (first === 'doctor') return runDoctor(rest, deps, io)
     if (first === 'selftest') return runSelftest(rest, deps, io)
+    if (first === 'shim') return runShim(rest, deps, io)
     return runStatus(rest, deps, io)
   } catch (error) {
     io.err(`dsh-pipeline ${first}: ${messageOf(error)}`)
