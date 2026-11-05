@@ -227,13 +227,16 @@ test('shim 入口：找不到共享包 → 退 3，stderr 列出试过的位置'
 })
 
 test('模板：bash -n 通过，且不含 bash 4 语法', () => {
-  const result = spawnSync('bash', ['-n', TEMPLATE], { encoding: 'utf8' })
+  // macOS 上 /bin/bash 才是 3.2.57；走 PATH 可能拿到 Homebrew bash 5，测不出 3.2 兼容性
+  const BASH = process.platform === 'darwin' ? '/bin/bash' : 'bash'
+  const result = spawnSync(BASH, ['-n', TEMPLATE], { encoding: 'utf8' })
   assert.equal(result.status, 0, result.stderr)
 
   const template = readFileSync(TEMPLATE, 'utf8')
   assert.ok(!/declare[ \t]+-A/.test(template), '不得使用关联数组')
   assert.ok(!/\bmapfile\b/.test(template), '不得使用 mapfile')
   assert.ok(!/\breadarray\b/.test(template), '不得使用 readarray')
+  assert.ok(!/\$\{[^}]*\^\^/.test(template), '不得使用 ${var^^}（bash 4）')
 })
 
 test('shim：缺动作 / 未知动作 / 未知选项 → 退 2', (t) => {

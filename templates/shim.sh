@@ -53,7 +53,7 @@ try_candidate() {
   fi
 }
 
-if [ -n "${DSH_PIPELINE_HOME+set}" ]; then
+if [ -n "${DSH_PIPELINE_HOME:-}" ]; then
   try_candidate "$DSH_PIPELINE_HOME/bin/cli.mjs"
 fi
 try_candidate "$main_root/tools/node_modules/dsh-pipeline/bin/cli.mjs"

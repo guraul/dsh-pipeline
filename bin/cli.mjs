@@ -1346,7 +1346,7 @@ function runShim(argv, deps, io) {
 
   const result = checkShims(root)
   if (result.missingDir) {
-    io.err(`shim: ${result.dir} 不存在，请先运行 shim install`)
+    io.err(`shim: ${result.dir} 不存在或不是目录，请先运行 shim install`)
     return 1
   }
   if (!result.ok) {
