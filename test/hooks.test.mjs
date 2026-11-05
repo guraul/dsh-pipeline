@@ -13,6 +13,7 @@ import { spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { runCli } from '../bin/cli.mjs'
 import { HOOK_MARKER, renderHook } from '../lib/hooks.mjs'
@@ -245,4 +246,23 @@ test('hooks check：内容对但被 chmod -x → 退 1（钩子不会跑，不�
   const r = run(['hooks', 'check', '--root', root])
   assert.equal(r.code, 1)
   assert.match(r.err, /可执行位/)
+})
+
+test('hooks install：core.hooksPath 以 ~/ 开头时按 HOME 展开（git 也会展开，不能装到 <root>/~）', (t) => {
+  const root = initRepo()
+  const fakeHome = tmp('dsh-hooks-home-')
+  t.after(() => {
+    rmSync(root, { recursive: true, force: true })
+    rmSync(fakeHome, { recursive: true, force: true })
+  })
+  mkdirSync(join(fakeHome, 'hooks'), { recursive: true })
+  git(root, 'config', 'core.hooksPath', '~/hooks')
+
+  const spawned = spawnSync(process.execPath, [fileURLToPath(new URL('../bin/cli.mjs', import.meta.url)), 'hooks', 'install', '--root', root], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: fakeHome },
+  })
+  assert.equal(spawned.status, 0, spawned.stderr)
+  assert.equal(existsSync(join(fakeHome, 'hooks', 'pre-push')), true, '应装到 $HOME/hooks')
+  assert.equal(existsSync(join(root, '~', 'hooks', 'pre-push')), false, '不得落到 <root>/~/hooks')
 })
