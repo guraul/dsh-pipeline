@@ -1445,7 +1445,15 @@ function runCheckAllCommand(argv, deps, io) {
   const result = runCheckAllFlow({
     root,
     names,
-    onRow: json ? undefined : (row) => io.out(`${row.dir} | ${row.name} | ${row.detail}`),
+    onRow: json
+      ? undefined
+      : (row) => {
+          io.out(`${row.dir} | ${row.name} | ${row.detail}`)
+          // 失败时把命令输出打出来（缩进两格），否则排查只能手工重跑
+          if (row.failureOutput) {
+            for (const line of row.failureOutput.split('\n')) io.out(`  ${line}`)
+          }
+        },
   })
 
   if (result.missingPnpm) {
