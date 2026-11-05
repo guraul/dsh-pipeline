@@ -1,0 +1,225 @@
+name: rollback
+
+# 这是回滚的唯一脚本化入口：所有消费仓的回滚只允许写一个 caller workflow 调用本文件，
+# 不得再在各自仓里复制回滚步骤。手工兜底（GitHub 不可用时）与部署共用各仓 DEPLOY.md：
+#   ssh root@<host> && cd <remote_dir> && ln -sfn releases/<上一版> dist && systemctl restart <service>
+# 布局前提（与 deploy.yml 的 mode=releases 一致）：releases/<id>/ + dist 软链 + 重启服务；
+# 回滚 = 把 dist 软链指回旧版本再重启，不重新构建、不重新上传。
+# 本文件不删旧 release：release 清理仍归 deploy.yml 按 keep_releases 执行，回滚只切软链。
+# dry_run 与 deploy.yml 不同：它仍会只读地连服务器（列 release / 读当前 dist），
+# 否则计划里打不出真实的「列出的版本、当前、目标」；真正跳过的是写软链、重启与健康检查。
+# 「选目标」逻辑夹在一对标记注释行之间（开始行 / 结束行都以 # ==== 开头），
+# 可用 sed 整段抽出做本地验收（bash -n / 假列表跑）。触发方式：workflow_call。
+on:
+  workflow_call:
+    inputs:
+      service:
+        description: '服务器 systemd 服务名，如 serve-9928'
+        required: true
+        type: string
+      remote_dir:
+        description: '服务器上 releases 的父目录（部署根目录），如 /root/project/agent-mobile/agent-mobile-app'
+        required: true
+        type: string
+      release:
+        description: '要回滚到的 release id，留空 = 上一版'
+        required: false
+        type: string
+        default: ''
+      ssh_host:
+        description: 'SSH 目标主机；留空则从 health_url 解析'
+        required: false
+        type: string
+        default: ''
+      health_check:
+        description: '健康检查模式：http 在 runner 上探 health_url；ssh 上服务器探本地端口'
+        required: false
+        type: string
+        default: 'http'
+      health_url:
+        description: '健康检查 URL，必须返回 200'
+        required: true
+        type: string
+      public_health_url:
+        description: '对外链路健康检查 URL（Caddy/证书），必须返回 200；留空则不做这一项'
+        required: false
+        type: string
+        default: ''
+      public_health_insecure:
+        description: '对外链路允许自签证书（curl -k）；换正式证书的仓传 false'
+        required: false
+        type: boolean
+        default: true
+      dry_run:
+        description: '只读检查并打印回滚计划（列出的版本、当前、目标、将执行的命令），不切软链、不重启'
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      DEPLOY_SSH_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    steps:
+      # workflow_call 的 input 不支持 choice 类型，取值在这里兜底校验
+      - name: Validate inputs
+        env:
+          HEALTH_CHECK: ${{ inputs.health_check }}
+        run: |
+          case "$HEALTH_CHECK" in
+            http|ssh) ;;
+            *) echo "::error::health_check 只能是 http 或 ssh，当前: $HEALTH_CHECK"; exit 1 ;;
+          esac
+
+      # 与 deploy.yml 同一套解析：主机优先取 ssh_host，留空才从 health_url 剥协议/端口
+      - name: Resolve host
+        id: target
+        env:
+          SSH_HOST: ${{ inputs.ssh_host }}
+          HEALTH_URL: ${{ inputs.health_url }}
+        run: |
+          HOST="$SSH_HOST"
+          if [ -z "$HOST" ]; then
+            HOST=$(printf '%s' "$HEALTH_URL" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#^[^/@]*@##; s#[:/].*$##')
+          fi
+          if [ -z "$HOST" ]; then echo "::error::无法解析 SSH 主机（ssh_host 为空且 health_url 里取不到）"; exit 1; fi
+          echo "host=$HOST" >> "$GITHUB_OUTPUT"
+
+      # deploy.yml 的 dry_run 完全不连服务器，所以那边 key 步骤带 if 跳过；
+      # 本工作流 dry_run 也要只读地列 release / 读当前版本才能打印计划，key 必须先写好。
+      - name: Setup deploy key
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+      # 列出现有 release（新→旧）→ 读当前版本 → 选目标 → dry_run 打印计划即结束
+      - name: List releases and select target
+        id: select
+        env:
+          SERVICE: ${{ inputs.service }}
+          REMOTE_DIR: ${{ inputs.remote_dir }}
+          RELEASE: ${{ inputs.release }}
+          HEALTH_URL: ${{ inputs.health_url }}
+          HEALTH_CHECK: ${{ inputs.health_check }}
+          PUBLIC_HEALTH_URL: ${{ inputs.public_health_url }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          HOST: ${{ steps.target.outputs.host }}
+        run: |
+          SSH_OPT="-i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new"
+          RELEASES=$(ssh $SSH_OPT "root@${HOST}" "cd ${REMOTE_DIR} && ls -1dt releases/*/") || {
+            echo "::error::列不出 release 列表（releases 目录不存在或 ssh 失败）"; exit 1; }
+          if [ -z "$RELEASES" ]; then echo "::error::releases 目录为空，无版本可回滚"; exit 1; fi
+
+          CURRENT=$(ssh $SSH_OPT "root@${HOST}" "cd ${REMOTE_DIR} && readlink dist") || CURRENT=""
+          CURRENT=${CURRENT%/}
+          if [ -z "$CURRENT" ]; then echo "::error::读不到当前版本（readlink dist 为空或不是软链）"; exit 1; fi
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+
+          # ==== 选目标 开始（本地验收抽取的就是这一段）====
+          LIST=$(printf '%s\n' "$RELEASES" | sed 's#/$##' | sed '/^$/d')
+          TARGET=""
+          if [ -n "$RELEASE" ]; then
+            # 显式指定：允许传 releases/<id> 或裸 id，必须在现有列表里
+            case "$RELEASE" in
+              releases/*) TARGET="${RELEASE%/}" ;;
+              *) TARGET="releases/${RELEASE%/}" ;;
+            esac
+            if ! grep -Fxq "$TARGET" <<< "$LIST"; then
+              echo "::error::指定的 release 不在现有列表里: $TARGET"; exit 1
+            fi
+          else
+            # 留空：取列表里排在当前版本后面的第一个 = ls -1dt 新→旧序里紧邻的更旧版本 = 上一版
+            MATCHED=0
+            while IFS= read -r line; do
+              if [ -z "$line" ]; then continue; fi
+              if [ "$MATCHED" = "1" ]; then TARGET="$line"; break; fi
+              if [ "$line" = "$CURRENT" ]; then MATCHED=1; fi
+            done <<< "$LIST"
+            if [ "$MATCHED" = "0" ]; then
+              echo "::error::当前版本不在 release 列表里: $CURRENT"; exit 1
+            fi
+            if [ -z "$TARGET" ]; then
+              echo "::error::没有更早的 release 可回滚（当前已是最旧: $CURRENT）"; exit 1
+            fi
+          fi
+          if [ "$TARGET" = "$CURRENT" ]; then
+            echo "::error::目标就是当前版本: $CURRENT"; exit 1
+          fi
+          echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+          # ==== 选目标 结束 ====
+
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "=== dry_run=true，以下命令本次不会执行 ==="
+            echo "release 列表（新→旧）:"
+            printf '%s\n' "$LIST"
+            echo "当前: $CURRENT"
+            echo "目标: $TARGET"
+            echo "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new root@${HOST} \"cd ${REMOTE_DIR} && ln -sfn ${TARGET} && systemctl restart ${SERVICE}\""
+            echo "健康检查: ${HEALTH_URL}（mode=${HEALTH_CHECK}，非 200 即失败）"
+            if [ -n "$PUBLIC_HEALTH_URL" ]; then
+              echo "对外链路检查: ${PUBLIC_HEALTH_URL}（配置了 public_health_url 就再探一次，非 200 即失败）"
+            fi
+            exit 0
+          fi
+
+      - name: Flip symlink and restart
+        if: ${{ !inputs.dry_run }}
+        env:
+          SERVICE: ${{ inputs.service }}
+          REMOTE_DIR: ${{ inputs.remote_dir }}
+          HOST: ${{ steps.target.outputs.host }}
+          TARGET: ${{ steps.select.outputs.target }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new "root@${HOST}" \
+            "cd ${REMOTE_DIR} && ln -sfn ${TARGET} && systemctl restart ${SERVICE}"
+
+      # 与 deploy.yml 同口径：health_check=http 在 runner 上探；ssh 上服务器探本地端口；
+      # sleep 2 保留在分叉之前。配了 public_health_url 就在下面再探一次对外链路。
+      - name: Health check
+        if: ${{ !inputs.dry_run }}
+        env:
+          HEALTH_URL: ${{ inputs.health_url }}
+          HEALTH_CHECK: ${{ inputs.health_check }}
+          HOST: ${{ steps.target.outputs.host }}
+        run: |
+          sleep 2
+          if [ "$HEALTH_CHECK" = "ssh" ]; then
+            CODE=$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new "root@${HOST}" "curl -sS -m 8 -o /dev/null -w '%{http_code}' ${HEALTH_URL}") || CODE=000
+          else
+            CODE=$(curl -sS -m 8 -o /dev/null -w '%{http_code}' "$HEALTH_URL")
+          fi
+          echo "health -> $CODE"
+          if [ "$CODE" != "200" ]; then echo "::error::健康检查失败: $CODE"; exit 1; fi
+
+      - name: Public health check
+        if: ${{ !inputs.dry_run && inputs.public_health_url != '' }}
+        env:
+          PUBLIC_HEALTH_URL: ${{ inputs.public_health_url }}
+          PUBLIC_HEALTH_INSECURE: ${{ inputs.public_health_insecure }}
+        run: |
+          CURL_OPTS=(-sS -m 10 -o /dev/null -w '%{http_code}')
+          if [ "$PUBLIC_HEALTH_INSECURE" = "true" ]; then
+            CURL_OPTS+=(-k)
+          fi
+          CODE=$(curl "${CURL_OPTS[@]}" "$PUBLIC_HEALTH_URL") || CODE=000
+          echo "public health -> $CODE"
+          if [ "$CODE" != "200" ]; then
+            echo "::error::对外链路健康检查失败: $CODE（URL: $PUBLIC_HEALTH_URL）"
+            exit 1
+          fi
+
+      - name: Rollback succeeded
+        if: ${{ !inputs.dry_run }}
+        env:
+          TARGET: ${{ steps.select.outputs.target }}
+          CURRENT: ${{ steps.select.outputs.current }}
+        run: |
+          echo "rollback: 已切到 ${TARGET}（原 ${CURRENT}）"
