@@ -10,7 +10,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -221,4 +221,28 @@ test('hooks：缺动作 / 未知动作 / 未知选项 → 退 2', () => {
   const forceOnCheck = run(['hooks', 'check', '--force'])
   assert.equal(forceOnCheck.code, 2)
   assert.match(forceOnCheck.err, /未知选项: --force/)
+})
+
+test('hooks install：仓库设了 core.hooksPath 时装到那里，而不是 .git/hooks', (t) => {
+  const root = initRepo()
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const customDir = join(root, 'my-hooks')
+  mkdirSync(customDir, { recursive: true })
+  git(root, 'config', 'core.hooksPath', 'my-hooks')
+
+  const r = run(['hooks', 'install', '--root', root])
+  assert.equal(r.code, 0, r.err)
+  assert.equal(existsSync(join(customDir, 'pre-push')), true, '应装进 core.hooksPath 指定目录')
+  assert.equal(existsSync(hookPath(root)), false, '不应再装进 .git/hooks')
+  assert.equal(run(['hooks', 'check', '--root', root]).code, 0)
+})
+
+test('hooks check：内容对但被 chmod -x → 退 1（钩子不会跑，不能假绿）', (t) => {
+  const root = initRepo()
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  assert.equal(run(['hooks', 'install', '--root', root]).code, 0)
+  chmodSync(hookPath(root), 0o644)
+  const r = run(['hooks', 'check', '--root', root])
+  assert.equal(r.code, 1)
+  assert.match(r.err, /可执行位/)
 })
