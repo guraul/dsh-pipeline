@@ -259,7 +259,7 @@ record 选项:
   判定行无法解析或提交不匹配时仍写一条 ESCALATE 记录，退出码 1（审计轨迹不丢）。
 
 status 选项:
-  --root <dir>       仓库根目录（必填）
+  --root <dir>       仓库根目录（缺省主工作区；git 定位不到时退回当前目录）
 
 全局选项:
   -h, --help     显示帮助
@@ -1447,8 +1447,9 @@ function buildMatchesExpected(actual, expected) {
 }
 
 /**
- * selftest 的根目录口径：显式 --root 直接用；缺省先定位主工作区（契约 §9 的门禁
- * 查的是仓库配置，在 task worktree 里跑也该查主工作区那一份），git 定位不到
+ * 根目录口径（selftest / shim / hooks / status 共用）：显式 --root 直接用；缺省先定位
+ * 主工作区（契约 §9 的门禁查的是仓库配置，在 task worktree 里跑也该查主工作区那一份；
+ * status 同理——审核记录只落在主仓 .dsh-web/reviews），git 定位不到
  * （非仓库 / git 失败）时退回当前目录，与 record / review 的口径一致。
  */
 function resolveSelftestRoot(value, deps) {
@@ -1687,12 +1688,16 @@ function runCheckAllCommand(argv, deps, io) {
 function runStatus(argv, deps, io) {
   const parsed = parseArgs(argv, STATUS_VALUE_FLAGS, STATUS_BOOL_FLAGS)
   if (parsed.error) return argError(io, 'status', parsed.error)
-  const root = requireRoot(parsed.options.root)
-  if (root.error) return argError(io, 'status', root.error)
+  if (parsed.options.root !== undefined && !nonEmpty(parsed.options.root)) {
+    return argError(io, 'status', '--root 必须是非空目录路径')
+  }
+  // 缺省口径复用 resolveSelftestRoot（显式 --root > 主工作区 > 当前目录）：
+  // 审核记录只落在主仓，在 task worktree 里跑 status 也该看主工作区那一份。
+  const root = resolveSelftestRoot(parsed.options.root, deps)
 
   let collected
   try {
-    collected = collectRecords(root.value)
+    collected = collectRecords(root)
   } catch (error) {
     io.err(`status: 读取审核记录失败: ${messageOf(error)}`)
     return 2
