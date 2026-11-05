@@ -10,6 +10,7 @@ const CLI = fileURLToPath(new URL('../bin/cli.mjs', import.meta.url))
 
 const STUB = `#!/bin/sh
 printf '%s :: %s\\n' "$(pwd)" "$*" >> "$STUB_LOG"
+echo "stub 输出: 期望 1 实际 2"
 code="\${RESULT:-0}"
 if [ -f .stub-exit ]; then
   code=$(cat .stub-exit)
@@ -88,6 +89,8 @@ test('check-all：有失败 → 1，汇总数字正确，后面的包继续跑',
   assert.equal(r.status, 1)
   assert.deepEqual(r.stdout.trim().split('\n'), [
     'pkg-bad | test | 失败（退出码 1）',
+    // 失败项附带命令输出（缩进两格），见「失败项要带出命令输出」用例
+    '  stub 输出: 期望 1 实际 2',
     'pkg-ok | test | 通过',
     'pkg-ok | check | 通过',
     'pkg-nodeps | test | 跳过（未安装依赖）',
@@ -172,4 +175,12 @@ test('check-all：显式指定的包不存在 → 失败退 1', (t) => {
     '不存在的包 | - | 失败（包目录不存在）',
     'check-all: 2 个包，1 通过 / 1 失败 / 0 跳过',
   ])
+})
+
+test('check-all：失败项要带出命令输出（否则只看到退出码，排查还得重跑）', (t) => {
+  const fx = fixture(t)
+  const r = run(fx, ['--packages', 'pkg-bad'])
+  assert.equal(r.status, 1)
+  assert.match(r.stdout, /失败（退出码 1）/)
+  assert.match(r.stdout, /stub 输出: 期望 1 实际 2/, '失败项必须把命令输出打出来')
 })
