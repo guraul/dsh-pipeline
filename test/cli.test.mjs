@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -730,6 +731,66 @@ test('status: 没有记录时输出 0 条与「无」', () => {
   assert.equal(run(['status', '--root', root], io), 0)
   assert.match(io.state.out, /审核记录: 0 条/)
   assert.match(io.state.out, /最近一条: 无/)
+})
+
+function runGit(cwd, args) {
+  const result = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8' })
+  assert.equal(result.status, 0, `git ${args.join(' ')} 失败: ${result.stderr}`)
+}
+
+test('status: 不传 --root 时自行定位（临时 git 仓，退出 0）', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'dsh-status-root-'))
+  runGit(repo, ['init'])
+
+  const io = makeIO()
+  assert.equal(run(['status'], io, { cwd: repo }), 0)
+  assert.match(io.state.out, /审核记录/)
+  assert.match(io.state.out, /审核记录: 0 条/)
+  assert.match(io.state.out, /最近一条: 无/)
+})
+
+test('status: 在 linked worktree 里不传 --root，读的是主工作区的记录', () => {
+  const main = mkdtempSync(join(tmpdir(), 'dsh-status-main-'))
+  runGit(main, ['init'])
+  runGit(main, [
+    '-c',
+    'user.email=test@example.com',
+    '-c',
+    'user.name=test',
+    'commit',
+    '--allow-empty',
+    '-m',
+    'init',
+  ])
+  const worktree = join(main, 'wt')
+  runGit(main, ['worktree', 'add', worktree])
+  writeRecord(
+    reviewsDir(main),
+    recordFor({ pr: 9, head_sha: OTHER_SHA, createdAt: '2026-11-01T00:00:00.000Z', verdict: 'REJECT' }),
+  )
+
+  const io = makeIO()
+  assert.equal(run(['status'], io, { cwd: worktree }), 0)
+  assert.match(io.state.out, /审核记录: 1 条/)
+  assert.match(io.state.out, /最近一条: PR #9 第 1 轮 结论 REJECT/)
+})
+
+test('status: 显式 --root 优先于 cwd，空值退出 2', () => {
+  const cwdRoot = tmp()
+  const target = tmp()
+  writeRecord(
+    reviewsDir(target),
+    recordFor({ pr: 11, createdAt: '2026-11-02T00:00:00.000Z', verdict: 'APPROVE' }),
+  )
+
+  const io = makeIO()
+  assert.equal(run(['status', '--root', target], io, { cwd: cwdRoot }), 0)
+  assert.match(io.state.out, /审核记录: 1 条/)
+  assert.match(io.state.out, /最近一条: PR #11 第 1 轮 结论 APPROVE/)
+
+  const empty = makeIO()
+  assert.equal(run(['status', '--root', ''], empty, { cwd: cwdRoot }), 2)
+  assert.match(empty.state.err, /--root 必须是非空目录路径/)
 })
 
 test('参数错误退出码 2', () => {
