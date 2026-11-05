@@ -1,8 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 
 import { runCli } from '../bin/cli.mjs'
@@ -24,9 +24,9 @@ function makeIO() {
   }
 }
 
-function withRepo(root, repo = 'owner/repo') {
+function withRepo(root, repo = 'owner/repo', extra = {}) {
   mkdirSync(join(root, '.dsh'), { recursive: true })
-  writeFileSync(join(root, '.dsh', 'pipeline.json'), JSON.stringify({ repo }), 'utf8')
+  writeFileSync(join(root, '.dsh', 'pipeline.json'), JSON.stringify({ repo, ...extra }), 'utf8')
 }
 
 /** 去掉 `-C <cwd>` 前缀，返回真正的 git 子命令与参数。 */
@@ -327,4 +327,83 @@ test('task: --worktrees-dir 空值退出 2，不发出任何命令', () => {
     assert.match(io.state.err, /--worktrees-dir/)
   }
   assert.equal(calls.length, 0, '参数错误不该发出任何命令')
+})
+
+test('task: 配置 worktreesDir 且不传 flag 时 worktree 建在配置目录', () => {
+  const root = tmp()
+  const container = join(tmp(), 'cfg-wt')
+  withRepo(root, 'owner/repo', { worktreesDir: container })
+  const { runner, calls } = makeRunner()
+  const io = makeIO()
+
+  assert.equal(run(['task', '12', '--root', root], io, runner), 0)
+
+  const worktree = join(container, '12-add-login')
+  assert.ok(io.state.out.includes(worktree))
+  const add = calls.find((call) => sub(call.args)[0] === 'worktree' && sub(call.args)[1] === 'add')
+  assert.equal(sub(add.args)[4], worktree)
+  assert.ok(existsSync(container), '配置的容器目录不存在时按 mkdir -p 创建')
+})
+
+test('task: --worktrees-dir 与配置同时给定时用 flag', () => {
+  const root = tmp()
+  const configured = join(tmp(), 'from-config')
+  const flagged = join(tmp(), 'from-flag')
+  withRepo(root, 'owner/repo', { worktreesDir: configured })
+  const { runner, calls } = makeRunner()
+  const io = makeIO()
+
+  assert.equal(run(['task', '12', '--root', root, '--worktrees-dir', flagged], io, runner), 0)
+
+  const add = calls.find((call) => sub(call.args)[0] === 'worktree' && sub(call.args)[1] === 'add')
+  assert.equal(sub(add.args)[4], join(flagged, '12-add-login'))
+  assert.equal(existsSync(configured), false, 'flag 生效时不该动配置里的目录')
+})
+
+test('task: 配置 worktreesDir 是相对路径时按 --root 解析成绝对路径', () => {
+  const root = tmp()
+  withRepo(root, 'owner/repo', { worktreesDir: 'ext-wt' })
+  const { runner, calls } = makeRunner()
+  const io = makeIO()
+
+  assert.equal(run(['task', '12', '--root', root], io, runner), 0)
+
+  const worktree = join(root, 'ext-wt', '12-add-login')
+  assert.ok(isAbsolute(worktree))
+  assert.ok(io.state.out.includes(worktree))
+  const add = calls.find((call) => sub(call.args)[0] === 'worktree' && sub(call.args)[1] === 'add')
+  assert.equal(sub(add.args)[4], worktree)
+  assert.ok(existsSync(join(root, 'ext-wt')))
+})
+
+test('task: 配置 worktreesDir 写 ~/ 时展开成家目录', () => {
+  const root = tmp()
+  const container = join(homedir(), '.dsh-pipeline-task-test-wt')
+  rmSync(container, { recursive: true, force: true })
+  withRepo(root, 'owner/repo', { worktreesDir: '~/.dsh-pipeline-task-test-wt' })
+  const { runner, calls } = makeRunner()
+  const io = makeIO()
+
+  try {
+    assert.equal(run(['task', '12', '--root', root], io, runner), 0)
+
+    const worktree = join(container, '12-add-login')
+    assert.ok(io.state.out.includes(worktree))
+    const add = calls.find((call) => sub(call.args)[0] === 'worktree' && sub(call.args)[1] === 'add')
+    assert.equal(sub(add.args)[4], worktree)
+    assert.ok(existsSync(container))
+  } finally {
+    rmSync(container, { recursive: true, force: true })
+  }
+})
+
+test('task: 配置 worktreesDir 非字符串时退出 2，不发出任何命令', () => {
+  const root = tmp()
+  withRepo(root, 'owner/repo', { worktreesDir: 42 })
+  const { runner, calls } = makeRunner()
+  const io = makeIO()
+
+  assert.equal(run(['task', '12', '--root', root], io, runner), 2)
+  assert.match(io.state.err, /worktreesDir/)
+  assert.equal(calls.length, 0, '配置不合规不该发出任何命令')
 })

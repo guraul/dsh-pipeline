@@ -87,6 +87,15 @@ test('roles 必须是对象', () => {
   assert.throws(() => validateConfig({ roles: 'reviewer' }), code('E_CONFIG'))
 })
 
+test('worktreesDir 只接受字符串或 null，默认 null', () => {
+  assert.equal(DEFAULT_CONFIG.worktreesDir, null)
+  for (const value of [42, ['a'], { dir: 'x' }, true]) {
+    assert.throws(() => validateConfig({ worktreesDir: value }), code('E_CONFIG'), String(value))
+  }
+  assert.equal(validateConfig({ worktreesDir: 'x' }).worktreesDir, 'x')
+  assert.equal(validateConfig({ worktreesDir: null }).worktreesDir, null)
+})
+
 test('配置文件不是合法 JSON 时报 E_CONFIG', () => {
   const root = tmp()
   writeConfig(root, '{ not json')

@@ -18,6 +18,7 @@
  * runner 可注入，测试用假 runner 断言实际发出的命令，不碰真实 gh/git。
  */
 import { mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -181,8 +182,9 @@ task 用法:
   --slug <slug>      手动指定分支/目录后缀（缺省由 issue 标题生成；中文标题会退化成哈希，可读性差时用它）。
                      会规范化：转小写、非字母数字折成 '-'、截断到 40 字符
   --root <dir>       仓库根目录（缺省取主工作区；在 worktree 里运行会自动上溯）
-  --worktrees-dir <dir>  worktree 的父目录，内部仍拼 <号>-<slug>；缺省 <root>/.worktrees。
-                     相对路径按 --root 解析成绝对路径；目录不存在会自动创建（mkdir -p），已存在则复用。
+  --worktrees-dir <dir>  worktree 的父目录，内部仍拼 <号>-<slug>；缺省读配置 worktreesDir，再缺省 <root>/.worktrees。
+                     flag 优先于配置；相对路径按 --root 解析成绝对路径，前导 ~/ 展开为家目录；
+                     目录不存在会自动创建（mkdir -p），已存在则复用。
                      为什么需要它：宿主会从主仓加载源码（如 memx 在仓内切分支会让宿主加载到未合并代码），
                      用它把 worktree 建在仓库外即可避开。
   幂等：worktree 已存在时只打印路径；路径被别的目录占用时报错退出 2。
@@ -1710,6 +1712,13 @@ function runStatus(argv, deps, io) {
   return 0
 }
 
+/** 前导 `~/`（或单独的 `~`）展开成当前用户家目录；其余原样返回。flag 与配置走同一条规则。 */
+function expandHome(path) {
+  if (path === '~') return homedir()
+  if (path.startsWith('~/')) return join(homedir(), path.slice(2))
+  return path
+}
+
 /**
  * task：issue 号是位置参数（唯一一个），其余走 --root / --worktrees-dir。
  * 参数错误一律 2，流程失败也一律 2——task 没有「闸门拒绝」这种中间态。
@@ -1731,11 +1740,38 @@ function runTask(argv, deps, io) {
     return argError(io, 'task', '--worktrees-dir 必须是非空目录路径')
   }
 
+  // worktree 容器：flag 优先于配置；只在没给 flag 时才读配置，
+  // 两者都没有 → 不传 worktreesDir，lib/task.mjs 仍回落到 <root>/.worktrees（现状不变）。
+  // 配置读 --root（缺省当前目录）下的 .dsh/pipeline.json，读不了 / 不合规当场退 2。
+  let worktreesDir = parsed.options['worktrees-dir']
+  if (worktreesDir === undefined) {
+    const configRoot = nonEmpty(parsed.options.root)
+      ? parsed.options.root
+      : nonEmpty(deps.cwd)
+        ? deps.cwd
+        : process.cwd()
+    let config
+    try {
+      config = loadConfig(configRoot).config
+    } catch (error) {
+      return argError(io, 'task', `读取配置失败: ${messageOf(error)}`)
+    }
+    const configured = config.worktreesDir
+    if (configured !== undefined && configured !== null) {
+      if (!nonEmpty(configured)) {
+        return argError(io, 'task', '配置 worktreesDir 必须是非空目录路径')
+      }
+      worktreesDir = configured
+    }
+  }
+  // 相对路径按 --root 解析、~/ 展开、不存在则 mkdir -p，都在 lib/task.mjs 里与 flag 同一套
+  if (worktreesDir !== undefined) worktreesDir = expandHome(worktreesDir)
+
   const result = runTaskFlow({
     issue: Number(first),
     slug: parsed.options.slug,
     root: parsed.options.root,
-    worktreesDir: parsed.options['worktrees-dir'],
+    worktreesDir,
     cwd: nonEmpty(deps.cwd) ? deps.cwd : process.cwd(),
     runner: deps.runner,
     sleep: deps.sleep,
