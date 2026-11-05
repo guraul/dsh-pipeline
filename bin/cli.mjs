@@ -9,7 +9,8 @@
  * review 的 publish 复用 runRecord（与 record 同一条落盘路径），prepare 只编排 gh 读取，
  * prompt 只读请求文件并复用 buildPrompt（不发外部命令、不写请求）；
  * selftest 只做参数编排与输出，检查逻辑在 lib/selftest.mjs（契约 §9，已实现 --shims / --config）；
- * shim 的渲染 / 写入 / 比对全在 lib/shim.mjs（契约 §8），这里只做动作与参数解析。
+ * shim 的渲染 / 写入 / 比对全在 lib/shim.mjs（契约 §8），这里只做动作与参数解析；
+ * check-all 的逐包执行与汇总在 lib/check-all.mjs，这里只做包发现与参数解析。
  *
  * 输出约定：面向人的信息走 stdout，错误与警告走 stderr，全部中文。
  * 退出码：0 通过 / 1 闸门拒绝 / 2 参数或环境错误。
@@ -19,6 +20,7 @@ import { mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFile
 import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { discoverPackages, runCheckAll as runCheckAllFlow } from '../lib/check-all.mjs'
 import { loadConfig } from '../lib/config.mjs'
 import { evaluateGate } from '../lib/gate.mjs'
 import { issueView, prChecks, prDiff, prMerge, prView } from '../lib/gh.mjs'
@@ -67,8 +69,33 @@ import { describeRow, diagnose } from '../lib/doctor.mjs'
 const here = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8'))
 
-const IMPLEMENTED = new Set(['doctor', 'gate', 'merge', 'record', 'selftest', 'shim', 'status', 'task', 'pr', 'review'])
-const SUBCOMMANDS = ['task', 'prepare', 'pr', 'merge', 'gate', 'record', 'status', 'doctor', 'review', 'selftest', 'shim']
+const IMPLEMENTED = new Set([
+  'check-all',
+  'doctor',
+  'gate',
+  'merge',
+  'record',
+  'selftest',
+  'shim',
+  'status',
+  'task',
+  'pr',
+  'review',
+])
+const SUBCOMMANDS = [
+  'task',
+  'prepare',
+  'pr',
+  'merge',
+  'gate',
+  'record',
+  'status',
+  'doctor',
+  'review',
+  'selftest',
+  'shim',
+  'check-all',
+]
 
 const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单一实现
 
@@ -85,6 +112,7 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
   --expect <sha>     期望的构建 sha（可传 7 位短 sha；不一致则退出 1）
   selftest   一致性自检（契约 §9；已实现 --shims / --config，--peer/--exit-codes 未实现）
   shim       生成 / 校验入口 shim（契约 §8）
+  check-all  逐包跑 test / check / typecheck 并汇总（缺 node_modules 跳过不算失败）
   task       从 issue 创建 task/<号>-<slug> 分支与 worktree
   prepare    准备交付（未实现）
   pr         推送当前 task 分支并创建 PR
@@ -111,6 +139,17 @@ shim 用法:
   --root <dir>       仓库根目录（缺省主工作区；git 定位不到时退回当前目录）
   --force            仅 install：覆盖内容不同的已存在文件
   退出码: 0 一致 / 1 不一致或内容冲突 / 2 用法错误
+
+check-all 用法:
+  dsh-pipeline check-all [--root <dir>] [--packages a,b,c] [--json]
+  --root <dir>       仓库根目录（缺省当前工作目录）
+  --packages a,b,c   要检查的包目录（逗号分隔，相对 <root>）；缺省自动发现：<root> 下
+                     每个含 package.json 的子目录（跳过 node_modules 与 . 开头的目录）
+  --json             输出 {"ok":…,"packages":[{"dir":"…","checks":[{"name":"…","ok":…,"skipped":…,"code":…}]}]}
+                     （退出码与人读模式一致）
+  每项一行 <包目录> | <检查> | <结果>，末行 check-all: N 个包，X 通过 / Y 失败 / Z 跳过；
+  缺 node_modules 的包三项都记「跳过（未安装依赖）」，不算失败；包目录不存在记失败。
+  退出码: 0 全部通过（含全跳过）/ 1 有失败 / 2 用法错误 / 3 找不到 pnpm
 
 task 用法:
   dsh-pipeline task <issue号> [--slug <slug>] [--root <dir>] [--worktrees-dir <dir>]
@@ -463,6 +502,8 @@ const SHIM_INSTALL_VALUE_FLAGS = new Set(['root'])
 const SHIM_INSTALL_BOOL_FLAGS = new Set(['force'])
 const SHIM_CHECK_VALUE_FLAGS = new Set(['root'])
 const SHIM_CHECK_BOOL_FLAGS = new Set()
+const CHECK_ALL_VALUE_FLAGS = new Set(['root', 'packages'])
+const CHECK_ALL_BOOL_FLAGS = new Set(['json'])
 
 function emit(io, lines) {
   for (const line of lines) {
@@ -1357,6 +1398,90 @@ function runShim(argv, deps, io) {
   return 0
 }
 
+/**
+ * check-all：参数编排与输出，逐包执行逻辑在 lib/check-all.mjs（串行，失败不中断）。
+ * 包来源：--packages 显式指定；缺省自动发现 <root> 下含 package.json 的子目录。
+ * 退出码：0 全部通过（含全跳过）/ 1 有失败 / 2 用法错误 / 3 找不到 pnpm。
+ */
+function runCheckAllCommand(argv, deps, io) {
+  const parsed = parseArgs(argv, CHECK_ALL_VALUE_FLAGS, CHECK_ALL_BOOL_FLAGS)
+  if (parsed.error) return argError(io, 'check-all', parsed.error)
+  const options = parsed.options
+
+  if (options.root !== undefined && !nonEmpty(options.root)) {
+    return argError(io, 'check-all', '--root 必须是非空目录路径')
+  }
+  let names
+  if (options.packages !== undefined) {
+    names = [
+      ...new Set(
+        String(options.packages)
+          .split(',')
+          .map((item) => item.trim())
+          .filter((item) => item.length > 0),
+      ),
+    ]
+    if (names.length === 0) return argError(io, 'check-all', '--packages 至少需要一个包名')
+  }
+
+  const root = nonEmpty(options.root) ? options.root : nonEmpty(deps.cwd) ? deps.cwd : process.cwd()
+  let rootStat
+  try {
+    rootStat = statSync(root)
+  } catch {
+    return argError(io, 'check-all', `目录不存在: ${root}`)
+  }
+  if (!rootStat.isDirectory()) return argError(io, 'check-all', `不是目录: ${root}`)
+
+  if (names === undefined) {
+    try {
+      names = discoverPackages(root)
+    } catch (error) {
+      return argError(io, 'check-all', `读取目录失败: ${messageOf(error)}`)
+    }
+  }
+
+  const json = options.json === true
+  const result = runCheckAllFlow({
+    root,
+    names,
+    onRow: json
+      ? undefined
+      : (row) => {
+          io.out(`${row.dir} | ${row.name} | ${row.detail}`)
+          // 失败时把命令输出打出来（缩进两格），否则排查只能手工重跑
+          if (row.failureOutput) {
+            for (const line of row.failureOutput.split('\n')) io.out(`  ${line}`)
+          }
+        },
+  })
+
+  if (result.missingPnpm) {
+    io.err('check-all: 找不到 pnpm（请安装 pnpm 并加入 PATH）')
+    return 3
+  }
+  if (json) {
+    io.out(
+      JSON.stringify({
+        ok: result.ok,
+        packages: result.packages.map((entry) => ({
+          dir: entry.dir,
+          checks: entry.checks.map((check) => ({
+            name: check.name,
+            ok: check.ok,
+            skipped: check.skipped,
+            code: check.code,
+          })),
+        })),
+      }),
+    )
+    return result.ok ? 0 : 1
+  }
+  const { summary } = result
+  io.out(`check-all: ${summary.total} 个包，${summary.pass} 通过 / ${summary.fail} 失败 / ${summary.skip} 跳过`)
+  return result.ok ? 0 : 1
+}
+
 function runStatus(argv, deps, io) {
   const parsed = parseArgs(argv, STATUS_VALUE_FLAGS, STATUS_BOOL_FLAGS)
   if (parsed.error) return argError(io, 'status', parsed.error)
@@ -1493,6 +1618,7 @@ export function runCli(argv, deps = {}) {
     if (first === 'doctor') return runDoctor(rest, deps, io)
     if (first === 'selftest') return runSelftest(rest, deps, io)
     if (first === 'shim') return runShim(rest, deps, io)
+    if (first === 'check-all') return runCheckAllCommand(rest, deps, io)
     return runStatus(rest, deps, io)
   } catch (error) {
     io.err(`dsh-pipeline ${first}: ${messageOf(error)}`)
