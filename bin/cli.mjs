@@ -7,7 +7,8 @@
  * lib/merge.mjs，合并方式由 gh.prMerge 固定为 --squash；
  * task / pr 的流程分别交给 lib/task.mjs 与 lib/pr.mjs；
  * review 的 publish 复用 runRecord（与 record 同一条落盘路径），prepare 只编排 gh 读取，
- * prompt 只读请求文件并复用 buildPrompt（不发外部命令、不写请求）。
+ * prompt 只读请求文件并复用 buildPrompt（不发外部命令、不写请求）；
+ * selftest 只做参数编排与输出，检查逻辑在 lib/selftest.mjs（契约 §9，当前仅 --config）。
  *
  * 输出约定：面向人的信息走 stdout，错误与警告走 stderr，全部中文。
  * 退出码：0 通过 / 1 闸门拒绝 / 2 参数或环境错误。
@@ -25,15 +26,19 @@ import {
   currentBranch,
   deleteBranch,
   fetch as gitFetch,
+  gitCommonDir,
   headSha as gitHeadSha,
   mergeFF,
   statusPorcelain,
+  toplevel,
   worktreeList,
   worktreeRemove,
 } from '../lib/git.mjs'
 import { runMerge as runMergeFlow } from '../lib/merge.mjs'
 import { mergePolicy } from '../lib/policy.mjs'
 import { runPr as runPrFlow } from '../lib/pr.mjs'
+import { resolveMainRoot } from '../lib/repo.mjs'
+import { PENDING_CHECKS, runChecks } from '../lib/selftest.mjs'
 import {
   NONCE_PATTERN,
   analyzeVerdict,
@@ -60,8 +65,8 @@ import { describeRow, diagnose } from '../lib/doctor.mjs'
 const here = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8'))
 
-const IMPLEMENTED = new Set(['doctor', 'gate', 'merge', 'record', 'status', 'task', 'pr', 'review'])
-const SUBCOMMANDS = ['task', 'prepare', 'pr', 'merge', 'gate', 'record', 'status', 'doctor', 'review']
+const IMPLEMENTED = new Set(['doctor', 'gate', 'merge', 'record', 'selftest', 'status', 'task', 'pr', 'review'])
+const SUBCOMMANDS = ['task', 'prepare', 'pr', 'merge', 'gate', 'record', 'status', 'doctor', 'review', 'selftest']
 
 const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单一实现
 
@@ -76,10 +81,21 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
   --repo <a,b>       要检查的仓库根（逗号分隔；缺省当前目录）
   --json             机器可读输出（退出码与人读模式一致）
   --expect <sha>     期望的构建 sha（可传 7 位短 sha；不一致则退出 1）
+  selftest   一致性自检（契约 §9；当前只实现 --config，--shims/--peer/--exit-codes 未实现）
   task       从 issue 创建 task/<号>-<slug> 分支与 worktree
   prepare    准备交付（未实现）
   pr         推送当前 task 分支并创建 PR
   review     生成审核请求（prepare）、审核提示词（prompt）并把判定落成记录（publish）
+
+selftest 用法:
+  dsh-pipeline selftest [--config | --fast] [--json] [--root <dir>]
+  --config           校验 <root>/.dsh/pipeline.json：能被 schema 接受、没有未声明字段
+  --fast             当前等价于 --config（契约 §9 目标是 --shims --config，--shims 后续补）
+  --json             输出 {"ok":true|false,"root":"…","checks":[{"name":"…","ok":…,"detail":"…"}]}
+                     （退出码与人读模式一致）
+  --root <dir>       仓库根目录（缺省主工作区；git 定位不到时退回当前目录）
+  --shims / --peer / --exit-codes  已识别但尚未实现：传入即报「尚未实现」并退出 2，不静默忽略
+  退出码: 0 通过（没有配置文件也退 0）/ 1 配置不合规 / 2 用法错误或检查项未实现
 
 task 用法:
   dsh-pipeline task <issue号> [--slug <slug>] [--root <dir>] [--worktrees-dir <dir>]
@@ -418,6 +434,16 @@ const REVIEW_PUBLISH_VALUE_FLAGS = new Set([
 const REVIEW_PUBLISH_BOOL_FLAGS = new Set()
 const REVIEW_PROMPT_VALUE_FLAGS = new Set(['request', 'out', 'role'])
 const REVIEW_PROMPT_BOOL_FLAGS = new Set()
+const SELFTEST_VALUE_FLAGS = new Set(['root'])
+// --shims / --peer / --exit-codes 只是「被识别」：传了要报尚未实现退 2，不能落进未知选项
+const SELFTEST_BOOL_FLAGS = new Set([
+  'config',
+  'fast',
+  'json',
+  'shims',
+  'peer',
+  'exit-codes',
+])
 
 function emit(io, lines) {
   for (const line of lines) {
@@ -1205,6 +1231,57 @@ function buildMatchesExpected(actual, expected) {
   return actual.startsWith(expected) || expected.startsWith(actual)
 }
 
+/**
+ * selftest 的根目录口径：显式 --root 直接用；缺省先定位主工作区（契约 §9 的门禁
+ * 查的是仓库配置，在 task worktree 里跑也该查主工作区那一份），git 定位不到
+ * （非仓库 / git 失败）时退回当前目录，与 record / review 的口径一致。
+ */
+function resolveSelftestRoot(value, deps) {
+  if (nonEmpty(value)) return value
+  const cwd = nonEmpty(deps.cwd) ? deps.cwd : process.cwd()
+  const resolved = resolveMainRoot({
+    cwd,
+    git: {
+      commonDir: (dir) => gitCommonDir(dir, { runner: deps.runner }),
+      toplevel: (dir) => toplevel(dir, { runner: deps.runner }),
+    },
+  })
+  return resolved.ok ? resolved.root : cwd
+}
+
+/**
+ * selftest：契约 §9 的一致性门禁。
+ * 本单只实现 --config（--fast 与它等价）；其余检查项只识别不执行，明确报错退 2。
+ * 退出码：0 通过（含「无配置文件跳过」）/ 1 配置不合规 / 2 用法错误或检查项未实现。
+ */
+function runSelftest(argv, deps, io) {
+  const parsed = parseArgs(argv, SELFTEST_VALUE_FLAGS, SELFTEST_BOOL_FLAGS)
+  if (parsed.error) return argError(io, 'selftest', parsed.error)
+  const options = parsed.options
+
+  for (const name of PENDING_CHECKS) {
+    if (options[name] === true) return argError(io, 'selftest', `尚未实现: --${name}`)
+  }
+  if (options.root !== undefined && !nonEmpty(options.root)) {
+    return argError(io, 'selftest', '--root 必须是非空目录路径')
+  }
+  // 没有检查项就没有任何可判定的结论：报用法错误，不静默退 0
+  if (options.config !== true && options.fast !== true) {
+    return argError(io, 'selftest', '未指定检查项（当前可用 --config 或 --fast）')
+  }
+
+  const root = resolveSelftestRoot(options.root, deps)
+  const result = runChecks(root, ['config'])
+
+  // 失败原文始终走 stderr：--json 只改 stdout 的形态，不改退出码也不吞错误
+  for (const check of result.checks) {
+    if (!check.ok) io.err(`selftest: ${check.detail}`)
+    else if (options.json !== true) io.out(`${root}: ${check.detail}`)
+  }
+  if (options.json === true) io.out(JSON.stringify({ ok: result.ok, root, checks: result.checks }))
+  return result.ok ? 0 : 1
+}
+
 function runStatus(argv, deps, io) {
   const parsed = parseArgs(argv, STATUS_VALUE_FLAGS, STATUS_BOOL_FLAGS)
   if (parsed.error) return argError(io, 'status', parsed.error)
@@ -1339,6 +1416,7 @@ export function runCli(argv, deps = {}) {
     if (first === 'pr') return runPr(rest, deps, io)
     if (first === 'review') return runReview(rest, deps, io)
     if (first === 'doctor') return runDoctor(rest, deps, io)
+    if (first === 'selftest') return runSelftest(rest, deps, io)
     return runStatus(rest, deps, io)
   } catch (error) {
     io.err(`dsh-pipeline ${first}: ${messageOf(error)}`)
