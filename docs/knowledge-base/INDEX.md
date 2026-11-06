@@ -32,6 +32,7 @@
 | 安装 / 校验 pre-push 直推拦截钩子 | `hooks install` / `check` | `lib/hooks.mjs` |
 | 逐包跑 test/check/typecheck | `check-all` | `lib/check-all.mjs` |
 | 生成 / 校验部署 caller workflow 骨架 | `deploy init` / `deploy check` | `lib/deploy.mjs` |
+| 写入 / 核对锁文件（装的是哪个构建） | `lock write` / `lock check`（`selftest --lock` 同一实现） | `lib/lock.mjs`（自己读装包的 `build.json`） |
 | 构建标识（打包时写入） | `bash scripts/pack.sh` | `scripts/pack.sh` + `lib/build-info.mjs` |
 
 ## 技术栈表
@@ -65,6 +66,7 @@ dsh-pipeline/
 │   ├── git.mjs / gh.mjs     # 具名外部命令封装，runner 可注入
 │   ├── selftest.mjs / shim.mjs / hooks.mjs / check-all.mjs
 │   ├── deploy.mjs           # 部署 caller workflow 骨架的生成 / 校验（契约 §10）
+│   ├── lock.mjs             # .dsh/pipeline.lock.json 的读 / 写 / 核对（契约 §7.2）
 │   ├── doctor.mjs / profile-check.mjs / build-info.mjs
 ├── templates/shim.sh        # 6 个入口的渲染模板（{{VERSION}} / {{CMD}}）
 ├── scripts/pack.sh          # 打包门禁：先 node --test，通过才 pnpm pack 到 dist/
@@ -139,7 +141,8 @@ merge ──> gate(读记录 + policyVersion/TTL/SHA) ──> gh pr checks ─�
 | 改入口 shim 行为 | `templates/shim.sh` → 各仓重新 `shim install` |
 | 改钩子内容 | `lib/hooks.mjs`（`INTERCEPT_BODY` / `ALLOW_MAIN_BODY`）→ 各仓重新 `hooks install` |
 | 查审核记录 / 跳过审计 | `<主工作区>/.dsh-web/reviews/`、`.dsh-web/reviews/skips/`（见 `DATA.md`） |
-| 查某仓装的是哪个构建 | `node bin/cli.mjs doctor --repo <仓…>`（读 `tools/node_modules/dsh-pipeline/build.json`） |
+| 查某仓装的是哪个构建 | `node bin/cli.mjs doctor --repo <仓…>`（读 `tools/node_modules/dsh-pipeline/build.json`）；某仓自己钉的期望值看 `.dsh/pipeline.lock.json` |
+| 刷新 / 核对某仓的锁文件 | `node bin/cli.mjs lock write --root <仓>` / `lock check --root <仓>`（见 `modules/tooling.md`） |
 | 生成 / 校验某仓的部署 caller 骨架 | `.dsh/pipeline.json` 的 `deploy` 段 → `node bin/cli.mjs deploy init --root <仓> [--write]` / `deploy check --root <仓>`（见 `modules/deploy.md`） |
 | 打包给消费仓 | `bash scripts/pack.sh` → `dist/latest.tgz` + `build.json` |
 
@@ -157,6 +160,6 @@ merge ──> gate(读记录 + policyVersion/TTL/SHA) ──> gh pr checks ─�
 | `modules/gate-merge.md` | 闸门、合并、高风险策略 |
 | `modules/review-record.md` | 审核请求、判定解析、记录、角色 |
 | `modules/task-pr-git-gh.md` | task / pr / repo / git / gh |
-| `modules/tooling.md` | selftest / shim / hooks / check-all / doctor / profile-check / build-info |
+| `modules/tooling.md` | selftest / lock / shim / hooks / check-all / doctor / profile-check / build-info |
 | `modules/deploy.md` | 部署 caller 骨架：`deploy init` / `check`、`deploy` 配置段、三条铁律 |
 | `../CONTRACT.md`（仓内 `docs/CONTRACT.md`） | 契约：命令面、退出码、输出、落盘、配置 schema、shim、门禁、部署 |

@@ -12,7 +12,7 @@
 |---|---|---|---|
 | **L1 实现层** | 本包：全部子命令与逻辑（`lib/`） | 本仓 | 现行 |
 | **L2 入口层** | 各仓 `scripts/pipeline/*.sh`：**生成物**，逐字节相同 | `shim install` 从 `templates/shim.sh` 渲染 | 已实现（`lib/shim.mjs`）；部分消费仓仍是手写壳（`agent-mobile`、`homebase` 为转发壳，`self-dsh-plugins` 仍用自有实现） |
-| **L3 配置层** | 各仓 `.dsh/pipeline.json` | 各仓 | 现行；`pipeline.lock.json`（契约 §7.2）尚未实现 |
+| **L3 配置层** | 各仓 `.dsh/pipeline.json` + `.dsh/pipeline.lock.json` | 各仓（锁由 `lock write` 生成） | 两者均现行 |
 
 **为什么入口必须是生成物**：入口一旦允许手写，就给"某仓加一点私有逻辑"留了后门，`diff -r <仓A>/scripts/pipeline <仓B>/scripts/pipeline` 立刻失真。契约把这条写成判定完成标准。
 

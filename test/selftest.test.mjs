@@ -44,6 +44,8 @@ function makeRepo(base, name, { sha = SHA, builtAt = BUILT_AT, pkg = true, build
   }
   const pkgDir = join(dir, 'tools', 'node_modules', 'dsh-pipeline')
   mkdirSync(join(pkgDir, 'bin'), { recursive: true })
+  // 真实安装一定有 package.json：lib/lock.mjs 的 readInstalledBuild 用它判断「装没装」
+  writeFileSync(join(pkgDir, 'package.json'), '{"name":"@guraul/dsh-pipeline"}')
   writeFileSync(join(pkgDir, 'bin', 'cli.mjs'), '// stub\n')
   if (build) writeFileSync(join(pkgDir, 'build.json'), JSON.stringify({ gitSha: sha, builtAt }))
   return dir
@@ -105,18 +107,16 @@ test('selftest --config：没有配置文件 → 0，提示跳过', (t) => {
   assert.equal(result.err, '')
 })
 
-test('selftest：已识别但未实现的检查项 → 2，报「尚未实现」', (t) => {
+test('selftest：--peer 仍是已识别但未实现的检查项 → 2，报「尚未实现」', (t) => {
   const root = tmp()
   t.after(() => rmSync(root, { recursive: true, force: true }))
   writeConfig(root, VALID)
 
-  // --exit-codes 已实现；--lock / --peer 仍是「已识别未实现」（都退 2，不是「未知选项」）
-  for (const name of ['lock', 'peer']) {
-    const result = run(['selftest', `--${name}`, '--root', root])
-    assert.equal(result.code, 2, `--${name} 应退 2`)
-    assert.equal(result.err, `selftest: 尚未实现: --${name}\n`)
-    assert.equal(result.out, '')
-  }
+  // --exit-codes / --lock 已实现；只剩 --peer 是「已识别未实现」（退 2，不是「未知选项」）
+  const result = run(['selftest', '--peer', '--root', root])
+  assert.equal(result.code, 2)
+  assert.equal(result.err, 'selftest: 尚未实现: --peer\n')
+  assert.equal(result.out, '')
 })
 
 test('selftest --exit-codes：真跑四类场景，退出码口径符合 → 0', (t) => {

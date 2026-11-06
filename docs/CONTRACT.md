@@ -39,7 +39,7 @@ diff -r <仓A>/scripts/pipeline <仓B>/scripts/pipeline   # 必须为空
 |---|---|---|---|
 | **L1 实现层** | 本包：全部子命令与逻辑 | 本包仓 | 现行 |
 | **L2 入口层** | 各仓 `scripts/pipeline/*`：**生成物**，逐字节相同 | 由 `dsh-pipeline shim install` 生成 | **生成能力现行**（§3.2 / §8）；各仓接入未完成——`agent-mobile` / `homebase` 是手写转发壳，`self-dsh-plugins` 仍用自有实现 |
-| **L3 配置层** | 各仓 `.dsh/pipeline.json` + `.dsh/pipeline.lock.json` | 各仓 | pipeline.json 现行；lock 目标（P2） |
+| **L3 配置层** | 各仓 `.dsh/pipeline.json` + `.dsh/pipeline.lock.json` | 各仓（锁由 `lock write` 生成，不手改） | 两者均现行 |
 
 L2 之所以要变成生成物：入口一旦允许手写，就等于给“某仓加一点私有逻辑”留了后门，`diff -r` 立刻失真。
 
@@ -77,7 +77,8 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | `merge` | 闸门通过后 squash 合并 + 清理 worktree/分支 + 快进 main；`--review-record` 是 `--record` 的兼容别名（旧写法，后续将弃用；两者取值不同则报错） | 现行 |
 | `status` | 审核记录概况，含仓库概览（root/branch/head/worktrees；git 取不到时该段只提示，不影响退出码） | 现行 |
 | `doctor` | 检查仓库装的共享包是否同一构建；`--profile <dir>` 可选：体检 profile 包声明、插件软链有效性、`dsh --dump-config` 可见性（dsh 不可用时跳过）、审核记录目录可写，另含原 review-loop-check.sh 没有的 `cordis.patch.yml` 非空与目录/DSH_HOME 报告两项 | 现行 |
-| `selftest` | 一致性自检（见 §9）：`--shims` / `--config` / `--exit-codes` / `--fast` / `--repos` 可用；`--lock` / `--peer` 两项仍为目标（都已识别，传入报「尚未实现」退 2） | 现行（两项子检查仍为目标） |
+| `selftest` | 一致性自检（见 §9）：`--shims` / `--config` / `--lock` / `--exit-codes` / `--fast` / `--repos` 可用；`--peer` 仍为目标（已识别，传入报「尚未实现」退 2） | 现行（一项子检查仍为目标） |
+| `lock write\|check` | 写入 / 核对 `.dsh/pipeline.lock.json`（见 §7.2）；`write` 从装包 `build.json` 取标识，`check` 与 `selftest --lock` 同一实现 | 现行 |
 | `check-all` | 按配置逐包跑声明的检查并汇总 | 现行 |
 | `shim install\|check` | 生成 / 校验入口 shim | 现行 |
 | `hooks install\|check` | 安装 / 校验 pre-push 直推拦截钩子 | 现行 |
@@ -87,13 +88,13 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 ### 3.3 实现状态（v1.2 校正，2026-11-06）
 
-**已实现**：`task` / `pr` / `review prepare|prompt|publish`（含 `--post-review`）/ `record` / `gate` / `merge` / `status` / `doctor`（含 `--profile`）/ `selftest`（`--shims` / `--config` / `--exit-codes` / `--fast` / `--repos`）/ `shim install|check` / `hooks install|check` / `check-all` / `deploy init|check`（`artifact` 支持 `static-dir` 与 `node-standalone`）。
+**已实现**：`task` / `pr` / `review prepare|prompt|publish`（含 `--post-review`）/ `record` / `gate` / `merge` / `status` / `doctor`（含 `--profile`）/ `selftest`（`--shims` / `--config` / `--lock` / `--exit-codes` / `--fast` / `--repos`）/ `lock write|check` / `shim install|check` / `hooks install|check` / `check-all` / `deploy init|check`（`artifact` 支持 `static-dir` 与 `node-standalone`）。
 
 **配置字段（已进 schema）**：`worktreesDir` 由 `task` 消费——缺省读配置、`--worktrees-dir` 优先；`checks` 由 `check-all` 消费——`--packages` 优先，其次 `checks.packages`（按给定顺序），再否则自动发现并按 `checks.exclude` 过滤；`deploy` 由 `deploy init|check` 消费（字段见 §7.1，部署行为见 §10）；`review.tier` 由 `review prepare` / `review prompt` 消费（见 §7.3），`review` 的其余字段仍为目标（P2）。
 
-**目标**：`selftest --lock` / `--peer`（§9；两者均已识别，传入报「尚未实现」退 2）、`pipeline.lock.json`（§7.2）、`review` 的其余字段（§7.1）、`--legacy-exit-codes`（§4）、§6 的 root 统一，以及 §10 的「各仓接入 caller workflow 与回滚调用」。
+**目标**：`selftest --peer`（§9；已识别，传入报「尚未实现」退 2）、`review` 的其余字段（§7.1）、`--legacy-exit-codes`（§4）、§6 的 root 统一，以及 §10 的「各仓接入 caller workflow 与回滚调用」。
 
-硬规则：目标条目在实现合并前**不得**被入口 shim 调用，也不得在文档里写成可用；§9 的门禁项同理——`selftest --lock` / `--peer` 落地前，CI 不得引用它们。
+硬规则：目标条目在实现合并前**不得**被入口 shim 调用，也不得在文档里写成可用；§9 的门禁项同理——`selftest --peer` 落地前，CI 不得引用它。
 
 ---
 
@@ -216,13 +217,27 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 > 反面教材：2026-11-04 有人往本文件加了 `doctorRepos`，包判未知字段，`task`/`pr`/`merge` 三条同时失效，CI 不覆盖这类错误。
 
-### 7.2 `.dsh/pipeline.lock.json`（**目标，P2**）
+### 7.2 `.dsh/pipeline.lock.json`（**现行**）
 
 ```json
 { "expect": "<sha7> <builtAt>" }
 ```
 
-由发布脚本更新（包仓的工作），消费方只在 CI 与 `selftest` 里读，**不手改**。
+**谁写**：`dsh-pipeline lock write --root <仓>`——从该仓装包位置（`tools/node_modules/dsh-pipeline/build.json`）读出 `gitSha` / `builtAt` 写进锁；再次运行即「刷新锁」。**不手改**：手工编辑会绕过校验，且 `+dirty` 之类的打包态信息不该进锁。
+
+**谁读**：`selftest --lock` 与 `lock check` 是同一份实现（`lib/lock.mjs` 的 `checkLock`），比对的双方是「锁里的 `expect`」与「装包的 `sha7 builtAt`」。
+
+**状态语义**（与 `--config` 的「没有配置是合法状态」对齐）：
+
+| 情形 | 结果 |
+|---|---|
+| 锁文件不存在 | **跳过**（退 0）：这个仓还没启用锁 |
+| 装包目录不存在 | **跳过**（退 0）：还没 install |
+| 装了包但没有 `build.json`（旧版本包） | **失败**（退 1）：无法证明与锁一致 |
+| 锁与装包不一致 / 锁格式非法（多余字段、`expect` 不是 `<sha7> <构建时间>`） | **失败**（退 1） |
+| `--root` 不存在或不是目录 | **退 2**（用法/路径错误，不是锁的问题） |
+
+**为什么值得入库**：它把「这个仓装的是哪次打包」变成 review 里能看见的一行。消费仓把 `selftest --lock` 接进 CI 之后，只改依赖不刷新锁就会红（本仓 `ci.yml` 只跑测试，尚未接入）。
 
 ### 7.3 审核档位（`review.tier`，**现行**）
 
@@ -305,15 +320,15 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 ---
 
-## 9. 一致性门禁（`selftest`，**现行**；`--lock` / `--peer` 两项子检查仍为目标）
+## 9. 一致性门禁（`selftest`，**现行**；`--peer` 一项子检查仍为目标）
 
-**已实现**：`--shims` / `--config` / `--exit-codes` / `--fast` / `--repos`（pre-push 用 `--fast`）。**未实现**：`--lock` / `--peer`——两者都已在选项表里，传入即报「尚未实现」并退 2，不静默忽略、也不掉进「未知选项」。
+**已实现**：`--shims` / `--config` / `--lock` / `--exit-codes` / `--fast` / `--repos`（pre-push 用 `--fast`）。**未实现**：`--peer`——已在选项表里，传入即报「尚未实现」并退 2，不静默忽略、也不掉进「未知选项」。
 
 | 检查 | 内容 | 失败 |
 |---|---|---|
 | `--shims` | 6 个入口 == 按当前版本渲染后的模板 | 退出 1 |
 | `--config` | `.dsh/pipeline.json` 能被 schema 接受，无未声明字段 | 退出 1 |
-| `--lock` | 安装的构建 == `pipeline.lock.json` 的 `expect`（**未实现**：已识别、传入报「尚未实现」退 2） | 退出 1 |
+| `--lock` | 安装的构建 == `pipeline.lock.json` 的 `expect`（读锁 → 读装包 `build.json` → 比对；锁不存在 / 未装包跳过，旧版本包或不一致失败，见 §7.2） | 退出 1 |
 | `--peer` | 各插件声明的 peer 范围覆盖当前 DSH 版本（静态比较，不下载；**未实现**：已识别、传入报「尚未实现」退 2） | 退出 1 |
 | `--exit-codes` | 退出码口径自检：起子进程真跑七条用例——APPROVE 记录过闸门→0；REJECT 记录过闸门、按旧规则审的记录（`E_POLICY_VERSION`）→1；缺必填参数/未知参数/未知子命令→2；入口找不到共享包→3（并断言输出里出现「找不到共享包」）；cwd 钉在临时目录、只有环境错误那条注入 `DSH_PIPELINE_HOME`；任一不符即失败并点名用例 | 退出 1 |
 | `--repos` | 多个仓装的共享包是不是同一构建（读各自 `tools/node_modules/dsh-pipeline/build.json` 的 `gitSha`/`builtAt`，比对 `gitSha`；目录不存在 / 未装包的仓跳过并列出，可比对的仓不足 2 个则跳过退 0；`--json` 给 `{ok,baseline,repos,skipped}`） | 退出 1 |
@@ -398,3 +413,4 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | 2026-11-06 | §9 实现 `selftest --exit-codes`（起子进程真跑：缺必填参数 / 未知参数 / 未知子命令 → 2，入口找不到共享包 → 3）；§3.2 / §3.3 / §9 标题与「仍未实现」清单同步收敛为 `--lock` / `--peer` |
 | 2026-11-06 | 按第 1 轮审核建议加固 `--exit-codes`：补「成功 0 / 业务拒绝 1」两条用例（用 APPROVE / REJECT 记录过闸门）、`runner` 抛异常折成失败条目、子进程统一在受控 cwd 与环境里跑；`--lock` 补进选项表，与 `--peer` 一样报「尚未实现」（不再是「未知选项」） |
 | 2026-11-06 | 按第 2 轮审核建议再加固：补「按旧规则审的记录 → `E_POLICY_VERSION` → 1」用例；环境错误那条同时断言输出含「找不到共享包」；`DSH_PIPELINE_HOME` 只在环境错误那条注入；清理失败不再把检查判红；detail 的用例数由数组长度算，不写死 |
+| 2026-11-06 | §7.2 转现行并写清「谁写、谁读、四种状态」；新增 `lock write|check`（`lib/lock.mjs`），§9 的 `--lock` 落地，未实现项收敛为 `--peer` 一项 |

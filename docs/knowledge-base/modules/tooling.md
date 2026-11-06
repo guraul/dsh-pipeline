@@ -8,7 +8,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| `lib/selftest.mjs` | `--shims` / `--config` / `--exit-codes`（+ `--repos`）检查实现；`--lock` / `--peer` 只识别不实现 |
+| `lib/selftest.mjs` | `--shims` / `--config` / `--lock` / `--exit-codes`（+ `--repos`）检查实现；`--peer` 只识别不实现 |
 | `lib/shim.mjs` | 模板渲染（`{{VERSION}}` / `{{CMD}}`）、6 入口定义、`install` 写入判定、`check` 逐字节比对 |
 | `templates/shim.sh` | shim 的唯一模板 |
 | `lib/hooks.mjs` | pre-push 钩子正文（含标记行）、目标路径推算、`install` / `check` |
@@ -20,13 +20,14 @@
 ## `selftest`
 
 ```bash
-dsh-pipeline selftest [--shims | --config | --fast | --repos a,b,c] [--json] [--root <dir>]
+dsh-pipeline selftest [--shims] [--config] [--lock] [--exit-codes] [--fast | --repos a,b,c] [--json] [--root <dir>]
 ```
 
 | 检查项 | 内容 | 状态 |
 |---|---|---|
 | `--shims` | `<root>/scripts/pipeline` 下 6 个入口 == 按**当前包版本**渲染后的模板 | 已实现 |
 | `--config` | `<root>/.dsh/pipeline.json` 能被 schema 接受、无未声明字段；没有该文件视为通过 | 已实现 |
+| `--lock` | 装包的 `build.json` == `.dsh/pipeline.lock.json` 的 `expect`；锁不存在 / 未装包跳过，旧版本包或不一致失败（详见下节 `lock`） | 已实现 |
 | `--fast` | 等价 `--shims --config`（pre-push 用，契约 §9） | 已实现 |
 | `--repos a,b,c` | 多仓装的共享包是否同一构建（读各自 `tools/node_modules/dsh-pipeline/build.json` 的 `gitSha`） | 已实现 |
 | `--peer` | 插件 peer 范围覆盖当前 DSH 版本 | **未实现**：传入即报「尚未实现」退 2 |
@@ -37,6 +38,23 @@ dsh-pipeline selftest [--shims | --config | --fast | --repos a,b,c] [--json] [--
 - `--repos` 的纳入条件：目录存在 + 有 `bin/cli.mjs` + `build.json` 可读；其余**跳过并列出**（目录不存在 / 不是目录 / 未装包）；
 - 可比对的仓**不足 2 个** → `baseline = null`、`ok = true`（没有第二方就没有"不一致"可言）；
 - `--root` 缺省：显式 > 主工作区 > 当前目录（与 `status` / `shim` / `hooks` 同一口径 `resolveSelftestRoot`）。
+
+## `lock`
+
+```bash
+dsh-pipeline lock write --root <仓>   # 从装包 build.json 写 .dsh/pipeline.lock.json（= 刷新锁）
+dsh-pipeline lock check --root <仓>   # 与 selftest --lock 同一实现
+```
+
+| 项 | 规则 |
+|---|---|
+| 锁文件 | `<仓>/.dsh/pipeline.lock.json`，内容只有 `{"expect":"<sha7> <builtAt>"}`；多余字段、格式不合规都算失败 |
+| 写 | 只认**装包位置** `tools/node_modules/dsh-pipeline/build.json`；未装包 / 旧版本包（没有 build.json）→ 退 2，不写假 pin |
+| 读 | `checkLock` 同时被 `lock check` 与 `selftest --lock` 使用，输出口径一致 |
+| 跳过 | 锁不存在、或装包目录不存在 → 跳过（退 0） |
+| 失败 | 旧版本包（无法证明）→ 1；锁与装包不一致 → 1（detail 同时给两边的值）；锁格式非法 → 1 |
+| 路径错 | `--root` 不存在或不是目录 → 退 2（不是静默跳过） |
+| 不手改 | 手工编辑绕过校验；`+dirty` 之类打包态信息不进锁（`formatExpect` 只取 sha7 + builtAt）；锁里写 40 位全 sha 也算格式错 |
 
 ## `shim`
 
@@ -143,7 +161,7 @@ dsh-pipeline doctor [--repo a,b] [--json] [--expect <sha>] [--profile <dir>]
 3. **`--repos` 不足 2 个必须退 0**：CI 里没有兄弟仓，判失败会让 CI 必红。
 4. **`check-all` 缺依赖必须算跳过**：否则没装依赖的仓会永远红。
 5. **`profile-check` 不要打印文件内容**，也不要为了"更精确"去解析 profile JSON 全文。
-6. **新检查项先加契约**（§9 表格），再实现；`--lock` / `--peer` 目前都只能报「尚未实现」退 2。
+6. **新检查项先加契约**（§9 表格），再实现；`--peer` 目前只能报「尚未实现」退 2。
 
 ## 相关测试
 
