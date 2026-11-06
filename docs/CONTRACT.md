@@ -82,12 +82,13 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | `check-all` | 按配置逐包跑声明的检查并汇总 | **目标（P2）** |
 | `shim install\|check` | 生成 / 校验入口 shim | **目标（P2）** |
 | `hooks install` | 安装 pre-push 直推拦截钩子 | **目标（P2）** |
+| `deploy init\|check` | 生成 / 校验部署 caller workflow 骨架：生成区（`name` / `on` / `concurrency` + 单 job 的 `uses`+`with`+`secrets`）用注释标记包裹，`check` 逐字节比对，标记之后允许各仓追加自己的后置 job（见 §10） | **现行** |
 
 新增子命令属于**契约变更**，必须同时更新本文件与 §3.3。
 
 ### 3.3 实现状态（v1.1 冻结时）
 
-**已实现**：`task` / `pr` / `prepare`(占位) / `review prepare|prompt|publish` / `record` / `gate` / `merge` / `status` / `doctor`。
+**已实现**：`task` / `pr` / `prepare`(占位) / `review prepare|prompt|publish` / `record` / `gate` / `merge` / `status` / `doctor` / `deploy init|check`（本轮，见 §10）。
 
 **配置字段（P2 已实现）**：`worktreesDir` 已进 schema（见 §7.1），由 `task` 消费——缺省读配置、`--worktrees-dir` 优先；`checks` 已进 schema（见 §7.1），由 `check-all` 消费——`--packages` 优先，其次 `checks.packages`（按给定顺序），再否则自动发现并按 `checks.exclude` 过滤；`review.*` 仍为目标（P2）。
 
@@ -171,6 +172,24 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
     "postReview": true,
     "identity": { "ghConfigDir": "~/.config/gh-reviewer", "account": "guraul-review" },
     "rounds": 3
+  },
+  // deploy：**本轮已实现**（schema + `deploy init|check`，见 §10）；
+  // 本块其余字段仍为目标（P2）
+  "deploy": {
+    "artifact": "static-dir",          // 必填；static-dir | node-standalone | oci-image
+                                       // （oci-image 只收配置，生成骨架时报「尚未实现」退 2）
+    "service": "serve-9928",           // 必填非空字符串（systemd 服务名）
+    "remoteDir": "/root/project/<app>", // 必填非空字符串（绝对路径，服务器部署根目录）
+    "workDir": "app",                  // 可选字符串（仓内构建目录；缺省不写进 with）
+    "artifactDir": "dist",             // 可选字符串（产物目录，相对 workDir）
+    "sshHost": "10.0.0.8",             // 可选字符串（SSH 目标主机）
+    "health": {                        // 必填对象
+      "url": "http://127.0.0.1:9929/", // 必填字符串（健康检查 URL）
+      "check": "http",                 // 可选；http | ssh，缺省 http
+      "publicUrl": "https://…",        // 可选（对外链路检查）
+      "insecure": true                 // 可选布尔，缺省 true（允许自签证书）
+    },
+    "keepReleases": 5                  // 可选整数 1..50，缺省 5
   }
 }
 ```
@@ -220,6 +239,14 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 ---
 
 ## 10. 部署契约（**目标，P3**）
+
+**三条铁律（规范性）**——先于本节任何现状 / 目标描述，对所有仓的部署无条件生效：
+
+1. **不可变产物**：一次构建的产物落进 `releases/<id>` 后不再修改；禁止在服务器上就地改产物，同一 `id` 的内容永远等于当时构建出的内容。
+2. **原子切换**：切换必须一步完成——新 release 就绪后一次性把 `dist` 软链指过去再重启；切换失败时线上仍指向上一个可用 release，不存在「切了一半」的中间态。
+3. **回滚与前进同构**：回滚不走特殊路径——把目标换成旧 release id，其余步骤（切软链、重启、验活、按 `keepReleases` 清理）与前进完全相同；因此两者同样幂等、同样可重复执行，回滚也不重新构建、不重新上传。
+
+**本轮已落地第一步**：`deploy` 配置字段（§7.1）与 `deploy init | check`（§3.2）——caller workflow 骨架由包生成、生成区逐字节校验；各仓接入与回滚调用仍为目标（P3）。
 
 部署**不进本包**，也不留在各仓脚本里，统一走 GitHub Actions：
 
@@ -272,3 +299,4 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 |---|---|
 | 2026-11-05 | v1 冻结：命令面、退出码、输出、落盘、配置 schema、shim 契约、门禁、部署契约 |
 | 2026-11-05 | v1.1：按审核意见修正——区分「现行/目标」，配置只把已进 schema 的字段写成现行，退出码与落盘口径按实际行为澄清，补 `roles`、`-C` 翻译、`prepare` 占位、shim 渲染后比对、部署手工命令模板 |
+| 2026-11-06 | §10 加三条规范性铁律（不可变产物 / 原子切换 / 回滚与前进同构）；§7.1 列入 `deploy` 配置字段（本轮实现）；§3.2 / §3.3 补 `deploy init\|check` |

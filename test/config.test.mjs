@@ -154,3 +154,99 @@ test('mergeConfig 拒绝非对象入参', () => {
   assert.throws(() => mergeConfig(null, {}), code('E_CONFIG'))
   assert.throws(() => mergeConfig({}, []), code('E_CONFIG'))
 })
+
+const MINIMAL_DEPLOY = {
+  artifact: 'static-dir',
+  service: 'serve-1',
+  remoteDir: '/root/app',
+  health: { url: 'http://127.0.0.1:1/' },
+}
+
+test('deploy 默认 null，只接受对象或 null', () => {
+  assert.equal(DEFAULT_CONFIG.deploy, null)
+  for (const value of ['x', 42, ['a'], true]) {
+    assert.throws(() => validateConfig({ deploy: value }), code('E_CONFIG'), String(value))
+  }
+  assert.equal(validateConfig({ deploy: null }).deploy, null)
+  const { config } = loadConfig(tmpAfterWriting({ deploy: MINIMAL_DEPLOY }))
+  assert.deepEqual(config.deploy, MINIMAL_DEPLOY)
+})
+
+test('deploy 合法配置：全字段、可选项、枚举与边界值', () => {
+  const full = {
+    artifact: 'oci-image',
+    service: 'serve-9928',
+    remoteDir: '/root/project/app',
+    workDir: 'app',
+    artifactDir: 'dist',
+    sshHost: '10.0.0.8',
+    health: { url: 'http://127.0.0.1:9929/', check: 'ssh', publicUrl: 'https://app.example.com', insecure: false },
+    keepReleases: 50,
+  }
+  assert.deepEqual(validateConfig({ deploy: full }).deploy, full)
+  // 可选项缺省即未设置；枚举三值全收（oci-image 生成时才报尚未实现）
+  for (const artifact of ['static-dir', 'node-standalone', 'oci-image']) {
+    assert.equal(validateConfig({ deploy: { ...MINIMAL_DEPLOY, artifact } }).deploy.artifact, artifact)
+  }
+  assert.equal(validateConfig({ deploy: { ...MINIMAL_DEPLOY, keepReleases: 1 } }).deploy.keepReleases, 1)
+  assert.equal(
+    validateConfig({ deploy: { ...MINIMAL_DEPLOY, health: { url: 'u', check: 'http', insecure: true } } }).deploy.health
+      .check,
+    'http',
+  )
+})
+
+test('deploy 字段校验：未知键、artifact 枚举、service / remoteDir 必填 → E_CONFIG', () => {
+  assert.throws(() => validateConfig({ deploy: { ...MINIMAL_DEPLOY, bogus: 1 } }), code('E_CONFIG'))
+  assert.throws(() => validateConfig({ deploy: { artifact: 'tar' } }), code('E_CONFIG'))
+  const { artifact, ...noArtifact } = MINIMAL_DEPLOY
+  assert.throws(() => validateConfig({ deploy: noArtifact }), code('E_CONFIG'))
+  assert.throws(() => validateConfig({ deploy: { ...MINIMAL_DEPLOY, service: '' } }), code('E_CONFIG'))
+  const { service: _service, ...noService } = MINIMAL_DEPLOY
+  assert.throws(() => validateConfig({ deploy: noService }), code('E_CONFIG'))
+  assert.throws(() => validateConfig({ deploy: { ...MINIMAL_DEPLOY, remoteDir: 'relative/path' } }), code('E_CONFIG'))
+  const { remoteDir: _remoteDir, ...noRemoteDir } = MINIMAL_DEPLOY
+  assert.throws(() => validateConfig({ deploy: noRemoteDir }), code('E_CONFIG'))
+  // 可选字符串给了值就必须是字符串
+  for (const key of ['workDir', 'artifactDir', 'sshHost']) {
+    assert.throws(() => validateConfig({ deploy: { ...MINIMAL_DEPLOY, [key]: 42 } }), code('E_CONFIG'), key)
+    assert.equal(validateConfig({ deploy: { ...MINIMAL_DEPLOY, [key]: null } }).deploy[key], null, key)
+  }
+})
+
+test('deploy.health 校验：必填对象、未知键、check 枚举、类型 → E_CONFIG', () => {
+  for (const value of ['x', 42, null, ['a']]) {
+    assert.throws(() => validateConfig({ deploy: { ...MINIMAL_DEPLOY, health: value } }), code('E_CONFIG'), String(value))
+  }
+  assert.throws(
+    () => validateConfig({ deploy: { ...MINIMAL_DEPLOY, health: { check: 'ping' } } }),
+    code('E_CONFIG'),
+  )
+  assert.throws(
+    () => validateConfig({ deploy: { ...MINIMAL_DEPLOY, health: { url: 'u', bogus: 1 } } }),
+    code('E_CONFIG'),
+  )
+  assert.throws(
+    () => validateConfig({ deploy: { ...MINIMAL_DEPLOY, health: { url: 42 } } }),
+    code('E_CONFIG'),
+  )
+  assert.throws(
+    () => validateConfig({ deploy: { ...MINIMAL_DEPLOY, health: { url: 'u', publicUrl: 42 } } }),
+    code('E_CONFIG'),
+  )
+  assert.throws(
+    () => validateConfig({ deploy: { ...MINIMAL_DEPLOY, health: { url: 'u', insecure: 'yes' } } }),
+    code('E_CONFIG'),
+  )
+})
+
+test('deploy.keepReleases：必须是 1..50 的整数 → E_CONFIG', () => {
+  for (const value of [0, 51, 1.5, '5', true]) {
+    assert.throws(
+      () => validateConfig({ deploy: { ...MINIMAL_DEPLOY, keepReleases: value } }),
+      code('E_CONFIG'),
+      String(value),
+    )
+  }
+  assert.equal(validateConfig({ deploy: { ...MINIMAL_DEPLOY, keepReleases: 5 } }).deploy.keepReleases, 5)
+})

@@ -11,7 +11,8 @@
  * prompt 只读请求文件并复用 buildPrompt（不发外部命令、不写请求）；
  * selftest 只做参数编排与输出，检查逻辑在 lib/selftest.mjs（契约 §9，已实现 --shims / --config / --repos）；
  * shim 的渲染 / 写入 / 比对全在 lib/shim.mjs（契约 §8），这里只做动作与参数解析；
- * check-all 的逐包执行与汇总在 lib/check-all.mjs，这里只做包发现与参数解析。
+ * check-all 的逐包执行与汇总在 lib/check-all.mjs，这里只做包发现与参数解析；
+ * deploy 的骨架渲染、生成区提取与逐字节比对全在 lib/deploy.mjs（契约 §10），这里只做动作与参数解析。
  *
  * 输出约定：面向人的信息走 stdout，错误与警告走 stderr，全部中文。
  * 退出码：0 通过 / 1 闸门拒绝 / 2 参数或环境错误 / 3 环境错误（--post-review 的 gh 调用失败）。
@@ -24,6 +25,16 @@ import { fileURLToPath } from 'node:url'
 
 import { discoverPackages, runCheckAll as runCheckAllFlow } from '../lib/check-all.mjs'
 import { loadConfig } from '../lib/config.mjs'
+import {
+  DEPLOY_WORKFLOW_FILE,
+  DeployError,
+  REGION_BEGIN,
+  REGION_END,
+  extractRegion,
+  firstDifference,
+  renderRegion,
+  replaceRegion,
+} from '../lib/deploy.mjs'
 import { evaluateGate } from '../lib/gate.mjs'
 import { issueView, prChecks, prDiff, prMerge, prView } from '../lib/gh.mjs'
 import { checkHook, installHook } from '../lib/hooks.mjs'
@@ -75,7 +86,7 @@ import {
   writeSkipAudit,
 } from '../lib/record.mjs'
 import { runTask as runTaskFlow } from '../lib/task.mjs'
-import { describeBuild } from '../lib/build-info.mjs'
+import { describeBuild, readBuildInfo } from '../lib/build-info.mjs'
 import { describeRow, diagnose } from '../lib/doctor.mjs'
 import { checkProfile } from '../lib/profile-check.mjs'
 
@@ -84,6 +95,7 @@ const pkg = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8'))
 
 const IMPLEMENTED = new Set([
   'check-all',
+  'deploy',
   'doctor',
   'gate',
   'hooks',
@@ -110,6 +122,7 @@ const SUBCOMMANDS = [
   'shim',
   'check-all',
   'hooks',
+  'deploy',
 ]
 
 const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单一实现
@@ -133,6 +146,7 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
   shim       生成 / 校验入口 shim（契约 §8）
   hooks      安装 / 校验 pre-push 直推拦截钩子
   check-all  逐包跑 test / check / typecheck 并汇总（缺 node_modules 跳过不算失败）
+  deploy     生成 / 校验部署 caller workflow 骨架（契约 §10）
   task       从 issue 创建 task/<号>-<slug> 分支与 worktree
   prepare    准备交付（未实现）
   pr         推送当前 task 分支并创建 PR
@@ -191,6 +205,22 @@ check-all 用法:
   每项一行 <包目录> | <检查> | <结果>，末行 check-all: N 个包，X 通过 / Y 失败 / Z 跳过；
   缺 node_modules 的包三项都记「跳过（未安装依赖）」，不算失败；包目录不存在记失败。
   退出码: 0 全部通过（含全跳过）/ 1 有失败 / 2 用法错误 / 3 找不到 pnpm
+
+deploy 用法:
+  dsh-pipeline deploy init --root <dir> [--write]
+  按 <root>/.dsh/pipeline.json 的 deploy 段生成 <root>/.github/workflows/deploy-web.yml 骨架：
+  生成区 = name / on / concurrency + 单个 job 的 uses + with + secrets，首尾用注释标记包裹；
+  uses pin 当前安装包 build.json 的 gitSha（源码运行没有 build.json → 退 2）。
+  mode 由 artifact 推导（static-dir / node-standalone 都是 releases；oci-image 尚未实现 → 退 2）。
+  不带 --write 只把骨架打印到 stdout；--write 时：文件不存在则创建，
+  已有生成区则只替换生成区、保留标记之后本仓追加的后置 job，
+  已存在但缺标记（手写文件）则拒绝覆盖并退 1。
+  dsh-pipeline deploy check --root <dir>
+  取出生成区与按配置渲染的期望值逐字节比对：一致退 0；
+  不一致打印第一处差异（行号 + 期望 / 实际两行）退 1；
+  缺标记报「不是生成的骨架」退 1；文件不存在提示先跑 deploy init（退 1）。
+  --root <dir>       仓库根目录（必填）
+  退出码: 0 一致 / 1 不一致、缺标记或拒绝覆盖 / 2 用法、配置错误或 artifact 尚未实现
 
 task 用法:
   dsh-pipeline task <issue号> [--slug <slug>] [--root <dir>] [--worktrees-dir <dir>]
@@ -568,6 +598,9 @@ const HOOKS_CHECK_VALUE_FLAGS = new Set(['root'])
 const HOOKS_CHECK_BOOL_FLAGS = new Set()
 const CHECK_ALL_VALUE_FLAGS = new Set(['root', 'packages'])
 const CHECK_ALL_BOOL_FLAGS = new Set(['json'])
+const DEPLOY_VALUE_FLAGS = new Set(['root'])
+const DEPLOY_INIT_BOOL_FLAGS = new Set(['write'])
+const DEPLOY_CHECK_BOOL_FLAGS = new Set()
 
 function emit(io, lines) {
   for (const line of lines) {
@@ -1812,6 +1845,111 @@ function runCheckAllCommand(argv, deps, io) {
 }
 
 /**
+ * deploy：动作是位置参数（init / check），渲染与生成区比对全在 lib/deploy.mjs（契约 §10）。
+ * --root 必填：生成 / 校验必须显式指向目标仓，不猜当前目录。
+ * 退出码：0 成功 / 1 不一致、缺标记或拒绝覆盖 / 2 用法、配置错误或 artifact 尚未实现。
+ * deps.buildInfo 可注入（测试用），缺省读本包 build.json——源码运行没有它，拒绝生成假 pin。
+ */
+function runDeploy(argv, deps, io) {
+  const [action, ...rest] = argv
+  if (action === undefined || action.startsWith('--')) {
+    return argError(io, 'deploy', '用法: dsh-pipeline deploy <init|check> [--root <dir>] [--write]')
+  }
+  if (action !== 'init' && action !== 'check') {
+    return argError(io, 'deploy', `未知动作: ${action}（允许 init / check）`)
+  }
+
+  const boolFlags = action === 'init' ? DEPLOY_INIT_BOOL_FLAGS : DEPLOY_CHECK_BOOL_FLAGS
+  const parsed = parseArgs(rest, DEPLOY_VALUE_FLAGS, boolFlags)
+  if (parsed.error) return argError(io, 'deploy', parsed.error)
+  const options = parsed.options
+  if (!nonEmpty(options.root)) return argError(io, 'deploy', '缺少必填参数 --root')
+
+  let config
+  try {
+    config = loadConfig(options.root).config
+  } catch (error) {
+    return argError(io, 'deploy', `读取配置失败: ${messageOf(error)}`)
+  }
+  if (!isPlainObject(config.deploy)) {
+    return argError(io, 'deploy', '配置缺少 deploy 段（契约 §7.1），无法生成 / 校验部署骨架')
+  }
+
+  const buildInfo = isPlainObject(deps.buildInfo) ? deps.buildInfo : readBuildInfo()
+  if (!nonEmpty(buildInfo?.gitSha)) {
+    return argError(io, 'deploy', '当前包没有 build.json（源码运行），无法 pin uses 的 gitSha；请在已安装包内运行')
+  }
+
+  let region
+  try {
+    region = renderRegion(config.deploy, buildInfo.gitSha)
+  } catch (error) {
+    if (error instanceof DeployError) {
+      io.err(`deploy ${action}: ${error.message}`)
+      return error.code
+    }
+    throw error
+  }
+  const skeleton = `${REGION_BEGIN}\n${region}\n${REGION_END}`
+
+  if (action === 'init') {
+    if (options.write !== true) {
+      io.out(skeleton)
+      return 0
+    }
+    const file = join(options.root, DEPLOY_WORKFLOW_FILE)
+    let existing = null
+    try {
+      existing = readFileSync(file, 'utf8')
+    } catch (error) {
+      if (error?.code !== 'ENOENT') return argError(io, 'deploy', `读取 ${DEPLOY_WORKFLOW_FILE} 失败: ${messageOf(error)}`)
+    }
+    if (existing === null) {
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, `${skeleton}\n`, 'utf8')
+      io.out(`deploy init: 已写入 ${DEPLOY_WORKFLOW_FILE}`)
+      return 0
+    }
+    // 已有文件只替换生成区，标记之后的追加内容原样保留；缺标记 = 手写文件，拒绝覆盖
+    const merged = replaceRegion(existing, skeleton)
+    if (merged === null) {
+      io.err(`deploy init: ${DEPLOY_WORKFLOW_FILE} 已存在且不是生成的骨架（缺标记），拒绝覆盖`)
+      return 1
+    }
+    writeFileSync(file, merged, 'utf8')
+    io.out(`deploy init: 已更新 ${DEPLOY_WORKFLOW_FILE} 的生成区（标记之后的追加内容保留）`)
+    return 0
+  }
+
+  const file = join(options.root, DEPLOY_WORKFLOW_FILE)
+  let content
+  try {
+    content = readFileSync(file, 'utf8')
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      io.err(`deploy check: ${DEPLOY_WORKFLOW_FILE} 不存在，请先运行 deploy init`)
+      return 1
+    }
+    return argError(io, 'deploy', `读取 ${DEPLOY_WORKFLOW_FILE} 失败: ${messageOf(error)}`)
+  }
+
+  const extracted = extractRegion(content)
+  if (!extracted.ok) {
+    io.err(`deploy check: ${DEPLOY_WORKFLOW_FILE} 不是生成的骨架（缺生成区标记），无法比对`)
+    return 1
+  }
+  const diff = firstDifference(region, extracted.region)
+  if (diff !== null) {
+    io.err(`deploy check: 生成区与配置不一致（第一处差异在第 ${diff.line} 行）`)
+    io.err(`  期望: ${diff.expected}`)
+    io.err(`  实际: ${diff.actual}`)
+    return 1
+  }
+  io.out('deploy check: 生成区与配置一致')
+  return 0
+}
+
+/**
  * 仓库概览（status 的第一段）：根目录 / 当前分支 / HEAD 一行 / worktree 列表。
  * 探测用 `rev-parse --show-toplevel`：非 git 仓库或 git 不可用时返回 null，
  * 调用方只把这一段换成提示行——审核记录段与退出码都不受影响。
@@ -2054,6 +2192,7 @@ export function runCli(argv, deps = {}) {
     if (first === 'shim') return runShim(rest, deps, io)
     if (first === 'hooks') return runHooks(rest, deps, io)
     if (first === 'check-all') return runCheckAllCommand(rest, deps, io)
+    if (first === 'deploy') return runDeploy(rest, deps, io)
     return runStatus(rest, deps, io)
   } catch (error) {
     io.err(`dsh-pipeline ${first}: ${messageOf(error)}`)
