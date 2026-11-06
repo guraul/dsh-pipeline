@@ -327,7 +327,7 @@ jobs:
               echo "::error::link_paths 等号两侧不能为空（相对路径与目标都要给）: ${pair}"
               exit 1
             fi
-            # rel 会拼进远端 rm -rf 的路径里，任其含 .. / 绝对化 / 逗号就能越出 release
+            # rel 决定远端链接位置 releases/<id>/<rel>（随后 rm -f + ln -s）；含 .. / 绝对化 / 逗号都会越界或被拆碎
             case "${rel}" in
               /*) echo "::error::link_paths 的路径必须是相对路径: ${rel}"; exit 1 ;;
               *..*) case "/${rel}/" in */../*) echo "::error::link_paths 的路径不许含 '..'（会逃出 release 目录）: ${rel}"; exit 1 ;; esac ;;
