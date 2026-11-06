@@ -212,6 +212,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | `--lock` | 安装的构建 == `pipeline.lock.json` 的 `expect` | 退出 1 |
 | `--peer` | 各插件声明的 peer 范围覆盖当前 DSH 版本（静态比较，不下载） | 退出 1 |
 | `--exit-codes` | 退出码表自检（缺参→2、未知参数→2、找不到包→3） | 退出 1 |
+| `--repos` | 多个仓装的共享包是不是同一构建（读各自 `tools/node_modules/dsh-pipeline/build.json` 的 `gitSha`/`builtAt`，比对 `gitSha`；目录不存在 / 未装包的仓跳过并列出，可比对的仓不足 2 个则跳过退 0；`--json` 给 `{ok,baseline,repos,skipped}`） | 退出 1 |
 | `--fast` | 只跑 `--shims --config`（pre-push 用，<2 秒） | 退出 1 |
 
 `doctor` 的多仓比对属于本机检查，不进 CI（CI 没有兄弟仓）。
