@@ -21,7 +21,7 @@
 ```text
 ┌─ bin/cli.mjs ──────── 只做：参数解析、参数校验、调 lib、打印、映射退出码
 │    ↓
-├─ 纯函数层 ── lib/gate.mjs（闸门）· lib/policy.mjs（高风险）· lib/roles.mjs（角色）
+├─ 纯函数层 ── lib/gate.mjs（闸门）· lib/policy.mjs（高风险）· lib/roles.mjs（角色）· lib/semver.mjs（版本范围）
 │              无 IO、不读时钟；now / 入参由调用方传入，同一输入永远同一结论
 ├─ 编排层 ──── lib/merge.mjs（合并整条流程）· lib/task.mjs · lib/pr.mjs
 │              deps 可注入（gh / git / now / sleep / exists），单测用假依赖断言调用顺序
