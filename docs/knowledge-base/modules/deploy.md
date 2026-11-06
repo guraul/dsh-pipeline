@@ -69,7 +69,7 @@ dsh-pipeline deploy check --root <dir>
 | `artifact` | `mode` | `assemble` | 说明 |
 |---|---|---|---|
 | `static-dir` | `releases` | `static-dir` | 直接用构建产物目录 |
-| `node-standalone` | `releases` | `node-standalone` | 多一步「组装 release」：`.next/standalone/**` → `<artifact_dir>/`、`.next/static` 与 `public` 按 standalone 前缀补位、仓根 `scripts/` → `<artifact_dir>/scripts`；**不建 data 软链** |
+| `node-standalone` | `releases` | `node-standalone` | 多一步「组装 release」：`.next/standalone/**` → `<artifact_dir>/`、`.next/static` 与 `public` 按 standalone 前缀补位、仓根 `scripts/` → `<artifact_dir>/scripts`；组装阶段**不建 data 软链**；需要外置状态（数据库/上传）时在 `deploy.linkPaths` 声明，由 `Link persistent paths` 在切 dist 软链前创建（路径部分不许含 `..`，越界由执行前的 `realpath` 断言拦下） |
 
 ## 三条铁律（契约 §10）
 

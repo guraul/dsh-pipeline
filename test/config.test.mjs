@@ -310,3 +310,46 @@ test('deploy.paths：可选非空字符串数组，缺省与 null 视为未设�
     )
   }
 })
+
+test('deploy.linkPaths：可选非空字符串数组且每项含 =，缺省与 null 视为未设置，非法 → E_CONFIG', () => {
+  const linkPaths = ['data=../../data', 'uploads=../../../uploads']
+  assert.deepEqual(validateConfig({ deploy: { ...MINIMAL_DEPLOY, linkPaths } }).deploy.linkPaths, linkPaths)
+  assert.equal(validateConfig({ deploy: { ...MINIMAL_DEPLOY, linkPaths: null } }).deploy.linkPaths, null)
+
+  // 非数组、空数组（等于悄悄丢掉软链）、元素非字符串或空串，一律 E_CONFIG
+  for (const bad of ['data=x', 42, true, {}, [], ['data=x', ''], ['data=x', 42], [null]]) {
+    assert.throws(
+      () => validateConfig({ deploy: { ...MINIMAL_DEPLOY, linkPaths: bad } }),
+      code('E_CONFIG'),
+      `linkPaths ${String(bad)}`,
+    )
+  }
+
+  // rel 不许逃出 release：绝对路径 / 含 '..' 段 / 含逗号，一律拒
+  for (const bad of [
+    ['/abs=../../d'],            // 绝对路径
+    ['../x=../../d'],            // 以 .. 开头
+    ['x/../y=../../d'],          // 中间 .. 段
+    ['a,b=../../d'],             // 逗号是分隔符
+  ]) {
+    assert.throws(
+      () => validateConfig({ deploy: { ...MINIMAL_DEPLOY, linkPaths: bad } }),
+      code('E_CONFIG'),
+      `linkPaths ${JSON.stringify(bad)}`,
+    )
+  }
+
+  // 合法的两种形态：target 相对 / target 绝对
+  for (const ok of [['data=../../shared/data'], ['data=/srv/shared/data']]) {
+    assert.deepEqual(validateConfig({ deploy: { ...MINIMAL_DEPLOY, linkPaths: ok } }).deploy.linkPaths, ok)
+  }
+
+  // 元素必须是「相对路径=目标」：不含 '=' 一律拒（等号两侧为空由 workflow 的 Link 步骤拒绝）
+  for (const bad of [['data'], ['data/x', 'uploads'], ['a=../b', 'no-equals']]) {
+    assert.throws(
+      () => validateConfig({ deploy: { ...MINIMAL_DEPLOY, linkPaths: bad } }),
+      code('E_CONFIG'),
+      `linkPaths ${JSON.stringify(bad)}`,
+    )
+  }
+})

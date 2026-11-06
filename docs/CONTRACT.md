@@ -199,6 +199,8 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
     "qualityCmd": "pnpm run lint && pnpm test", // 可选字符串（渲染成 with.quality_cmd；缺省用共享 workflow 默认）
     "buildCmd": "pnpm run build",      // 可选字符串（渲染成 with.build_cmd；缺省用共享 workflow 默认）
     "paths": ["packages/web/**", "scripts/**"], // 可选字符串数组（渲染成 on.push.paths；缺省=任何 push 都部署）
+    "linkPaths": ["data=../../data"],  // 可选字符串数组，每项「相对路径=目标」含 '='（渲染成 with.link_paths，逗号+空格拼接；切 dist 软链前在 release 内逐对建持久化路径软链；缺省=不建、步骤跳过）
+                                       // 路径部分约束：必须相对、不许含 '..' 段、不许含 ','；目标可为相对（**按软链所在目录解析，不是 remote_dir**）或绝对
     "keepReleases": 5                  // 可选整数 1..50，缺省 5
   }
 }
@@ -210,6 +212,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 2. `ci` 已废弃，新配置不要写；
 3. 仓库差异只能落在 `repo` / `highRisk` / `roles` / `worktreesDir` / `checks.*` / `deploy.*` 之内，以及（P2 起）`review.*`；
 4. `deploy.paths` 是**非空**数组：写成 `[]` 会被拒（`E_CONFIG`）——空数组等于静默丢掉过滤，想要「任何 push 都部署」就整个省略该字段。
+5. `deploy.linkPaths` 的**路径部分**是相对路径、不许含 `..` 段、不许含 `,`：它会拼进远端 `rm -f`/`ln -s` 的路径，`../..` 能建到 release 之外（越界由执行前的 `realpath` 断言拦下，属双保险）。要外置状态就写 `data=../../shared/data` 这类平级路径。
 
 > 反面教材：2026-11-04 有人往本文件加了 `doctorRepos`，包判未知字段，`task`/`pr`/`merge` 三条同时失效，CI 不覆盖这类错误。
 
@@ -291,7 +294,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | 项 | 规定 |
 |---|---|
 | 实现 | 本仓 `.github/workflows/deploy.yml`（`on: workflow_call`）与 `rollback.yml` |
-| 构建 | 三个 input 均有默认值（老 caller 零改动）：`quality_cmd`（默认 `pnpm exec tsc --noEmit && pnpm test`）/ `build_cmd`（默认 `pnpm exec expo export --platform web --clear`）/ `assemble`（`static-dir` \| `node-standalone`，默认 `static-dir`）；`assemble: node-standalone` 时多一步「组装 release」——`.next/standalone/**` → `<artifact_dir>/`、`.next/static` 与 `public` 按 standalone 自带前缀补位、仓根 `scripts/` → `<artifact_dir>/scripts`，**不建 data 软链**（数据目录由运维在服务器上准备） |
+| 构建 | 三个 input 均有默认值（老 caller 零改动）：`quality_cmd`（默认 `pnpm exec tsc --noEmit && pnpm test`）/ `build_cmd`（默认 `pnpm exec expo export --platform web --clear`）/ `assemble`（`static-dir` \| `node-standalone`，默认 `static-dir`）；`assemble: node-standalone` 时多一步「组装 release」——`.next/standalone/**` → `<artifact_dir>/`、`.next/static` 与 `public` 按 standalone 自带前缀补位、仓根 `scripts/` → `<artifact_dir>/scripts`，**组装阶段不建 data 软链**——需要外置状态（数据库/上传）就在 `deploy.linkPaths` 声明，由 `Link persistent paths` 在切软链前创建；不声明则 release 内没有这些路径 |
 | 各仓 | 只保留一个 caller workflow（约 15 行），传 `service` / `remote_dir` / `work_dir` / `artifact_dir` / `health_url` / `keep_releases`，按需再传 `quality_cmd` / `build_cmd` / `assemble` |
 | 凭据 | 各仓 `secrets.DEPLOY_SSH_KEY`，caller 用 `secrets: inherit` |
 | 布局 | **统一**「`releases/<id>` + `dist` 软链 + 重启服务 + 验活 + 保留最近 N 个」 |
@@ -345,3 +348,5 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | 2026-11-06 | 审核第 1 轮 REJECT 修正：§2 的 L2 状态改为「生成能力现行、各仓接入未完成」；§3.3 目标清单补 `selftest --lock`；§9 写清 `--lock` 尚未进选项表（传了报「未知选项」），与 `--peer` / `--exit-codes` 的「尚未实现」区分 |
 | 2026-11-06 | 新增 §7.3 审核档位：`review.tier`（inline / tools，缺省 tools）进 schema；`review prepare` 在 inline 档自动并入 `git show --stat` 与 `gh pr checks` 证据。v1.2 里「`review.*` 仍未实现」一项自此收窄为「`review` 的其余字段仍未实现」 |
 | 2026-11-06 | §7.1 `deploy` 段补 `qualityCmd` / `buildCmd` / `paths` 三个可选字段（issue #71），硬规则补「`paths` 空数组被拒」 |
+| 2026-11-06 | §7.1 `deploy` 段补 `linkPaths` 可选字段（issue #80）：渲染成 `with.link_paths`，切 dist 软链前在 release 内逐对建持久化路径软链；`deploy.yml` 新增同名 input 与 `Link persistent paths` 步骤 |
+| 2026-11-06 | 审核第 1 轮 REJECT 修正（issue #81）：`linkPaths` 的路径部分拒绝绝对路径 / `..` 段 / `,`（它会拼进远端 `rm -f`/`ln -s` 的路径）；远端执行前用 `realpath` 断言仍在 `releases/<id>/` 内，且只对父目录做规范化、末段用 `rm -f` 解链重建（避免解析已存在的软链后误删目标） |
