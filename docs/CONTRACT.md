@@ -89,7 +89,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 **已实现**：`task` / `pr` / `prepare`(占位) / `review prepare|prompt|publish` / `record` / `gate` / `merge` / `status` / `doctor`。
 
-**配置字段（P2 已实现）**：`worktreesDir` 已进 schema（见 §7.1），由 `task` 消费——缺省读配置、`--worktrees-dir` 优先；`review.*` / `checks.*` 仍为目标（P2）。
+**配置字段（P2 已实现）**：`worktreesDir` 已进 schema（见 §7.1），由 `task` 消费——缺省读配置、`--worktrees-dir` 优先；`checks` 已进 schema（见 §7.1），由 `check-all` 消费——`--packages` 优先，其次 `checks.packages`（按给定顺序），再否则自动发现并按 `checks.exclude` 过滤；`review.*` 仍为目标（P2）。
 
 **目标**：`review publish --post-review`、`selftest`、`check-all`、`shim install|check`、`hooks install`、`--legacy-exit-codes`（P2），以及 §10 的部署复用 workflow（P3）。
 
@@ -158,7 +158,8 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
   "ci": [],                       // 可选；**已废弃**，CI 判定改走 gh pr checks
   "highRisk": ["…"],              // 可选；缺省 []
   "roles": {},                    // 可选；review prompt 的角色定义
-  "worktreesDir": "~/workspace/<name>-worktrees"  // 可选；缺省 <主工作区>/.worktrees（P2 已实现）
+  "worktreesDir": "~/workspace/<name>-worktrees",  // 可选；缺省 <主工作区>/.worktrees（P2 已实现）
+  "checks": { "packages": ["pkg-a"], "exclude": ["tools"] }  // 可选；缺省 null（**已实现**）：check-all 的显式包清单与自动发现排除项
 }
 ```
 
@@ -170,8 +171,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
     "postReview": true,
     "identity": { "ghConfigDir": "~/.config/gh-reviewer", "account": "guraul-review" },
     "rounds": 3
-  },
-  "checks": { "packages": ["pkg-a"], "skipWithoutDeps": true }
+  }
 }
 ```
 

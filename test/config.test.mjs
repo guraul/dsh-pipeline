@@ -96,6 +96,30 @@ test('worktreesDir 只接受字符串或 null，默认 null', () => {
   assert.equal(validateConfig({ worktreesDir: null }).worktreesDir, null)
 })
 
+test('checks 默认 null，只接受对象或 null', () => {
+  assert.equal(DEFAULT_CONFIG.checks, null)
+  for (const value of ['x', 42, ['a'], true]) {
+    assert.throws(() => validateConfig({ checks: value }), code('E_CONFIG'), String(value))
+  }
+  assert.equal(validateConfig({ checks: null }).checks, null)
+  const { config } = loadConfig(tmpAfterWriting({ checks: { packages: ['pkg-a'] } }))
+  assert.deepEqual(config.checks, { packages: ['pkg-a'] })
+})
+
+test('checks 里只允许 packages / exclude，且各自必须是非空字符串数组', () => {
+  // 形状非法（比如 packages 写成字符串）必须报 E_CONFIG，不能静默当成没配
+  assert.throws(() => validateConfig({ checks: { packages: 'x' } }), code('E_CONFIG'))
+  assert.throws(() => validateConfig({ checks: { exclude: 'tools' } }), code('E_CONFIG'))
+  assert.throws(() => validateConfig({ checks: { packages: ['ok', 42] } }), code('E_CONFIG'))
+  assert.throws(() => validateConfig({ checks: { exclude: [''] } }), code('E_CONFIG'))
+  assert.throws(() => validateConfig({ checks: { skipWithoutDeps: true } }), code('E_CONFIG'))
+  assert.throws(() => validateConfig({ checks: { packages: ['a'], bogus: [] } }), code('E_CONFIG'))
+  assert.deepEqual(validateConfig({ checks: { packages: ['a'], exclude: ['b'] } }).checks, {
+    packages: ['a'],
+    exclude: ['b'],
+  })
+})
+
 test('配置文件不是合法 JSON 时报 E_CONFIG', () => {
   const root = tmp()
   writeConfig(root, '{ not json')

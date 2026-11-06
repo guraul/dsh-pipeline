@@ -184,3 +184,67 @@ test('check-all：失败项要带出命令输出（否则只看到退出码，�
   assert.match(r.stdout, /失败（退出码 1）/)
   assert.match(r.stdout, /stub 输出: 期望 1 实际 2/, '失败项必须把命令输出打出来')
 })
+
+/** 写 .dsh/pipeline.json（check-all 缺省读它取包清单）。 */
+function writeChecksConfig(fx, checks) {
+  const dir = join(fx.root, '.dsh')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'pipeline.json'), JSON.stringify({ checks }))
+}
+
+test('check-all：配置 checks.packages 生效且按给定顺序，不跑自动发现', (t) => {
+  const fx = fixture(t)
+  writeChecksConfig(fx, { packages: ['pkg-nodeps', 'pkg-ok'] })
+  const r = run(fx, [])
+  assert.equal(r.status, 0)
+  // 顺序跟配置走（不是字母序），自动发现的 pkg-bad / .hidden / node_modules 都不出现
+  assert.deepEqual(r.stdout.trim().split('\n'), [
+    'pkg-nodeps | test | 跳过（未安装依赖）',
+    'pkg-nodeps | check | 跳过（未安装依赖）',
+    'pkg-nodeps | typecheck | 跳过（未安装依赖）',
+    'pkg-ok | test | 通过',
+    'pkg-ok | check | 通过',
+    'check-all: 2 个包，1 通过 / 0 失败 / 1 跳过',
+  ])
+})
+
+test('check-all：--packages flag 覆盖配置 checks.packages', (t) => {
+  const fx = fixture(t)
+  writeChecksConfig(fx, { packages: ['pkg-nodeps'] })
+  const r = run(fx, ['--packages', 'pkg-ok'])
+  assert.equal(r.status, 0)
+  assert.deepEqual(r.stdout.trim().split('\n'), [
+    'pkg-ok | test | 通过',
+    'pkg-ok | check | 通过',
+    'check-all: 1 个包，1 通过 / 0 失败 / 0 跳过',
+  ])
+})
+
+test('check-all：checks.exclude 过滤自动发现的目录（tools 这类「无可跑检查」不再出现）', (t) => {
+  const fx = fixture(t)
+  // tools 只有 package.json、没有 scripts，但装了 node_modules：自动发现会记「无可跑检查」失败
+  const tools = join(fx.root, 'tools')
+  mkdirSync(join(tools, 'node_modules'), { recursive: true })
+  writeFileSync(join(tools, 'package.json'), JSON.stringify({ name: 'tools' }))
+
+  const before = run(fx, [])
+  assert.equal(before.status, 1)
+  assert.ok(before.stdout.includes('tools | - | 失败（无可跑检查）\n'), before.stdout)
+  assert.ok(before.stdout.endsWith('check-all: 4 个包，1 通过 / 2 失败 / 1 跳过\n'), before.stdout)
+
+  writeChecksConfig(fx, { exclude: ['tools'] })
+  const after = run(fx, [])
+  assert.equal(after.status, 1)
+  assert.ok(!after.stdout.includes('tools'), after.stdout)
+  assert.ok(after.stdout.endsWith('check-all: 3 个包，1 通过 / 1 失败 / 1 跳过\n'), after.stdout)
+})
+
+test('check-all：配置 checks 形状非法 → 读取配置失败退 2（E_CONFIG）', (t) => {
+  const fx = fixture(t)
+  writeChecksConfig(fx, { packages: 'x' })
+  const r = run(fx, [])
+  assert.equal(r.status, 2)
+  assert.equal(r.stdout, '')
+  assert.match(r.stderr, /check-all: 读取配置失败/)
+  assert.match(r.stderr, /checks\.packages/)
+})

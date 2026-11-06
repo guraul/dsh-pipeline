@@ -169,8 +169,10 @@ hooks 用法:
 check-all 用法:
   dsh-pipeline check-all [--root <dir>] [--packages a,b,c] [--json]
   --root <dir>       仓库根目录（缺省当前工作目录）
-  --packages a,b,c   要检查的包目录（逗号分隔，相对 <root>）；缺省自动发现：<root> 下
-                     每个含 package.json 的子目录（跳过 node_modules 与 . 开头的目录）
+  --packages a,b,c   要检查的包目录（逗号分隔，相对 <root>）；缺省读配置 checks.packages
+                     （非空时按给定顺序，不自动发现）；再缺省自动发现：<root> 下
+                     每个含 package.json 的子目录（跳过 node_modules 与 . 开头的目录），
+                     并按配置 checks.exclude 过滤
   --json             输出 {"ok":…,"packages":[{"dir":"…","checks":[{"name":"…","ok":…,"skipped":…,"code":…}]}]}
                      （退出码与人读模式一致）
   每项一行 <包目录> | <检查> | <结果>，末行 check-all: N 个包，X 通过 / Y 失败 / Z 跳过；
@@ -1603,7 +1605,8 @@ function runHooks(argv, deps, io) {
 
 /**
  * check-all：参数编排与输出，逐包执行逻辑在 lib/check-all.mjs（串行，失败不中断）。
- * 包来源：--packages 显式指定；缺省自动发现 <root> 下含 package.json 的子目录。
+ * 包来源：--packages 显式指定 > 配置 checks.packages（按给定顺序）>
+ * 自动发现 <root> 下含 package.json 的子目录并按 checks.exclude 过滤。
  * 退出码：0 全部通过（含全跳过）/ 1 有失败 / 2 用法错误 / 3 找不到 pnpm。
  */
 function runCheckAllCommand(argv, deps, io) {
@@ -1637,10 +1640,25 @@ function runCheckAllCommand(argv, deps, io) {
   if (!rootStat.isDirectory()) return argError(io, 'check-all', `不是目录: ${root}`)
 
   if (names === undefined) {
+    // flag 没给才读配置：--packages 覆盖 checks.packages，读不了 / 不合规当场退 2。
+    let config
     try {
-      names = discoverPackages(root)
+      config = loadConfig(root).config
     } catch (error) {
-      return argError(io, 'check-all', `读取目录失败: ${messageOf(error)}`)
+      return argError(io, 'check-all', `读取配置失败: ${messageOf(error)}`)
+    }
+    const checks = config.checks
+    const configured = isPlainObject(checks) && Array.isArray(checks.packages) ? checks.packages : []
+    if (configured.length > 0) {
+      names = [...new Set(configured)]
+    } else {
+      try {
+        names = discoverPackages(root)
+      } catch (error) {
+        return argError(io, 'check-all', `读取目录失败: ${messageOf(error)}`)
+      }
+      const exclude = isPlainObject(checks) && Array.isArray(checks.exclude) ? new Set(checks.exclude) : null
+      if (exclude !== null) names = names.filter((name) => !exclude.has(name))
     }
   }
 
