@@ -36,14 +36,14 @@
 
 | # | 问题 | 状态 | 说明 |
 |---|---|---|---|
-| 1 | 契约把已实现能力标成「目标」 | **已修（本 PR，契约 v1.2）** | §3.2 / §3.3 / §9 / §10 改为现行；仍未实现项已收敛为 `selftest --lock` / `--peer`（`--exit-codes` 已实现）、`pipeline.lock.json`、`review.*`、`--legacy-exit-codes`、§6 的 root 统一与 §10 的各仓接入 / 回滚调用 |
+| 1 | 契约把已实现能力标成「目标」 | **已修（本 PR，契约 v1.2）** | §3.2 / §3.3 / §9 / §10 改为现行；仍未实现项已收敛为 `selftest --peer`、`review.*`、`--legacy-exit-codes`、§6 的 root 统一与 §10 的各仓接入 / 回滚调用（`--exit-codes`、`--lock`、`pipeline.lock.json` 均已实现） |
 | 2 | README 的「已实现」清单不全 | **已修（本 PR）** | 补到 13 个子命令（含 `deploy init` / `check`）；顶层 `prepare` 占位已删除 |
 | 3 | README 的「本仓高风险只列了 `.github/**`」易被误读 | **已修（本 PR）** | 改为「配置只**追加**了 `.github/**`，而 `lib/policy.mjs` 的默认清单恒生效」——改 `AGENTS.md`、`.gitignore` 等同样属高风险 |
 | 4 | `deploy.yml` 只适配 Expo 类仓 | **已修（#67）** | 新增 `quality_cmd` / `build_cmd` / `assemble` 三个 input，均有默认值（老 caller 零改动）；缺省构建命令仍是 Expo Web 导出，非 Expo 仓要显式传 |
 | 5 | `.DS_Store` 未进 `.gitignore` | **已修（本 PR）** | 已加一行；此前 `git status` 常年脏一条 |
 | 6 | 退出码口径不统一（契约 §4 已记录为现状差异） | 现存 | `record` / `review publish` 解析出 `REJECT` 退 0；`review prepare` 的 gh 失败用 2（不是 3）。统一属契约变更，要同批改消费方 |
 | 7 | L2 入口层未统一 | 现存 | `agent-mobile`、`homebase` 是手写转发壳，`self-dsh-plugins` 仍用自有实现（多 `--facts` / `--include` / 提示词生成）；`diff -r scripts/pipeline` 尚未为空 |
-| 8 | `pipeline.lock.json` 未实现 | 现存 | 「装的包版本 == 期望版本」无法校验；`selftest --lock` 也未实现 |
+| 8 | `pipeline.lock.json` 未实现 | **已修（本 PR）** | 新增 `lock write|check` 与 `selftest --lock`：锁由 `lock write` 生成、逐字节校验装包与锁；消费仓接入 CI 仍待做（本仓 `ci.yml` 只跑测试） |
 | 9 | CI 覆盖不到配置 / shim / 跨仓漂移 | 现存 | `ci.yml` 只跑 `node --test`；2026-11-04 的配置多字段事故 CI 测不出来，靠本地 `selftest --config` 与 `doctor` |
 | 10 | `.dsh/pipeline.json` 的 `ci` 字段是死字段 | 现存 | README 明确「没有消费方」；CI 判定走 `gh pr checks` |
 | 11 | §10 各仓接入未完成 | 现存 | caller 骨架能生成校验，但只有 `agent-mobile` 真正接入；`rollback.yml` 的「消费仓以 `workflow_dispatch` 调起」也还没有样板 |

@@ -180,7 +180,7 @@ test('lock write：把装包标识写进锁，再次运行即刷新', (t) => {
   // 换一个构建（重新打包）后重写 → 锁跟着变
   writeFileSync(
     join(root, 'tools', 'node_modules', 'dsh-pipeline', 'build.json'),
-    JSON.stringify({ gitSha: 'bbbbbbb0000000000000000000000000000000000', builtAt: '2026-11-07T01:00:00Z' }),
+    JSON.stringify({ gitSha: 'b'.repeat(40), builtAt: '2026-11-07T01:00:00Z' }),
   )
   const second = run(['lock', 'write', '--root', root])
   assert.equal(second.code, 0, second.err)

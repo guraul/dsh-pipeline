@@ -20,13 +20,14 @@
 ## `selftest`
 
 ```bash
-dsh-pipeline selftest [--shims | --config | --fast | --repos a,b,c] [--json] [--root <dir>]
+dsh-pipeline selftest [--shims] [--config] [--lock] [--exit-codes] [--fast | --repos a,b,c] [--json] [--root <dir>]
 ```
 
 | 检查项 | 内容 | 状态 |
 |---|---|---|
 | `--shims` | `<root>/scripts/pipeline` 下 6 个入口 == 按**当前包版本**渲染后的模板 | 已实现 |
 | `--config` | `<root>/.dsh/pipeline.json` 能被 schema 接受、无未声明字段；没有该文件视为通过 | 已实现 |
+| `--lock` | 装包的 `build.json` == `.dsh/pipeline.lock.json` 的 `expect`；锁不存在 / 未装包跳过，旧版本包或不一致失败（详见下节 `lock`） | 已实现 |
 | `--fast` | 等价 `--shims --config`（pre-push 用，契约 §9） | 已实现 |
 | `--repos a,b,c` | 多仓装的共享包是否同一构建（读各自 `tools/node_modules/dsh-pipeline/build.json` 的 `gitSha`） | 已实现 |
 | `--peer` | 插件 peer 范围覆盖当前 DSH 版本 | **未实现**：传入即报「尚未实现」退 2 |

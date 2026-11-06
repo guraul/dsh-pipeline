@@ -44,6 +44,8 @@ function makeRepo(base, name, { sha = SHA, builtAt = BUILT_AT, pkg = true, build
   }
   const pkgDir = join(dir, 'tools', 'node_modules', 'dsh-pipeline')
   mkdirSync(join(pkgDir, 'bin'), { recursive: true })
+  // 真实安装一定有 package.json：lib/lock.mjs 的 readInstalledBuild 用它判断「装没装」
+  writeFileSync(join(pkgDir, 'package.json'), '{"name":"@guraul/dsh-pipeline"}')
   writeFileSync(join(pkgDir, 'bin', 'cli.mjs'), '// stub\n')
   if (build) writeFileSync(join(pkgDir, 'build.json'), JSON.stringify({ gitSha: sha, builtAt }))
   return dir

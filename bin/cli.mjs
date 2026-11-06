@@ -601,7 +601,7 @@ const REVIEW_PUBLISH_BOOL_FLAGS = new Set(['post-review', 'dry-run'])
 const REVIEW_PROMPT_VALUE_FLAGS = new Set(['request', 'out', 'role'])
 const REVIEW_PROMPT_BOOL_FLAGS = new Set()
 const SELFTEST_VALUE_FLAGS = new Set(['root', 'repos'])
-// --lock / --peer 只是「被识别」：传了要报尚未实现退 2，不能落进未知选项
+// --peer 只是「被识别」：传了要报尚未实现退 2，不能落进未知选项；--lock 已实现
 const SELFTEST_BOOL_FLAGS = new Set([
   'config',
   'fast',
@@ -1604,13 +1604,6 @@ function resolveSelftestRoot(value, deps) {
 }
 
 /**
- * selftest：契约 §9 的一致性门禁。
- * --shims / --config 已实现（--fast 等价于 --shims --config）；--repos 是独立的多仓比对模式，
- * 与前三者互斥（--json 形态不同，合起来没有单一会话能同时表达两种结构）；
- * 其余检查项只识别不执行，明确报错退 2。检查逻辑在 lib/selftest.mjs，--shims 的比对复用 lib/shim.mjs。
- * 退出码：0 通过（含「无配置文件跳过」「--repos 可比对的仓不足 2 个」）/ 1 检查不通过 / 2 用法错误或检查项未实现。
- */
-/**
  * lock：锁文件的写入与核对（契约 §7.2）。
  *
  * write 从「装包位置的 build.json」取标识写进锁——不读源码目录的 build.json，
@@ -1630,6 +1623,15 @@ function runLock(argv, deps, io) {
   if (parsed.error) return argError(io, 'lock', parsed.error)
   if (!nonEmpty(parsed.options.root)) return argError(io, 'lock', '缺少必填参数 --root')
   const root = parsed.options.root
+
+  // 路径打错不能静默退 0（「无锁」+「未装包」两个跳过会叠成假绿），与 deploy check 一样报 2
+  let rootStat
+  try {
+    rootStat = statSync(root)
+  } catch {
+    return argError(io, 'lock', `目录不存在: ${root}`)
+  }
+  if (!rootStat.isDirectory()) return argError(io, 'lock', `不是目录: ${root}`)
 
   if (action === 'check') {
     const result = checkLock(root)
@@ -1658,6 +1660,13 @@ function runLock(argv, deps, io) {
   }
 }
 
+/**
+ * selftest：契约 §9 的一致性门禁。
+ * --shims / --config 已实现（--fast 等价于 --shims --config）；--repos 是独立的多仓比对模式，
+ * 与前三者互斥（--json 形态不同，合起来没有单一会话能同时表达两种结构）；
+ * 其余检查项只识别不执行，明确报错退 2。检查逻辑在 lib/selftest.mjs，--shims 的比对复用 lib/shim.mjs。
+ * 退出码：0 通过（含「无配置文件跳过」「--repos 可比对的仓不足 2 个」）/ 1 检查不通过 / 2 用法错误或检查项未实现。
+ */
 function runSelftest(argv, deps, io) {
   const parsed = parseArgs(argv, SELFTEST_VALUE_FLAGS, SELFTEST_BOOL_FLAGS)
   if (parsed.error) return argError(io, 'selftest', parsed.error)

@@ -32,7 +32,7 @@
 | 安装 / 校验 pre-push 直推拦截钩子 | `hooks install` / `check` | `lib/hooks.mjs` |
 | 逐包跑 test/check/typecheck | `check-all` | `lib/check-all.mjs` |
 | 生成 / 校验部署 caller workflow 骨架 | `deploy init` / `deploy check` | `lib/deploy.mjs` |
-| 写入 / 核对锁文件（装的是哪个构建） | `lock write` / `lock check`（`selftest --lock` 同一实现） | `lib/lock.mjs` + `lib/build-info.mjs` |
+| 写入 / 核对锁文件（装的是哪个构建） | `lock write` / `lock check`（`selftest --lock` 同一实现） | `lib/lock.mjs`（自己读装包的 `build.json`） |
 | 构建标识（打包时写入） | `bash scripts/pack.sh` | `scripts/pack.sh` + `lib/build-info.mjs` |
 
 ## 技术栈表
