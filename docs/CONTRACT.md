@@ -77,7 +77,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | `gate` | 审核闸门检查（记录存在性、SHA 绑定、高风险路径） | 现行 |
 | `merge` | 闸门通过后 squash 合并 + 清理 worktree/分支 + 快进 main | 现行 |
 | `status` | 审核记录概况 | 现行 |
-| `doctor` | 检查仓库装的共享包是否同一构建 | 现行 |
+| `doctor` | 检查仓库装的共享包是否同一构建；`--profile <dir>` 可选，额外体检 profile 的包声明与 cordis.patch.yml | 现行 |
 | `selftest` | 一致性自检（见 §9） | **目标（P2）** |
 | `check-all` | 按配置逐包跑声明的检查并汇总 | **目标（P2）** |
 | `shim install\|check` | 生成 / 校验入口 shim | **目标（P2）** |
