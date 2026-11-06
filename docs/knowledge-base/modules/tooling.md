@@ -30,7 +30,7 @@ dsh-pipeline selftest [--shims | --config | --fast | --repos a,b,c] [--json] [--
 | `--fast` | 等价 `--shims --config`（pre-push 用，契约 §9） | 已实现 |
 | `--repos a,b,c` | 多仓装的共享包是否同一构建（读各自 `tools/node_modules/dsh-pipeline/build.json` 的 `gitSha`） | 已实现 |
 | `--peer` | 插件 peer 范围覆盖当前 DSH 版本 | **未实现**：传入即报「尚未实现」退 2 |
-| `--exit-codes` | 起子进程真跑六条用例，断言契约 §4：APPROVE 记录过闸门→0、REJECT 记录过闸门→1、缺必填参数/未知参数/未知子命令→2、入口找不到共享包→3；子进程统一在受控 cwd 与环境里跑 | 已实现（唯一会 spawn 的检查项） |
+| `--exit-codes` | 起子进程真跑七条用例，断言契约 §4：APPROVE 记录过闸门→0；REJECT 记录、旧规则记录（`E_POLICY_VERSION`）→1；缺参/未知参数/未知子命令→2；入口找不到共享包→3（并断言输出关键字）；cwd 钉临时目录 | 已实现（唯一会 spawn 的检查项） |
 
 - `--repos` 与 `--shims` / `--config` / `--fast` **互斥**（两者的 `--json` 形态不同）；
 - `--repos` 的路径：绝对路径直接用、相对路径按 `--root`（缺省当前目录）、`~/` 展开；

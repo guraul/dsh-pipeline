@@ -126,53 +126,71 @@ test('selftest --exit-codes：真跑四类场景，退出码口径符合 → 0',
 
   const result = run(['selftest', '--exit-codes', '--root', root])
   assert.equal(result.code, 0, result.err)
-  assert.match(result.out, /退出码 6 条用例符合（成功 0 \/ 业务拒绝 1 \/ 用法错误 2 \/ 环境错误 3）/)
+  assert.match(result.out, /退出码 7 条用例符合（成功 0 \/ 业务拒绝 1 \/ 用法错误 2 \/ 环境错误 3）/)
   assert.equal(result.err, '')
 })
 
-test('checkExitCodes：注入 runner，六条用例各发一条命令（node × 5 + bash × 1）', () => {
+test('checkExitCodes：注入 runner，七条用例各发一条命令（node × 6 + bash × 1）', () => {
   const calls = []
   const runner = (command, args, options) => {
     calls.push({ command, args, options })
-    if (command === 'bash') return { status: 3 }
-    // 闸门夹具：approve.json 应退 0、reject.json 应退 1；其余是用法错误 2
+    // 入口那条用 bash，输出里要出现「找不到共享包」才算通过（退出码对、原因也要对）
+    if (command === 'bash') {
+      return { status: 3, stdout: '', stderr: 'pipeline.sh: 找不到共享包 dsh-pipeline（试过 …）\n' }
+    }
+    // 闸门夹具：approve.json → 0；reject / stale（版本过期）→ 1；其余是用法错误 2
     const record = args.find((arg, i) => args[i - 1] === '--record')
-    if (record !== undefined) return { status: record.endsWith('approve.json') ? 0 : 1 }
-    return { status: 2 }
+    if (record !== undefined) return { status: record.endsWith('approve.json') ? 0 : 1, stdout: '', stderr: '' }
+    return { status: 2, stdout: '', stderr: '' }
   }
 
   const check = checkExitCodes({ runner })
   assert.equal(check.ok, true, check.detail)
   assert.equal(check.name, 'exit-codes')
-  assert.equal(calls.length, 6)
+  assert.equal(calls.length, 7)
   assert.equal(calls.filter((c) => c.command === 'bash').length, 1)
   const nodeCalls = calls.filter((c) => c.command !== 'bash').map((c) => c.args.slice(1))
   assert.deepEqual(
     nodeCalls.map((args) => args[0]),
-    ['gate', 'gate', 'no-such-subcommand', 'gate', 'gate'],
+    ['gate', 'gate', 'no-such-subcommand', 'gate', 'gate', 'gate'],
   )
-  // 每条子进程都在受控 cwd / 环境里跑：不随调用方所在仓库而变
-  for (const call of calls) {
-    assert.equal(typeof call.options.cwd, 'string')
-    assert.match(call.options.env.DSH_PIPELINE_HOME, /no-such-package$/)
-  }
+  // 每条子进程的 cwd 都钉在临时目录：不随调用方所在仓库而变
+  for (const call of calls) assert.equal(typeof call.options.cwd, 'string')
+  // 只有「找不到共享包」那条注入 DSH_PIPELINE_HOME，其余保持干净环境
+  const withHome = calls.filter((c) => c.options.env?.DSH_PIPELINE_HOME !== undefined)
+  assert.equal(withHome.length, 1)
+  assert.equal(withHome[0].command, 'bash')
+  assert.match(withHome[0].options.env.DSH_PIPELINE_HOME, /no-such-package$/)
 })
 
 test('checkExitCodes：某个场景实际退出码不符 → ok false，detail 点名是哪个场景', () => {
   const runner = (command, args) => {
-    if (command === 'bash') return { status: 3 }
+    if (command === 'bash') return { status: 3, stdout: '', stderr: '找不到共享包 dsh-pipeline\n' }
     // 「gate 无 --pr」本该退 2，这里故意返 0
-    if (args.length === 2 && args[1] === 'gate') return { status: 0 }
+    if (args.length === 2 && args[1] === 'gate') return { status: 0, stdout: '', stderr: '' }
     // 闸门夹具照常
     const record = args.find((arg, i) => args[i - 1] === '--record')
-    if (record !== undefined) return { status: record.endsWith('approve.json') ? 0 : 1 }
-    return { status: 2 }
+    if (record !== undefined) return { status: record.endsWith('approve.json') ? 0 : 1, stdout: '', stderr: '' }
+    return { status: 2, stdout: '', stderr: '' }
   }
 
   const check = checkExitCodes({ runner })
   assert.equal(check.ok, false)
   assert.match(check.detail, /缺必填参数 期望退出 2，实际 0/)
-  assert.match(check.detail, /退出码用例不符（1\/6）/)
+  assert.match(check.detail, /退出码用例不符（1\/7）/)
+})
+
+test('checkExitCodes：退出码对但输出里没有预期关键字 → 记失败（不把早期失败当通过）', () => {
+  const runner = (command, args) => {
+    if (command === 'bash') return { status: 3, stdout: '', stderr: '别的错误\n' }
+    const record = args.find((arg, i) => args[i - 1] === '--record')
+    if (record !== undefined) return { status: record.endsWith('approve.json') ? 0 : 1, stdout: '', stderr: '' }
+    return { status: 2, stdout: '', stderr: '' }
+  }
+
+  const check = checkExitCodes({ runner })
+  assert.equal(check.ok, false)
+  assert.match(check.detail, /找不到共享包 退出码对但输出里没有/)
 })
 
 test('checkExitCodes：runner 抛异常 → 记成失败条目，不冒泡', () => {
