@@ -77,7 +77,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | `merge` | 闸门通过后 squash 合并 + 清理 worktree/分支 + 快进 main；`--review-record` 是 `--record` 的兼容别名（旧写法，后续将弃用；两者取值不同则报错） | 现行 |
 | `status` | 审核记录概况，含仓库概览（root/branch/head/worktrees；git 取不到时该段只提示，不影响退出码） | 现行 |
 | `doctor` | 检查仓库装的共享包是否同一构建；`--profile <dir>` 可选：体检 profile 包声明、插件软链有效性、`dsh --dump-config` 可见性（dsh 不可用时跳过）、审核记录目录可写，另含原 review-loop-check.sh 没有的 `cordis.patch.yml` 非空与目录/DSH_HOME 报告两项 | 现行 |
-| `selftest` | 一致性自检（见 §9）：`--shims` / `--config` / `--fast` / `--repos` 可用；`--peer` / `--exit-codes` 传入即报「尚未实现」退 2 | 现行（两项子检查仍为目标） |
+| `selftest` | 一致性自检（见 §9）：`--shims` / `--config` / `--fast` / `--repos` 可用；`--lock` / `--peer` / `--exit-codes` 三项仍为目标（`--peer` / `--exit-codes` 已识别、传入报「尚未实现」退 2；`--lock` 尚未进选项表，传入报「未知选项」退 2） | 现行（三项子检查仍为目标） |
 | `check-all` | 按配置逐包跑声明的检查并汇总 | 现行 |
 | `shim install\|check` | 生成 / 校验入口 shim | 现行 |
 | `hooks install\|check` | 安装 / 校验 pre-push 直推拦截钩子 | 现行 |
@@ -93,7 +93,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 **目标**：`selftest --lock` / `--peer` / `--exit-codes`（§9；`--lock` 尚未进选项表）、`pipeline.lock.json`（§7.2）、`review.*` 配置（§7.1）、`--legacy-exit-codes`（§4）、§6 的 root 统一，以及 §10 的「各仓接入 caller workflow 与回滚调用」。
 
-硬规则：目标条目在实现合并前**不得**被入口 shim 调用，也不得在文档里写成可用；§9 的门禁项同理——`selftest --peer` / `--exit-codes` 落地前，CI 不得引用它们。
+硬规则：目标条目在实现合并前**不得**被入口 shim 调用，也不得在文档里写成可用；§9 的门禁项同理——`selftest --lock` / `--peer` / `--exit-codes` 落地前，CI 不得引用它们。
 
 ---
 
@@ -310,6 +310,6 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | 2026-11-05 | v1.1：按审核意见修正——区分「现行/目标」，配置只把已进 schema 的字段写成现行，退出码与落盘口径按实际行为澄清，补 `roles`、`-C` 翻译、`prepare` 占位、shim 渲染后比对、部署手工命令模板 |
 | 2026-11-06 | §10 加三条规范性铁律（不可变产物 / 原子切换 / 回滚与前进同构）；§7.1 列入 `deploy` 配置字段（本轮实现）；§3.2 / §3.3 补 `deploy init\|check` |
 | 2026-11-06 | §10 补 `quality_cmd` / `build_cmd` / `assemble` 三个输入与 node-standalone 的「组装 release」规定；§3.2 / §3.3 / §7.1 同步 `artifact=node-standalone` 放行 |
-| 2026-11-06 | v1.2：按实现状态校正「现行 vs 目标」——`review publish --post-review`、`selftest`（`--shims` / `--config` / `--fast` / `--repos`）、`check-all`、`shim`、`hooks` 改为现行；`deploy` 段从「目标字段」移入现行字段；仍未实现项收敛为 `selftest --lock` / `--peer` / `--exit-codes`、`pipeline.lock.json`、`review.*`、`--legacy-exit-codes` 与 §6 的 root 统一 |
+| 2026-11-06 | v1.2：按实现状态校正「现行 vs 目标」——`review publish --post-review`、`selftest`（`--shims` / `--config` / `--fast` / `--repos`）、`check-all`、`shim`、`hooks` 改为现行；`deploy` 段从「目标字段」移入现行字段；仍未实现项收敛为 `selftest --lock` / `--peer` / `--exit-codes`、`pipeline.lock.json`、`review.*`、`--legacy-exit-codes`、§6 的 root 统一与 §10 的各仓接入 / 回滚调用 |
 | 2026-11-06 | 删除顶层 `prepare` 占位（从未实现、无消费方、各分支均无实现痕迹）：§3.2 去掉该行，§3.3 从已实现清单移除；`dsh-pipeline prepare` 现在报「未知子命令」退 2 |
 | 2026-11-06 | 审核第 1 轮 REJECT 修正：§2 的 L2 状态改为「生成能力现行、各仓接入未完成」；§3.3 目标清单补 `selftest --lock`；§9 写清 `--lock` 尚未进选项表（传了报「未知选项」），与 `--peer` / `--exit-codes` 的「尚未实现」区分 |
