@@ -20,7 +20,7 @@
 | `merge` | 闸门通过后 squash 合并并清理现场 | 同 `gate`，另加 `--check-only`、`--checks-file`、`--force` | `runMerge` → `lib/merge.mjs` `runMerge` | 0 / 1 / 2 |
 | `status` | 审核记录概况 | `--root`（缺省主工作区） | `runStatus` | 0 / 2 |
 | `doctor` | 多仓「装的共享包是否同一构建」；可选 profile 体检 | `--repo a,b`、`--json`、`--expect <sha>`、`--profile <dir>` | `runDoctor` → `lib/doctor.mjs` / `lib/profile-check.mjs` | 0 / 1 漂移或体检失败 / 2 |
-| `selftest` | 一致性自检（契约 §9） | `--shims`、`--config`、`--fast`、`--repos a,b`、`--json`、`--root` | `runSelftest` → `lib/selftest.mjs` | 0 / 1 / 2（`--peer` `--exit-codes` 未实现即 2） |
+| `selftest` | 一致性自检（契约 §9） | `--shims`、`--config`、`--exit-codes`、`--fast`、`--repos a,b`、`--json`、`--root` | `runSelftest` → `lib/selftest.mjs` | 0 / 1 / 2（`--peer` 未实现即 2；`--lock` 是未知选项即 2） |
 | `shim` | 生成 / 校验入口 shim（契约 §8） | `install [--root] [--force]`、`check [--root]` | `runShim` → `lib/shim.mjs` | 0 / 1 冲突或不一致 / 2 |
 | `hooks` | 安装 / 校验 pre-push 直推拦截钩子 | `install [--root] [--force] [--allow-main]`、`check [--root]` | `runHooks` → `lib/hooks.mjs` | 0 / 1 未装、不一致、拒绝覆盖 / 2 |
 | `check-all` | 逐包跑 test / check / typecheck 并汇总 | `--root`、`--packages a,b,c`、`--json` | `runCheckAllCommand` → `lib/check-all.mjs` | 0 / 1 有失败 / 2 / 3 找不到 pnpm |
