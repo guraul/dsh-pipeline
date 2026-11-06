@@ -2,7 +2,7 @@
 
 统一交付与审核流程的单一实现，包名 `@guraul/dsh-pipeline`。
 `bin/cli.mjs` 负责参数分发，流程与外部命令封装在 `lib/`。
-已实现：`gate` / `merge` / `record` / `status` / `task` / `pr` / `review`（顶层 `prepare` 仍是未实现占位）。
+已实现：`task` / `pr` / `review`（`prepare` / `prompt` / `publish`）/ `record` / `gate` / `merge` / `status` / `doctor` / `selftest` / `shim` / `hooks` / `check-all` / `deploy`（`init` / `check`）；顶层 `prepare` 占位已按契约删除。
 设计与版本策略见下。
 
 - ADR：`self-dsh-plugins` 的 [docs/adr/0003-pipeline-单一实现与版本策略.md](https://github.com/guraul/self-dsh-plugins/blob/main/docs/adr/0003-pipeline-%E5%8D%95%E4%B8%80%E5%AE%9E%E7%8E%B0%E4%B8%8E%E7%89%88%E6%9C%AC%E7%AD%96%E7%95%A5.md)
@@ -39,7 +39,7 @@ dsh-pipeline review publish --pr <N> --response <响应文件> [--request <文�
 
 本仓 dogfood 自己的闸门：PR 一律走 `merge`，不手工点合并。
 
-**本仓的高风险只列了 `.github/**`（改 CI 本身）**：`bin/**`、`lib/**`、`scripts/**` 都是本仓日常代码，走正常的 `record → merge`，不会因为「改了主路径」被要求人工放行。高风险的含义是「例外路径」，不是「主要路径」。
+**本仓配置的 `highRisk` 只追加了 `.github/**`**（改 CI 本身）：`bin/**`、`lib/**`、`scripts/**` 都是本仓日常代码，走正常的 `record → merge`，不会因为「改了主路径」被要求人工放行。但要注意 `highRisk` 是**追加**语义——`lib/policy.mjs` 的默认清单（`AGENTS.md`、`scripts/pipeline/**`、`docs/pipeline/**`、`**/.gitignore`、`**/package.json` 的依赖变更等）**恒生效**，所以本仓改这些路径**同样**属高风险、需要人工放行。高风险的含义是「例外路径」，不是「主要路径」。
 
 审核记录由 `self-dsh-plugins` 的 reviewer 产出（跨仓调用，`<self-dsh-plugins>` 是那份检出的路径）：
 

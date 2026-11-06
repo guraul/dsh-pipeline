@@ -121,6 +121,13 @@ test('--help 与 --version 行为保持不变', () => {
   assert.equal(version.state.err, '')
 })
 
+test('顶层 prepare 占位已删除：未知子命令 + HELP，退出 2', () => {
+  const io = makeIO()
+  assert.equal(run(['prepare'], io), 2)
+  assert.match(io.state.err, /未知子命令/)
+  assert.match(io.state.out + io.state.err, /用法: dsh-pipeline/)
+})
+
 test('gate: 有效记录放行，退出码 0', () => {
   const root = tmp()
   const file = writeApprovedRecord(root)

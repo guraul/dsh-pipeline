@@ -110,7 +110,6 @@ const IMPLEMENTED = new Set([
 ])
 const SUBCOMMANDS = [
   'task',
-  'prepare',
   'pr',
   'merge',
   'gate',
@@ -148,7 +147,6 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
   check-all  逐包跑 test / check / typecheck 并汇总（缺 node_modules 跳过不算失败）
   deploy     生成 / 校验部署 caller workflow 骨架（契约 §10）
   task       从 issue 创建 task/<号>-<slug> 分支与 worktree
-  prepare    准备交付（未实现）
   pr         推送当前 task 分支并创建 PR
   review     生成审核请求（prepare）、审核提示词（prompt）并把判定落成记录（publish）
 

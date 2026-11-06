@@ -1,6 +1,6 @@
 # 交付契约（CONTRACT）
 
-**版本**：v1.1（2026-11-05）
+**版本**：v1.2（2026-11-06）
 **适用**：所有接入本包的仓库——`self-dsh-plugins`、`agent-mobile`、`homebase`、`memx`，以及包仓自身。
 **地位**：这是唯一的规范来源。各仓文档只写差异与索引，不复述本文件。
 
@@ -47,7 +47,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 ## 3. 命令面
 
-### 3.1 各仓入口 → 包子命令（**目标，P2**）
+### 3.1 各仓入口 → 包子命令（**现行**）
 
 | 入口文件 | 转发到 | 说明 |
 |---|---|---|
@@ -68,33 +68,32 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 |---|---|---|
 | `task` | 从 issue 建 `task/<号>-<slug>` 分支与 worktree | 现行 |
 | `pr` | 推送当前任务分支并创建 PR | 现行 |
-| `prepare` | 顶层占位命令（help 里标注未实现） | 现行占位，**待删除或实现** |
 | `review prepare` | 读 PR 的 head/diff/issue 正文，写审核请求（含 nonce） | 现行 |
 | `review prompt` | 由请求渲染审核提示词 | 现行 |
 | `review publish` | 把判定落成记录 | 现行 |
-| `review publish --post-review` | 同时把判定发成 GitHub review（幂等） | **目标（P2）** |
+| `review publish --post-review` | 同时把判定发成 GitHub review（幂等） | 现行 |
 | `record` | 只落盘判定记录（供外部流程使用） | 现行 |
 | `gate` | 审核闸门检查（记录存在性、SHA 绑定、高风险路径） | 现行 |
 | `merge` | 闸门通过后 squash 合并 + 清理 worktree/分支 + 快进 main；`--review-record` 是 `--record` 的兼容别名（旧写法，后续将弃用；两者取值不同则报错） | 现行 |
 | `status` | 审核记录概况，含仓库概览（root/branch/head/worktrees；git 取不到时该段只提示，不影响退出码） | 现行 |
 | `doctor` | 检查仓库装的共享包是否同一构建；`--profile <dir>` 可选：体检 profile 包声明、插件软链有效性、`dsh --dump-config` 可见性（dsh 不可用时跳过）、审核记录目录可写，另含原 review-loop-check.sh 没有的 `cordis.patch.yml` 非空与目录/DSH_HOME 报告两项 | 现行 |
-| `selftest` | 一致性自检（见 §9） | **目标（P2）** |
-| `check-all` | 按配置逐包跑声明的检查并汇总 | **目标（P2）** |
-| `shim install\|check` | 生成 / 校验入口 shim | **目标（P2）** |
-| `hooks install` | 安装 pre-push 直推拦截钩子 | **目标（P2）** |
+| `selftest` | 一致性自检（见 §9）：`--shims` / `--config` / `--fast` / `--repos` 可用；`--peer` / `--exit-codes` 传入即报「尚未实现」退 2 | 现行（两项子检查仍为目标） |
+| `check-all` | 按配置逐包跑声明的检查并汇总 | 现行 |
+| `shim install\|check` | 生成 / 校验入口 shim | 现行 |
+| `hooks install\|check` | 安装 / 校验 pre-push 直推拦截钩子 | 现行 |
 | `deploy init\|check` | 生成 / 校验部署 caller workflow 骨架：生成区（`name` / `on` / `concurrency` + 单 job 的 `uses`+`with`+`secrets`）用注释标记包裹，`with:` 含按 artifact 推导的 `mode` 与 `assemble`，`check` 逐字节比对，标记之后允许各仓追加自己的后置 job（见 §10） | **现行** |
 
 新增子命令属于**契约变更**，必须同时更新本文件与 §3.3。
 
-### 3.3 实现状态（v1.1 冻结时）
+### 3.3 实现状态（v1.2 校正，2026-11-06）
 
-**已实现**：`task` / `pr` / `prepare`(占位) / `review prepare|prompt|publish` / `record` / `gate` / `merge` / `status` / `doctor` / `deploy init|check`（本轮，见 §10；`artifact` 支持 `static-dir` 与 `node-standalone`）。
+**已实现**：`task` / `pr` / `review prepare|prompt|publish`（含 `--post-review`）/ `record` / `gate` / `merge` / `status` / `doctor`（含 `--profile`）/ `selftest`（`--shims` / `--config` / `--fast` / `--repos`）/ `shim install|check` / `hooks install|check` / `check-all` / `deploy init|check`（`artifact` 支持 `static-dir` 与 `node-standalone`）。
 
-**配置字段（P2 已实现）**：`worktreesDir` 已进 schema（见 §7.1），由 `task` 消费——缺省读配置、`--worktrees-dir` 优先；`checks` 已进 schema（见 §7.1），由 `check-all` 消费——`--packages` 优先，其次 `checks.packages`（按给定顺序），再否则自动发现并按 `checks.exclude` 过滤；`review.*` 仍为目标（P2）。
+**配置字段（已进 schema）**：`worktreesDir` 由 `task` 消费——缺省读配置、`--worktrees-dir` 优先；`checks` 由 `check-all` 消费——`--packages` 优先，其次 `checks.packages`（按给定顺序），再否则自动发现并按 `checks.exclude` 过滤；`deploy` 由 `deploy init|check` 消费（字段见 §7.1，部署行为见 §10）。
 
-**目标**：`review publish --post-review`、`selftest`、`check-all`、`shim install|check`、`hooks install`、`--legacy-exit-codes`（P2），以及 §10 的部署复用 workflow（P3）。
+**目标**：`selftest --peer` / `--exit-codes`（§9）、`pipeline.lock.json`（§7.2）、`review.*` 配置（§7.1）、`--legacy-exit-codes`（§4）、§6 的 root 统一，以及 §10 的「各仓接入 caller workflow 与回滚调用」。
 
-硬规则：目标条目在实现合并前**不得**被入口 shim 调用，也不得在文档里写成可用；§9 的门禁项同理——`selftest` 落地前，CI 不得引用它。
+硬规则：目标条目在实现合并前**不得**被入口 shim 调用，也不得在文档里写成可用；§9 的门禁项同理——`selftest --peer` / `--exit-codes` 落地前，CI 不得引用它们。
 
 ---
 
@@ -157,10 +156,11 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 {
   "repo": "guraul/<name>",        // 可选；缺省 null（下游命令报“无法确定仓库”）
   "ci": [],                       // 可选；**已废弃**，CI 判定改走 gh pr checks
-  "highRisk": ["…"],              // 可选；缺省 []
+  "highRisk": ["…"],              // 可选；缺省 []；**追加**语义——默认清单恒生效，配置只做追加
   "roles": {},                    // 可选；review prompt 的角色定义
-  "worktreesDir": "~/workspace/<name>-worktrees",  // 可选；缺省 <主工作区>/.worktrees（P2 已实现）
-  "checks": { "packages": ["pkg-a"], "exclude": ["tools"] }  // 可选；缺省 null（**已实现**）：check-all 的显式包清单与自动发现排除项
+  "worktreesDir": "~/workspace/<name>-worktrees",  // 可选；缺省 <主工作区>/.worktrees
+  "checks": { "packages": ["pkg-a"], "exclude": ["tools"] },  // 可选；缺省 null：check-all 的显式包清单与自动发现排除项
+  "deploy": { … }                 // 可选；缺省 null：deploy init|check 消费，字段见下方「现行字段：deploy 段」
 }
 ```
 
@@ -172,9 +172,14 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
     "postReview": true,
     "identity": { "ghConfigDir": "~/.config/gh-reviewer", "account": "guraul-review" },
     "rounds": 3
-  },
-  // deploy：**本轮已实现**（schema + `deploy init|check`，见 §10）；
-  // 本块其余字段仍为目标（P2）
+  }
+}
+```
+
+**现行字段：`deploy` 段**（2026-11-06 起进 schema，由 `deploy init|check` 消费；部署行为见 §10）：
+
+```jsonc
+{
   "deploy": {
     "artifact": "static-dir",          // 必填；static-dir / node-standalone 可用
                                        // （node-standalone 由 deploy.yml 的 assemble 步骤组装 release）；
@@ -199,7 +204,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 1. **未声明字段一律报错**（`E_CONFIG`）。新增字段顺序固定：**先改本包 schema → 再改本文件 → 最后改各仓配置**。顺序反了就是 2026-11-04 那次事故；
 2. `ci` 已废弃，新配置不要写；
-3. 仓库差异只能落在 `repo` / `highRisk` / `roles` / `worktreesDir` 以及（P2 起）`review.*` / `checks.*` 之内。
+3. 仓库差异只能落在 `repo` / `highRisk` / `roles` / `worktreesDir` / `checks.*` / `deploy.*` 之内，以及（P2 起）`review.*`。
 
 > 反面教材：2026-11-04 有人往本文件加了 `doctorRepos`，包判未知字段，`task`/`pr`/`merge` 三条同时失效，CI 不覆盖这类错误。
 
@@ -213,7 +218,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 ---
 
-## 8. 入口 shim 契约（**目标，P2**）
+## 8. 入口 shim 契约（**现行**）
 
 - 由 `pipeline shim install` 从包内模板生成，文件头固定带 `GENERATED by dsh-pipeline v<版本> — do not edit`；
 - 内容包含：定位包（`$DSH_PIPELINE_HOME` → 主工作区 `tools/` → 当前仓 `tools/`）、推导子命令、翻译 `-C`→`--root`、`exec node <cli>`、透传参数与退出码；
@@ -223,15 +228,17 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 ---
 
-## 9. 一致性门禁（`selftest`，**目标，P2**）
+## 9. 一致性门禁（`selftest`，**现行**；`--lock` / `--peer` / `--exit-codes` 仍为目标）
+
+**已实现**：`--shims` / `--config` / `--fast` / `--repos`（pre-push 用 `--fast`）。**未实现**：`--lock` / `--peer` / `--exit-codes`——识别但传入即报「尚未实现」并退 2，不静默忽略。
 
 | 检查 | 内容 | 失败 |
 |---|---|---|
 | `--shims` | 6 个入口 == 按当前版本渲染后的模板 | 退出 1 |
 | `--config` | `.dsh/pipeline.json` 能被 schema 接受，无未声明字段 | 退出 1 |
-| `--lock` | 安装的构建 == `pipeline.lock.json` 的 `expect` | 退出 1 |
-| `--peer` | 各插件声明的 peer 范围覆盖当前 DSH 版本（静态比较，不下载） | 退出 1 |
-| `--exit-codes` | 退出码表自检（缺参→2、未知参数→2、找不到包→3） | 退出 1 |
+| `--lock` | 安装的构建 == `pipeline.lock.json` 的 `expect`（**未实现**） | 退出 1 |
+| `--peer` | 各插件声明的 peer 范围覆盖当前 DSH 版本（静态比较，不下载；**未实现**） | 退出 1 |
+| `--exit-codes` | 退出码表自检（缺参→2、未知参数→2、找不到包→3；**未实现**） | 退出 1 |
 | `--repos` | 多个仓装的共享包是不是同一构建（读各自 `tools/node_modules/dsh-pipeline/build.json` 的 `gitSha`/`builtAt`，比对 `gitSha`；目录不存在 / 未装包的仓跳过并列出，可比对的仓不足 2 个则跳过退 0；`--json` 给 `{ok,baseline,repos,skipped}`） | 退出 1 |
 | `--fast` | 只跑 `--shims --config`（pre-push 用，<2 秒） | 退出 1 |
 
@@ -239,7 +246,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 ---
 
-## 10. 部署契约（**目标，P3**）
+## 10. 部署契约（**现行**：复用 workflow 与 `deploy init|check` 已落地；各仓接入与回滚调用仍为目标）
 
 **三条铁律（规范性）**——先于本节任何现状 / 目标描述，对所有仓的部署无条件生效：
 
@@ -303,3 +310,5 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | 2026-11-05 | v1.1：按审核意见修正——区分「现行/目标」，配置只把已进 schema 的字段写成现行，退出码与落盘口径按实际行为澄清，补 `roles`、`-C` 翻译、`prepare` 占位、shim 渲染后比对、部署手工命令模板 |
 | 2026-11-06 | §10 加三条规范性铁律（不可变产物 / 原子切换 / 回滚与前进同构）；§7.1 列入 `deploy` 配置字段（本轮实现）；§3.2 / §3.3 补 `deploy init\|check` |
 | 2026-11-06 | §10 补 `quality_cmd` / `build_cmd` / `assemble` 三个输入与 node-standalone 的「组装 release」规定；§3.2 / §3.3 / §7.1 同步 `artifact=node-standalone` 放行 |
+| 2026-11-06 | v1.2：按实现状态校正「现行 vs 目标」——`review publish --post-review`、`selftest`（`--shims` / `--config` / `--fast` / `--repos`）、`check-all`、`shim`、`hooks` 改为现行；`deploy` 段从「目标字段」移入现行字段；仍未实现项收敛为 `selftest --lock` / `--peer` / `--exit-codes`、`pipeline.lock.json`、`review.*`、`--legacy-exit-codes` 与 §6 的 root 统一 |
+| 2026-11-06 | 删除顶层 `prepare` 占位（从未实现、无消费方、各分支均无实现痕迹）：§3.2 去掉该行，§3.3 从已实现清单移除；`dsh-pipeline prepare` 现在报「未知子命令」退 2 |
