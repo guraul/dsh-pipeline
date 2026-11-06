@@ -9,7 +9,7 @@
  * review 的 publish 复用 runRecord（与 record 同一条落盘路径），prepare 只编排 gh 读取，
  * --post-review 在落盘成功后把判定发成 GitHub review（幂等，见 sendReview），
  * prompt 只读请求文件并复用 buildPrompt（不发外部命令、不写请求）；
- * selftest 只做参数编排与输出，检查逻辑在 lib/selftest.mjs（契约 §9，已实现 --shims / --config）；
+ * selftest 只做参数编排与输出，检查逻辑在 lib/selftest.mjs（契约 §9，已实现 --shims / --config / --repos）；
  * shim 的渲染 / 写入 / 比对全在 lib/shim.mjs（契约 §8），这里只做动作与参数解析；
  * check-all 的逐包执行与汇总在 lib/check-all.mjs，这里只做包发现与参数解析。
  *
@@ -19,7 +19,7 @@
  */
 import { mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, isAbsolute, join, relative } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { discoverPackages, runCheckAll as runCheckAllFlow } from '../lib/check-all.mjs'
@@ -44,7 +44,7 @@ import { runMerge as runMergeFlow } from '../lib/merge.mjs'
 import { mergePolicy } from '../lib/policy.mjs'
 import { runPr as runPrFlow } from '../lib/pr.mjs'
 import { resolveMainRoot } from '../lib/repo.mjs'
-import { PENDING_CHECKS, runChecks } from '../lib/selftest.mjs'
+import { PENDING_CHECKS, checkRepos, runChecks } from '../lib/selftest.mjs'
 import { SHIM_ENTRIES, checkShims, installShims } from '../lib/shim.mjs'
 import {
   NONCE_PATTERN,
@@ -121,7 +121,7 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
   --repo <a,b>       要检查的仓库根（逗号分隔；缺省当前目录）
   --json             机器可读输出（退出码与人读模式一致）
   --expect <sha>     期望的构建 sha（可传 7 位短 sha；不一致则退出 1）
-  selftest   一致性自检（契约 §9；已实现 --shims / --config，--peer/--exit-codes 未实现）
+  selftest   一致性自检（契约 §9；已实现 --shims / --config / --repos，--peer/--exit-codes 未实现）
   shim       生成 / 校验入口 shim（契约 §8）
   hooks      安装 / 校验 pre-push 直推拦截钩子
   check-all  逐包跑 test / check / typecheck 并汇总（缺 node_modules 跳过不算失败）
@@ -131,13 +131,18 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
   review     生成审核请求（prepare）、审核提示词（prompt）并把判定落成记录（publish）
 
 selftest 用法:
-  dsh-pipeline selftest [--shims | --config | --fast] [--json] [--root <dir>]
+  dsh-pipeline selftest [--shims | --config | --fast | --repos <a,b,c>] [--json] [--root <dir>]
   --shims            6 个入口 == 按当前包版本渲染后的模板（<root>/scripts/pipeline 不存在即失败）
   --config           校验 <root>/.dsh/pipeline.json：能被 schema 接受、没有未声明字段
-  --fast             等价于 --shims --config（契约 §9 的 pre-push 用法）
-  --json             输出 {"ok":true|false,"root":"…","checks":[{"name":"…","ok":…,"detail":"…"}]}
+  --fast             等价于 --shims --config（契约 §9 的 pre-push 用法；不含 --repos）
+  --repos <a,b,c>    比对多个仓装的共享包是不是同一构建（读各自 build.json 的 gitSha/builtAt）。
+                     绝对路径直接用、相对路径按 --root（缺省当前目录）解析、前导 ~/ 展开成家目录；
+                     目录不存在或未装包的仓跳过并列出，可比对的仓不足 2 个则跳过退出 0；
+                     与 --shims / --config / --fast 互斥
+  --json             输出 {"ok":true|false,"root":"…","checks":[{"name":"…","ok":…,"detail":"…"}]}；
+                     带 --repos 时改为 {"ok":…,"baseline":"…","repos":[{"path","sha","builtAt","ok"}],"skipped":[{"path","reason"}]}
                      （退出码与人读模式一致）
-  --root <dir>       仓库根目录（缺省主工作区；git 定位不到时退回当前目录）
+  --root <dir>       仓库根目录（缺省主工作区；git 定位不到时退回当前目录）；--repos 用它解析相对路径
   --peer / --exit-codes  已识别但尚未实现：传入即报「尚未实现」并退出 2，不静默忽略
   退出码: 0 通过（没有配置文件也退 0）/ 1 检查不通过 / 2 用法错误或检查项未实现
 
@@ -523,7 +528,7 @@ const REVIEW_PUBLISH_VALUE_FLAGS = new Set([
 const REVIEW_PUBLISH_BOOL_FLAGS = new Set(['post-review', 'dry-run'])
 const REVIEW_PROMPT_VALUE_FLAGS = new Set(['request', 'out', 'role'])
 const REVIEW_PROMPT_BOOL_FLAGS = new Set()
-const SELFTEST_VALUE_FLAGS = new Set(['root'])
+const SELFTEST_VALUE_FLAGS = new Set(['root', 'repos'])
 // --peer / --exit-codes 只是「被识别」：传了要报尚未实现退 2，不能落进未知选项
 const SELFTEST_BOOL_FLAGS = new Set([
   'config',
@@ -1469,9 +1474,10 @@ function resolveSelftestRoot(value, deps) {
 
 /**
  * selftest：契约 §9 的一致性门禁。
- * --shims / --config 已实现（--fast 等价于 --shims --config）；其余检查项只识别不执行，
- * 明确报错退 2。检查逻辑在 lib/selftest.mjs，--shims 的比对复用 lib/shim.mjs。
- * 退出码：0 通过（含「无配置文件跳过」）/ 1 检查不通过 / 2 用法错误或检查项未实现。
+ * --shims / --config 已实现（--fast 等价于 --shims --config）；--repos 是独立的多仓比对模式，
+ * 与前三者互斥（--json 形态不同，合起来没有单一会话能同时表达两种结构）；
+ * 其余检查项只识别不执行，明确报错退 2。检查逻辑在 lib/selftest.mjs，--shims 的比对复用 lib/shim.mjs。
+ * 退出码：0 通过（含「无配置文件跳过」「--repos 可比对的仓不足 2 个」）/ 1 检查不通过 / 2 用法错误或检查项未实现。
  */
 function runSelftest(argv, deps, io) {
   const parsed = parseArgs(argv, SELFTEST_VALUE_FLAGS, SELFTEST_BOOL_FLAGS)
@@ -1485,13 +1491,22 @@ function runSelftest(argv, deps, io) {
     return argError(io, 'selftest', '--root 必须是非空目录路径')
   }
 
-  // --fast 就是「--shims --config」这一组；没有检查项就报用法错误，不静默退 0
+  // --repos 是独立模式（自己的输出形态与退出码语义），不掺进检查项那一组
+  if (options.repos !== undefined) {
+    if (!nonEmpty(options.repos)) return argError(io, 'selftest', '--repos 必须是非空的逗号分隔路径')
+    if (options.shims === true || options.config === true || options.fast === true) {
+      return argError(io, 'selftest', '--repos 不能与 --shims / --config / --fast 同时使用')
+    }
+    return runReposCheck(String(options.repos), options, deps, io)
+  }
+
+  // --fast 就是「--shims --config」这一组（不含 --repos）；没有检查项就报用法错误，不静默退 0
   const checks =
     options.fast === true
       ? ['shims', 'config']
       : [...(options.shims === true ? ['shims'] : []), ...(options.config === true ? ['config'] : [])]
   if (checks.length === 0) {
-    return argError(io, 'selftest', '未指定检查项（当前可用 --shims / --config / --fast）')
+    return argError(io, 'selftest', '未指定检查项（当前可用 --shims / --config / --fast / --repos）')
   }
 
   const root = resolveSelftestRoot(options.root, deps)
@@ -1504,6 +1519,56 @@ function runSelftest(argv, deps, io) {
   }
   if (options.json === true) io.out(JSON.stringify({ ok: result.ok, root, checks: result.checks }))
   return result.ok ? 0 : 1
+}
+
+/**
+ * --repos 的单条路径：前导 ~/ 展开成家目录，其余交给 resolve（相对路径按 base 解析，
+ * 绝对路径原样返回并顺带去掉结尾斜杠），保证同一条路径无论怎么写都解析成同一个仓。
+ */
+function resolveRepoEntry(entry, base) {
+  if (entry === '~') return homedir()
+  if (entry.startsWith('~/')) return resolve(homedir(), entry.slice(2))
+  return resolve(base, entry)
+}
+
+/**
+ * selftest --repos：比对多个仓装的共享包是不是同一构建（契约 §9）。
+ * 路径口径：绝对路径直接用；相对路径按 --root（缺省当前目录）解析；前导 ~/ 展开成家目录。
+ * 比对语义（纳入 / 跳过 / 不足 2 个 / 判据）在 lib/selftest.mjs 的 checkRepos，这里只做编排与输出。
+ * 退出码：0 一致或可比对的仓不足 2 个 / 1 有仓与基准不一致 / 2 用法错误。
+ */
+function runReposCheck(raw, options, deps, io) {
+  const entries = String(raw)
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+  if (entries.length === 0) return argError(io, 'selftest', '--repos 至少需要一个仓路径')
+
+  // 相对路径的基准：显式 --root 优先，否则当前目录（--repos 查的是兄弟仓，不是本仓配置）
+  const base = nonEmpty(options.root) ? options.root : nonEmpty(deps.cwd) ? deps.cwd : process.cwd()
+  // 同一个仓写两遍只算一个，否则重复路径会把「不足 2 个」骗成可比对
+  const paths = [...new Set(entries.map((entry) => resolveRepoEntry(entry, base)))]
+  const result = checkRepos(paths)
+
+  if (options.json === true) {
+    // --json 只给规格里的四个字段：跳过信息进 skipped，人读的跳过行与结论行不再打
+    io.out(
+      JSON.stringify({ ok: result.ok, baseline: result.baseline, repos: result.repos, skipped: result.skipped }),
+    )
+  } else {
+    for (const repo of result.repos) io.out(`${repo.path}\t${repo.sha.slice(0, 7)} ${repo.builtAt}`)
+    for (const skip of result.skipped) io.out(`${skip.path}\t跳过（${skip.reason}）`)
+    if (!result.enough) io.out('跳过（可比对的仓不足 2 个）')
+    else if (result.ok) io.out(`构建一致：${result.repos.length} 个仓`)
+  }
+
+  if (!result.ok) {
+    // GitHub annotation 风格，CI 能直接把它标成注解；--json 模式下照样进 stderr
+    const drift = result.repos.filter((repo) => !repo.ok).map((repo) => repo.path)
+    io.err(`::error::基准 ${result.baseline.slice(0, 7)}，不一致的仓：${drift.join(', ')}`)
+    return 1
+  }
+  return 0
 }
 
 /**
