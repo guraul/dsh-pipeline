@@ -122,8 +122,10 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
   --repo <a,b>       要检查的仓库根（逗号分隔；缺省当前目录）
   --json             机器可读输出（退出码与人读模式一致）
   --expect <sha>     期望的构建 sha（可传 7 位短 sha；不一致则退出 1）
-  --profile <dir>    可选：额外体检 profile 的包声明与 cordis.patch.yml（逐项 ✓/✗，
-                     任一 ✗ 退出 1；不给该 flag 则只比构建，行为与现状一致）
+  --profile <dir>    可选：额外体检 profile——包声明（旧包已无 / 新包已有）、插件软链有效性、
+                     dsh --dump-config 可见性（dsh 不可用时跳过不算失败）、cordis.patch.yml、
+                     审核记录目录可写；逐项 ✓/✗，任一 ✗ 退出 1。不给该 flag 则只比构建，
+                     行为与现状一致
   selftest   一致性自检（契约 §9；已实现 --shims / --config / --repos，--peer/--exit-codes 未实现）
   shim       生成 / 校验入口 shim（契约 §8）
   hooks      安装 / 校验 pre-push 直推拦截钩子
@@ -1416,7 +1418,9 @@ function runDoctor(argv, deps, io) {
   // profile 体检（可选）：给了 --profile 才跑；先算好——--json 的载荷与退出码都要用它。
   const wantProfile = parsed.options.profile !== undefined
   const env = deps.env !== undefined ? deps.env : process.env
-  const profile = wantProfile ? checkProfile(String(parsed.options.profile), env) : null
+  const profile = wantProfile
+    ? checkProfile(String(parsed.options.profile), { env, repos: roots, runner: deps.runner })
+    : null
 
   if (parsed.options.json === true) {
     const payload = {
@@ -1456,11 +1460,12 @@ function runDoctor(argv, deps, io) {
   }
 
   // profile 段接在构建段之后：逐项 ✓/✗（✓ 走 stdout、✗ 走 stderr，与本仓输出约定一致），
-  // 任一项 ✗ → 整体退出 1（构建不一致也是 1）；--json 模式不逐行打，
+  // 跳过项打 '-'；任一项 ✗ → 整体退出 1（构建不一致也是 1）；--json 模式不逐行打，
   // 结果在 payload.profile 里（退出码与人读模式一致）
   if (profile !== null && parsed.options.json !== true) {
     for (const item of profile.checks) {
-      const line = `${item.ok ? '✓' : '✗'} ${item.desc}`
+      const mark = item.skipped === true ? '-' : item.ok ? '✓' : '✗'
+      const line = `${mark} ${item.desc}`
       if (item.ok) io.out(line)
       else io.err(line)
     }
