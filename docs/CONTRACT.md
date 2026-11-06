@@ -38,7 +38,7 @@ diff -r <仓A>/scripts/pipeline <仓B>/scripts/pipeline   # 必须为空
 | 层 | 是什么 | 谁维护 | 状态 |
 |---|---|---|---|
 | **L1 实现层** | 本包：全部子命令与逻辑 | 本包仓 | 现行 |
-| **L2 入口层** | 各仓 `scripts/pipeline/*`：**生成物**，逐字节相同 | 由 `pipeline shim install` 生成 | **目标（P2）**；今天是各仓手写壳 |
+| **L2 入口层** | 各仓 `scripts/pipeline/*`：**生成物**，逐字节相同 | 由 `dsh-pipeline shim install` 生成 | **生成能力现行**（§3.2 / §8）；各仓接入未完成——`agent-mobile` / `homebase` 是手写转发壳，`self-dsh-plugins` 仍用自有实现 |
 | **L3 配置层** | 各仓 `.dsh/pipeline.json` + `.dsh/pipeline.lock.json` | 各仓 | pipeline.json 现行；lock 目标（P2） |
 
 L2 之所以要变成生成物：入口一旦允许手写，就等于给“某仓加一点私有逻辑”留了后门，`diff -r` 立刻失真。
@@ -91,7 +91,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 **配置字段（已进 schema）**：`worktreesDir` 由 `task` 消费——缺省读配置、`--worktrees-dir` 优先；`checks` 由 `check-all` 消费——`--packages` 优先，其次 `checks.packages`（按给定顺序），再否则自动发现并按 `checks.exclude` 过滤；`deploy` 由 `deploy init|check` 消费（字段见 §7.1，部署行为见 §10）。
 
-**目标**：`selftest --peer` / `--exit-codes`（§9）、`pipeline.lock.json`（§7.2）、`review.*` 配置（§7.1）、`--legacy-exit-codes`（§4）、§6 的 root 统一，以及 §10 的「各仓接入 caller workflow 与回滚调用」。
+**目标**：`selftest --lock` / `--peer` / `--exit-codes`（§9；`--lock` 尚未进选项表）、`pipeline.lock.json`（§7.2）、`review.*` 配置（§7.1）、`--legacy-exit-codes`（§4）、§6 的 root 统一，以及 §10 的「各仓接入 caller workflow 与回滚调用」。
 
 硬规则：目标条目在实现合并前**不得**被入口 shim 调用，也不得在文档里写成可用；§9 的门禁项同理——`selftest --peer` / `--exit-codes` 落地前，CI 不得引用它们。
 
@@ -230,7 +230,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 ## 9. 一致性门禁（`selftest`，**现行**；`--lock` / `--peer` / `--exit-codes` 仍为目标）
 
-**已实现**：`--shims` / `--config` / `--fast` / `--repos`（pre-push 用 `--fast`）。**未实现**：`--lock` / `--peer` / `--exit-codes`——识别但传入即报「尚未实现」并退 2，不静默忽略。
+**已实现**：`--shims` / `--config` / `--fast` / `--repos`（pre-push 用 `--fast`）。**未实现**：`--lock` / `--peer` / `--exit-codes`。其中 `--peer` / `--exit-codes` 已在选项表里，传入即报「尚未实现」并退 2；`--lock` 连选项都还没进 `SELFTEST_BOOL_FLAGS`，传了按「未知选项」退 2。两者都不静默忽略，但错误文案不同。
 
 | 检查 | 内容 | 失败 |
 |---|---|---|
@@ -312,3 +312,4 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | 2026-11-06 | §10 补 `quality_cmd` / `build_cmd` / `assemble` 三个输入与 node-standalone 的「组装 release」规定；§3.2 / §3.3 / §7.1 同步 `artifact=node-standalone` 放行 |
 | 2026-11-06 | v1.2：按实现状态校正「现行 vs 目标」——`review publish --post-review`、`selftest`（`--shims` / `--config` / `--fast` / `--repos`）、`check-all`、`shim`、`hooks` 改为现行；`deploy` 段从「目标字段」移入现行字段；仍未实现项收敛为 `selftest --lock` / `--peer` / `--exit-codes`、`pipeline.lock.json`、`review.*`、`--legacy-exit-codes` 与 §6 的 root 统一 |
 | 2026-11-06 | 删除顶层 `prepare` 占位（从未实现、无消费方、各分支均无实现痕迹）：§3.2 去掉该行，§3.3 从已实现清单移除；`dsh-pipeline prepare` 现在报「未知子命令」退 2 |
+| 2026-11-06 | 审核第 1 轮 REJECT 修正：§2 的 L2 状态改为「生成能力现行、各仓接入未完成」；§3.3 目标清单补 `selftest --lock`；§9 写清 `--lock` 尚未进选项表（传了报「未知选项」），与 `--peer` / `--exit-codes` 的「尚未实现」区分 |
