@@ -159,6 +159,7 @@ const MINIMAL_DEPLOY = {
   artifact: 'static-dir',
   service: 'serve-1',
   remoteDir: '/root/app',
+  workDir: 'app',
   health: { url: 'http://127.0.0.1:1/' },
 }
 
@@ -196,7 +197,8 @@ test('deploy 合法配置：全字段、可选项、枚举与边界值', () => {
   )
 })
 
-test('deploy 字段校验：未知键、artifact 枚举、service / remoteDir 必填 → E_CONFIG', () => {
+test('deploy 字段校验：未知键、artifact 枚举、service / remoteDir / workDir 必填 → E_CONFIG', () => {
+  assert.throws(() => validateConfig({ deploy: { ...MINIMAL_DEPLOY, workDir: undefined } }), code('E_CONFIG'))
   assert.throws(() => validateConfig({ deploy: { ...MINIMAL_DEPLOY, bogus: 1 } }), code('E_CONFIG'))
   assert.throws(() => validateConfig({ deploy: { artifact: 'tar' } }), code('E_CONFIG'))
   const { artifact, ...noArtifact } = MINIMAL_DEPLOY
@@ -204,11 +206,16 @@ test('deploy 字段校验：未知键、artifact 枚举、service / remoteDir �
   assert.throws(() => validateConfig({ deploy: { ...MINIMAL_DEPLOY, service: '' } }), code('E_CONFIG'))
   const { service: _service, ...noService } = MINIMAL_DEPLOY
   assert.throws(() => validateConfig({ deploy: noService }), code('E_CONFIG'))
-  assert.throws(() => validateConfig({ deploy: { ...MINIMAL_DEPLOY, remoteDir: 'relative/path' } }), code('E_CONFIG'))
+  assert.throws(() => validateConfig({ deploy: { ...MINIMAL_DEPLOY, workDir: 'apps/web',
+      remoteDir: 'relative/path' } }), code('E_CONFIG'))
   const { remoteDir: _remoteDir, ...noRemoteDir } = MINIMAL_DEPLOY
   assert.throws(() => validateConfig({ deploy: noRemoteDir }), code('E_CONFIG'))
-  // 可选字符串给了值就必须是字符串
-  for (const key of ['workDir', 'artifactDir', 'sshHost']) {
+  // workDir 是必填字符串：给 42 / null / 空串都拒
+  for (const bad of [42, null, '', '  ']) {
+    assert.throws(() => validateConfig({ deploy: { ...MINIMAL_DEPLOY, workDir: bad } }), code('E_CONFIG'), String(bad))
+  }
+  // 其余可选字符串给了值就必须是字符串
+  for (const key of ['artifactDir', 'sshHost']) {
     assert.throws(() => validateConfig({ deploy: { ...MINIMAL_DEPLOY, [key]: 42 } }), code('E_CONFIG'), key)
     assert.equal(validateConfig({ deploy: { ...MINIMAL_DEPLOY, [key]: null } }).deploy[key], null, key)
   }

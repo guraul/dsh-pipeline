@@ -104,7 +104,7 @@ test('deploy init：不带 --write 只打印骨架，uses / with / concurrency /
   assert.ok(!out.includes('public_health_url:'), '未配 publicUrl 不应出现')
 })
 
-test('deploy init：可选项逐项渲染，node-standalone 的 mode 仍是 releases', (t) => {
+test('deploy init：node-standalone 在生成阶段拒绝（构建步骤尚未参数化）', (t) => {
   const root = tmp()
   t.after(() => rmSync(root, { recursive: true, force: true }))
   writeConfig(root, {
@@ -112,22 +112,11 @@ test('deploy init：可选项逐项渲染，node-standalone 的 mode 仍是 rele
     service: 'serve-node',
     remoteDir: '/srv/node-app',
     workDir: 'apps/api',
-    artifactDir: 'dist',
-    sshHost: '10.0.0.8',
-    health: { url: 'http://127.0.0.1:9930/health', check: 'ssh', publicUrl: 'https://api.example.com', insecure: false },
-    keepReleases: 3,
+    health: { url: 'http://127.0.0.1:1/' },
   })
-
-  const result = init(root)
-  assert.equal(result.code, 0)
-  const out = result.out
-  assert.ok(out.includes("      mode: 'releases'\n"), 'node-standalone 推导出 releases')
-  assert.ok(out.includes("      artifact_dir: 'dist'\n"))
-  assert.ok(out.includes("      ssh_host: '10.0.0.8'\n"))
-  assert.ok(out.includes("      health_check: 'ssh'\n"))
-  assert.ok(out.includes("      public_health_url: 'https://api.example.com'\n"))
-  assert.ok(out.includes('      public_health_insecure: false\n'))
-  assert.ok(out.includes('      keep_releases: 3\n'))
+  const r = run(['deploy', 'init', '--root', root], { buildInfo: { gitSha: 'a'.repeat(40) } })
+  assert.equal(r.code, 2)
+  assert.match(r.err, /node-standalone 尚未实现/)
 })
 
 test('deploy init --write 落盘，deploy check 一致退 0', (t) => {
