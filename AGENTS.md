@@ -4,7 +4,7 @@
 
 项目知识库在 `docs/knowledge-base/`，本文件只承担**路由**与**强制规定**两个职责。功能细节、命令面、数据落盘、部署一律查知识库与 `docs/CONTRACT.md`，不要在本文重复。
 
-> 本仓是**共享包**（`@guraul/dsh-pipeline`，私有），被 `self-dsh-plugins`、`agent-mobile`、`homebase`、`memx` 等仓以 `file:` 本地 tarball 方式安装。规范来源是 `docs/CONTRACT.md`（v1.1），各仓文档只写差异、不复述契约。
+> 本仓是**共享包**（`@guraul/dsh-pipeline`，私有），被 `self-dsh-plugins`、`agent-mobile`、`homebase`、`memx` 等仓以 `file:` 本地 tarball 方式安装。规范来源是 `docs/CONTRACT.md`（版本以该文件顶部为准，本文不写死版本号），各仓文档只写差异、不复述契约。
 
 ## 知识库路由（优先查阅）
 
@@ -64,7 +64,6 @@ bash scripts/pack.sh                          # 测试门禁 + pnpm pack 到 dis
 node bin/cli.mjs doctor --repo a,b --expect <sha7>   # 多仓装的共享包是否同一构建
 node bin/cli.mjs check-all --packages pkg-a,pkg-b     # 逐包跑 test/check/typecheck
 node bin/cli.mjs deploy check --root <仓>              # 校验某仓部署 caller 的生成区
-node bin/cli.mjs selftest --shims --root <仓>          # 校验某仓入口 shim 与模板一致
 ```
 
 **本仓配置**：`.dsh/pipeline.json` = `{"repo":"guraul/dsh-pipeline","ci":[],"highRisk":[".github/**"]}`。注意 `highRisk` 是**追加**语义——`lib/policy.mjs` 的默认清单（`AGENTS.md`、`scripts/pipeline/**`、`docs/pipeline/**`、`**/.gitignore`、`**/package.json` 的依赖变更等）**恒生效**，配置里只多一条 `.github/**`。
