@@ -16,7 +16,19 @@ test('parseVersion：合法版本 / 预发布 / build / 非法', () => {
   assert.deepEqual(parseVersion('1.2.3+build.5'), { major: 1, minor: 2, patch: 3, pre: [] })
   assert.deepEqual(parseVersion('1.2.3-rc.1+build'), { major: 1, minor: 2, patch: 3, pre: ['rc', '1'] })
 
-  for (const bad of ['', '1.2', 'v1.2.3', '1.2.3.4', '^1.2.3', null, undefined, 123]) {
+  for (const bad of [
+    '',
+    '1.2',
+    'v1.2.3',
+    '1.2.3.4',
+    '^1.2.3',
+    '1.0.0-rc.01', // 数字标识符带前导零
+    '1.0.0-a..b', // 空标识符
+    '1.0.0-',
+    null,
+    undefined,
+    123,
+  ]) {
     assert.equal(parseVersion(bad), null, `${String(bad)} 应判非法`)
   }
 })
@@ -98,7 +110,7 @@ test('satisfies：-0 上界把上界版本的预发布也排除掉', () => {
 test('satisfies：非字符串非对象 / 非法版本 / 带数字的通配一律 false', () => {
   assert.equal(satisfies(5, '*'), false)
   assert.equal(satisfies(null, '*'), false)
-  assert.equal(satisfies('1.0.0-01', '*'), false) // 前导零的数字标识符合法
+  assert.equal(satisfies('1.0.0-01', '*'), false) // 前导零的数字标识符不合法
   assert.equal(satisfies('1.x', '*'), false) // 只认裸 *
   assert.equal(satisfies('1.0.0', '1.x'), false) // 带数字的通配不支持
 })
