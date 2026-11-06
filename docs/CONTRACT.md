@@ -214,6 +214,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 3. 仓库差异只能落在 `repo` / `highRisk` / `roles` / `worktreesDir` / `checks.*` / `deploy.*` 之内，以及（P2 起）`review.*`；
 4. `deploy.paths` 是**非空**数组：写成 `[]` 会被拒（`E_CONFIG`）——空数组等于静默丢掉过滤，想要「任何 push 都部署」就整个省略该字段。
 5. `deploy.linkPaths` 的**路径部分**是相对路径、不许含 `..` 段、不许含 `,`：它会拼进远端 `rm -f`/`ln -s` 的路径，`../..` 能建到 release 之外（越界由执行前的 `realpath` 断言拦下，属双保险）。要外置状态就写 `data=../../shared/data` 这类平级路径。
+6. `deploy.linkPaths` 的**目标必须已存在**（fail-closed）：`ln -s` 不要求目标存在，会静默建出悬空软链，而健康检查打的是**旧进程**，部署会绿着过去、把问题推迟到切换时才炸（起点是空库最危险）。因此远端建链前会解析目标并 `[ -e ]` 断言，不存在即 `::error::` 退 1。持久化目录要先准备好，不能指望部署替你创建。
 
 > 反面教材：2026-11-04 有人往本文件加了 `doctorRepos`，包判未知字段，`task`/`pr`/`merge` 三条同时失效，CI 不覆盖这类错误。
 
@@ -411,6 +412,7 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | 2026-11-06 | 新增 §7.3 审核档位：`review.tier`（inline / tools，缺省 tools）进 schema；`review prepare` 在 inline 档自动并入 `git show --stat` 与 `gh pr checks` 证据。v1.2 里「`review.*` 仍未实现」一项自此收窄为「`review` 的其余字段仍未实现」 |
 | 2026-11-06 | §7.1 `deploy` 段补 `qualityCmd` / `buildCmd` / `paths` 三个可选字段（issue #71），硬规则补「`paths` 空数组被拒」 |
 | 2026-11-06 | §7.1 `deploy` 段补 `linkPaths` 可选字段（issue #80）：渲染成 `with.link_paths`，切 dist 软链前在 release 内逐对建持久化路径软链；`deploy.yml` 新增同名 input 与 `Link persistent paths` 步骤 |
+| 2026-11-07 | `link_paths` 目标改为 fail-closed（issue #94）：建链前解析目标并 `[ -e ]` 断言，目标不存在即退 1——避免建出悬空软链、部署绿着过去，切换时才以空库形态炸 |
 | 2026-11-06 | 审核第 1 轮 REJECT 修正（issue #81）：`linkPaths` 的路径部分拒绝绝对路径 / `..` 段 / `,`（它会拼进远端 `rm -f`/`ln -s` 的路径）；远端执行前用 `realpath` 断言仍在 `releases/<id>/` 内，且只对父目录做规范化、末段用 `rm -f` 解链重建（避免解析已存在的软链后误删目标） |
 | 2026-11-06 | §7.3 补「超时之后必须清理残留进程」与「审核材料的模板与上限」（issue #82）：600 秒超时后 `codebuddy -p` 残留会导致连续误超时；inline 材料按模板拼装、总长 ≤60 行（diff ≤40 行），超出即拆轮；清理判据用「父调用已超时」而非固定分钟数 |
 | 2026-11-06 | §9 实现 `selftest --exit-codes`（起子进程真跑：缺必填参数 / 未知参数 / 未知子命令 → 2，入口找不到共享包 → 3）；§3.2 / §3.3 / §9 标题与「仍未实现」清单同步收敛为 `--lock` / `--peer` |
