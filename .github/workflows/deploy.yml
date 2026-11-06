@@ -254,19 +254,19 @@ jobs:
             echo "${SSH} \"cd ${REMOTE_DIR}/.deploy-history && ls -1t *.tar.gz 2>/dev/null | tail -n +$((KEEP_RELEASES + 1)) | xargs -r rm -rf\""
           else
             echo "rsync -az --delete ${WORK_DIR}/${ARTIFACT_DIR}/ root@${HOST}:${REMOTE_DIR}/releases/${RELEASE}/"
-            echo "${SSH} \"cd ${REMOTE_DIR} && ln -sfn releases/${RELEASE} dist && systemctl restart ${SERVICE}\""
-            echo "${SSH} \"cd ${REMOTE_DIR} && ls -1dt releases/*/ | tail -n +$((KEEP_RELEASES + 1)) | xargs -r rm -rf\""
             if [ -n "$LINK_PATHS" ]; then
-              echo "# 切软链前，逐条在 release 内建持久化路径软链（相对目标按软链所在目录解析）:"
+              echo "# 切 dist 软链之前，逐条建持久化路径软链（先断言不越出 release，再 rm -f 旧链后重建）:"
               IFS=',' read -ra pairs <<< "$LINK_PATHS"
               for pair in "${pairs[@]}"; do
                 pair="${pair#"${pair%%[![:space:]]*}"}"
                 pair="${pair%"${pair##*[![:space:]]}"}"
                 if [ -n "$pair" ]; then
-                  echo "${SSH} \"cd ${REMOTE_DIR} && ln -s ${pair#*=} releases/${RELEASE}/${pair%%=*}\""
+                  echo "${SSH} \"cd ${REMOTE_DIR} && mkdir -p \$(dirname releases/${RELEASE}/${pair%%=*}) && rm -f releases/${RELEASE}/${pair%%=*} && ln -s ${pair#*=} releases/${RELEASE}/${pair%%=*}\""
                 fi
               done
             fi
+            echo "${SSH} \"cd ${REMOTE_DIR} && ln -sfn releases/${RELEASE} dist && systemctl restart ${SERVICE}\""
+            echo "${SSH} \"cd ${REMOTE_DIR} && ls -1dt releases/*/ | tail -n +$((KEEP_RELEASES + 1)) | xargs -r rm -rf\""
           fi
           echo "curl -sS -m 8 -o /dev/null -w '%{http_code}' ${HEALTH_URL}"
           echo "若配置了 public_health_url，会在 Health check 之后额外探一次对外链路（Caddy/证书），非 200 即失败"
@@ -343,9 +343,11 @@ jobs:
             ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new "root@${HOST}" \
               "set -e; cd ${REMOTE_DIR} \
                 && base=\$(realpath -m \"releases/${RELEASE}\") \
-                && full=\$(realpath -m \"releases/${RELEASE}/${rel}\") \
+                && rdir=\$(dirname \"${rel}\") && rname=\$(basename \"${rel}\") \
+                && full=\"\$(realpath -m \"releases/${RELEASE}/\${rdir}\")/\${rname}\" \
                 && case \"\${full}\" in \"\${base}\"/*) ;; *) echo \"越界: \${full} 不在 \${base} 内\" >&2; exit 1 ;; esac \
-                && mkdir -p \"\$(dirname \"\${full}\")\" && rm -rf \"\${full}\" && ln -s \"${target}\" \"\${full}\""
+                && mkdir -p \"\$(dirname \"\${full}\")\" \
+                && rm -f \"\${full}\" && ln -s \"${target}\" \"\${full}\""
             echo "linked: releases/${RELEASE}/${rel} -> ${target}"
           done
 
