@@ -74,6 +74,7 @@ import {
 import { runTask as runTaskFlow } from '../lib/task.mjs'
 import { describeBuild } from '../lib/build-info.mjs'
 import { describeRow, diagnose } from '../lib/doctor.mjs'
+import { checkProfile } from '../lib/profile-check.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8'))
@@ -121,6 +122,10 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
   --repo <a,b>       要检查的仓库根（逗号分隔；缺省当前目录）
   --json             机器可读输出（退出码与人读模式一致）
   --expect <sha>     期望的构建 sha（可传 7 位短 sha；不一致则退出 1）
+  --profile <dir>    可选：额外体检 profile——包声明（旧包已无 / 新包已有）、插件软链有效性、
+                     dsh --dump-config 可见性（dsh 不可用时跳过不算失败）、cordis.patch.yml、
+                     审核记录目录可写；逐项 ✓/✗，任一 ✗ 退出 1。不给该 flag 则只比构建，
+                     行为与现状一致
   selftest   一致性自检（契约 §9；已实现 --shims / --config / --repos，--peer/--exit-codes 未实现）
   shim       生成 / 校验入口 shim（契约 §8）
   hooks      安装 / 校验 pre-push 直推拦截钩子
@@ -1386,10 +1391,13 @@ function collectRecords(root) {
   return { records, invalid }
 }
 
-/** doctor：检查各仓装的共享包是不是同一个构建。 */
+/** doctor：检查各仓装的共享包是不是同一个构建；--profile 时额外逐项体检 profile。 */
 function runDoctor(argv, deps, io) {
-  const parsed = parseArgs(argv, new Set(['repo', 'expect']), new Set(['json']))
+  const parsed = parseArgs(argv, new Set(['repo', 'expect', 'profile']), new Set(['json']))
   if (parsed.error) return argError(io, 'doctor', parsed.error)
+  if (parsed.options.profile !== undefined && !nonEmpty(parsed.options.profile)) {
+    return argError(io, 'doctor', '--profile 必须是非空目录路径')
+  }
 
   const raw = parsed.options.repo
   // 逗号分隔多值（parseArgs 不接受重复参数，保持其它子命令的口径一致）；
@@ -1407,23 +1415,26 @@ function runDoctor(argv, deps, io) {
   const { rows, baseline, drift } = diagnose(roots)
   const allSource = rows.length > 0 && rows.every((row) => row.source === true)
 
+  // profile 体检（可选）：给了 --profile 才跑；先算好——--json 的载荷与退出码都要用它。
+  const wantProfile = parsed.options.profile !== undefined
+  const env = deps.env !== undefined ? deps.env : process.env
+  const profile = wantProfile
+    ? checkProfile(String(parsed.options.profile), { env, repos: roots, runner: deps.runner })
+    : null
+
   if (parsed.options.json === true) {
-    io.out(
-      JSON.stringify(
-        {
-          baseline,
-          drift,
-          rows: rows.map((row) => ({
-            root: row.root,
-            installed: row.installed,
-            source: row.source === true,
-            build: row.build,
-          })),
-        },
-        null,
-        2,
-      ),
-    )
+    const payload = {
+      baseline,
+      drift,
+      rows: rows.map((row) => ({
+        root: row.root,
+        installed: row.installed,
+        source: row.source === true,
+        build: row.build,
+      })),
+    }
+    if (profile !== null) payload.profile = profile
+    io.out(JSON.stringify(payload, null, 2))
   } else {
     for (const row of rows) io.out(`${row.root}\t${describeRow(row)}`)
     if (baseline === null && !allSource) {
@@ -1432,19 +1443,36 @@ function runDoctor(argv, deps, io) {
   }
 
   // 退出码在两种输出模式之间必须一致：CI 常用 --json，不能因为换了输出格式就当成功
-  if (allSource) return 0
-  if (baseline === null) return 1
+  let failed = false
+  if (allSource) {
+    // 全是源码目录：没有可比的安装，构建视为通过（与旧行为一致，不看 --expect / 漂移）
+  } else if (baseline === null) {
+    failed = true
+  } else {
+    const expected = nonEmpty(parsed.options.expect) ? String(parsed.options.expect).toLowerCase() : null
+    if (expected !== null && !buildMatchesExpected(baseline, expected)) {
+      io.err(`doctor: 基准构建 ${baseline.slice(0, 7)} 与期望 ${expected.slice(0, 7)} 不一致`)
+      failed = true
+    } else if (drift.length > 0) {
+      io.err(`doctor: 以下仓装的不是同一构建（基准 ${baseline.slice(0, 7)}）: ${drift.join(', ')}`)
+      failed = true
+    }
+  }
 
-  const expected = nonEmpty(parsed.options.expect) ? String(parsed.options.expect).toLowerCase() : null
-  if (expected !== null && !buildMatchesExpected(baseline, expected)) {
-    io.err(`doctor: 基准构建 ${baseline.slice(0, 7)} 与期望 ${expected.slice(0, 7)} 不一致`)
-    return 1
+  // profile 段接在构建段之后：逐项 ✓/✗（✓ 走 stdout、✗ 走 stderr，与本仓输出约定一致），
+  // 跳过项打 '-'；任一项 ✗ → 整体退出 1（构建不一致也是 1）；--json 模式不逐行打，
+  // 结果在 payload.profile 里（退出码与人读模式一致）
+  if (profile !== null && parsed.options.json !== true) {
+    for (const item of profile.checks) {
+      const mark = item.skipped === true ? '-' : item.ok ? '✓' : '✗'
+      const line = `${mark} ${item.desc}`
+      if (item.ok) io.out(line)
+      else io.err(line)
+    }
   }
-  if (drift.length > 0) {
-    io.err(`doctor: 以下仓装的不是同一构建（基准 ${baseline.slice(0, 7)}）: ${drift.join(', ')}`)
-    return 1
-  }
-  return 0
+  if (profile !== null && profile.failed) failed = true
+
+  return failed ? 1 : 0
 }
 
 /** --expect 允许传短 sha（输出里都是 7 位），任一方向前缀匹配即算一致。 */

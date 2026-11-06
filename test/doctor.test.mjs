@@ -6,11 +6,13 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
+import { join, relative } from 'node:path'
 
+import { runCli } from '../bin/cli.mjs'
 import { describeRow, diagnose, inspectRepo } from '../lib/doctor.mjs'
+import { resolveProfileDir } from '../lib/profile-check.mjs'
 
 function tmp() {
   return mkdtempSync(join(tmpdir(), 'dsh-doctor-'))
@@ -106,4 +108,202 @@ test('doctor：全部是源码目录时无漂移（没有可比的安装）', (t
   const { baseline, drift } = diagnose([src])
   assert.equal(baseline, null)
   assert.deepEqual(drift, [])
+})
+
+/** CLI 层跑 doctor：返回退出码与两路输出（profile 体检的 ✓/✗ 分两路，都要断言）。 */
+function runDoctor(args, deps = {}) {
+  const state = { out: '', err: '' }
+  const code = runCli(['doctor', ...args], {
+    stdout: (text) => {
+      state.out += text
+    },
+    stderr: (text) => {
+      state.err += text
+    },
+    ...deps,
+  })
+  return { code, ...state }
+}
+
+/** 造一个 profile 目录：按开关写 package.json 的包声明、cordis.patch.yml 与新包软链。 */
+function fakeProfile(dir, { oldPkg = false, newPkg = true, cordis = true, link = 'valid' } = {}) {
+  mkdirSync(dir, { recursive: true })
+  const dependencies = {}
+  if (oldPkg) dependencies['dsh-plugin-product-subagents'] = 'link:../dsh-plugin-product-subagents'
+  if (newPkg) dependencies['dsh-plugin-subagents'] = 'link:../dsh-subagents'
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'web', private: true, dependencies }))
+  if (cordis) writeFileSync(join(dir, 'cordis.patch.yml'), 'patch: {}\n')
+  if (link !== 'none') {
+    const nodeModules = join(dir, 'node_modules')
+    mkdirSync(nodeModules, { recursive: true })
+    const linkPath = join(nodeModules, 'dsh-plugin-subagents')
+    if (link === 'valid') {
+      const target = join(dir, 'dsh-link-target')
+      mkdirSync(target, { recursive: true })
+      // 相对软链：解析必须按链接所在目录，不能按进程 cwd
+      symlinkSync(relative(nodeModules, target), linkPath)
+    } else {
+      symlinkSync('missing-target', linkPath)
+    }
+  }
+  return dir
+}
+
+/** PATH 指向不存在的目录 → findInPath 判定 dsh 不可用，dump-config 项跳过且不真调 dsh。 */
+const NO_DSH = { PATH: '/nonexistent-bin' }
+
+/** 造假 dsh 可执行文件（配合注入的 runner，dump-config 不真跑）。 */
+function fakeDshBin(base) {
+  const bin = join(base, 'bin')
+  mkdirSync(bin, { recursive: true })
+  const file = join(bin, 'dsh')
+  writeFileSync(file, '#!/bin/sh\nexit 0\n')
+  chmodSync(file, 0o755)
+  return bin
+}
+
+test('doctor --profile：package.json 仍有旧包 → exit 1，「已无旧包」项报 ✗', (t) => {
+  const base = tmp()
+  t.after(() => rmSync(base, { recursive: true, force: true }))
+  const repo = repoWithPackage(join(base, 'repo'), BUILD_A)
+  const profile = fakeProfile(join(base, 'profile'), { oldPkg: true })
+
+  const r = runDoctor(['--repo', repo, '--profile', profile], { env: NO_DSH })
+  assert.equal(r.code, 1, '构建一致，exit 1 必须来自 profile 体检')
+  assert.match(r.err, /✗ profile 里已无 dsh-plugin-product-subagents/)
+})
+
+test('doctor --profile：缺新包 dsh-plugin-subagents → exit 1', (t) => {
+  const base = tmp()
+  t.after(() => rmSync(base, { recursive: true, force: true }))
+  const repo = repoWithPackage(join(base, 'repo'), BUILD_A)
+  const profile = fakeProfile(join(base, 'profile'), { newPkg: false, link: 'none' })
+
+  const r = runDoctor(['--repo', repo, '--profile', profile], { env: NO_DSH })
+  assert.equal(r.code, 1)
+  assert.match(r.err, /✗ profile 里有 dsh-plugin-subagents/)
+})
+
+test('doctor --profile：缺 cordis.patch.yml → exit 1', (t) => {
+  const base = tmp()
+  t.after(() => rmSync(base, { recursive: true, force: true }))
+  const repo = repoWithPackage(join(base, 'repo'), BUILD_A)
+  const profile = fakeProfile(join(base, 'profile'), { cordis: false })
+
+  const r = runDoctor(['--repo', repo, '--profile', profile], { env: NO_DSH })
+  assert.equal(r.code, 1)
+  assert.match(r.err, /✗ cordis\.patch\.yml 存在且非空/)
+})
+
+test('doctor --profile：全部检查项都过 → 构建段原样在前、profile 段全 ✓，exit 0', (t) => {
+  const base = tmp()
+  t.after(() => rmSync(base, { recursive: true, force: true }))
+  const repo = repoWithPackage(join(base, 'repo'), BUILD_A)
+  const profile = fakeProfile(join(base, 'profile'))
+  const calls = []
+  const runner = (command, args) => {
+    calls.push([command, ...args])
+    return { status: 0, stdout: 'bundle dsh-plugin-subagents\n', stderr: '' }
+  }
+
+  const r = runDoctor(['--repo', repo, '--profile', profile], { env: { PATH: fakeDshBin(base) }, runner })
+  assert.equal(r.code, 0)
+  assert.equal(r.err, '')
+  const out = r.out.split('\n').filter((line) => line.length > 0)
+  assert.ok(out[0].startsWith(`${repo}\t`), `第一行是构建比对结果（保持原样），实际: ${out[0]}`)
+  assert.match(r.out, /✓ profile 里已无 dsh-plugin-product-subagents/)
+  assert.match(r.out, /✓ profile 里有 dsh-plugin-subagents/)
+  assert.match(r.out, /✓ 软链有效 -> /)
+  assert.match(r.out, /✓ dsh --dump-config 能看到 dsh-plugin-subagents/)
+  assert.match(r.out, /✓ cordis\.patch\.yml 存在且非空/)
+  assert.match(r.out, /✓ 审核记录目录可写/)
+  assert.match(r.out, /✓ profile 目录 .*DSH_HOME/)
+  assert.deepEqual(calls, [['dsh', '--profile', 'profile', '--dump-config']], 'dump-config 只调一次')
+  assert.equal(out.length, 8, `构建 1 行 + profile 7 行，实际: ${JSON.stringify(out)}`)
+})
+
+test('doctor 不带 --profile → 不跑 profile 体检（DSH_HOME 指向有旧包的 profile 仍 exit 0）', (t) => {
+  const base = tmp()
+  t.after(() => rmSync(base, { recursive: true, force: true }))
+  const repo = repoWithPackage(join(base, 'repo'), BUILD_A)
+  const home = join(base, 'dsh-home')
+  fakeProfile(join(home, 'profiles', 'web'), { oldPkg: true, newPkg: false, cordis: false })
+
+  const r = runDoctor(['--repo', repo], { env: { DSH_HOME: home } })
+  assert.equal(r.code, 0)
+  assert.ok(!r.out.includes('✓'), `不该出现体检行（stdout）: ${r.out}`)
+  assert.ok(!r.err.includes('✗'), `不该出现体检行（stderr）: ${r.err}`)
+})
+
+test('doctor --json --profile：体检结果并进 JSON，退出码与人读模式一致', (t) => {
+  const base = tmp()
+  t.after(() => rmSync(base, { recursive: true, force: true }))
+  const repo = repoWithPackage(join(base, 'repo'), BUILD_A)
+  const profile = fakeProfile(join(base, 'profile'), { oldPkg: true })
+
+  const r = runDoctor(['--repo', repo, '--profile', profile, '--json'], { env: NO_DSH })
+  assert.equal(r.code, 1)
+  assert.equal(r.err, '', '--json 模式不逐行打 ✓/✗，结果在 payload 里')
+  const payload = JSON.parse(r.out)
+  assert.equal(payload.profile.dir, profile)
+  assert.equal(payload.profile.failed, true)
+  assert.equal(payload.profile.checks.length, 7)
+  assert.equal(payload.profile.checks[0].ok, false)
+  assert.equal(payload.profile.checks[3].skipped, true, 'dsh 不可用时 dump-config 项标记跳过')
+})
+
+test('doctor --profile：新包软链有效 → 软链项 ✓（相对目标按链接所在目录解析）', (t) => {
+  const base = tmp()
+  t.after(() => rmSync(base, { recursive: true, force: true }))
+  const repo = repoWithPackage(join(base, 'repo'), BUILD_A)
+  const profile = fakeProfile(join(base, 'profile'))
+
+  const r = runDoctor(['--repo', repo, '--profile', profile], { env: NO_DSH })
+  assert.equal(r.code, 0)
+  assert.ok(
+    r.out.includes(`✓ 软链有效 -> ${join(profile, 'dsh-link-target')}`),
+    `软链项应 ✓ 且目标是按链接所在目录解析出的绝对路径，实际: ${r.out}`,
+  )
+})
+
+test('doctor --profile：新包软链悬空 → exit 1，提示在 profile 目录跑 pnpm install', (t) => {
+  const base = tmp()
+  t.after(() => rmSync(base, { recursive: true, force: true }))
+  const repo = repoWithPackage(join(base, 'repo'), BUILD_A)
+  const profile = fakeProfile(join(base, 'profile'), { link: 'dangling' })
+
+  const r = runDoctor(['--repo', repo, '--profile', profile], { env: NO_DSH })
+  assert.equal(r.code, 1)
+  assert.match(r.err, /✗ 软链悬空（.*missing-target），需在 profile 目录跑 pnpm install/)
+})
+
+test('doctor --profile：dsh 不在 PATH → dump-config 项跳过、不算失败，exit 0', (t) => {
+  const base = tmp()
+  t.after(() => rmSync(base, { recursive: true, force: true }))
+  const repo = repoWithPackage(join(base, 'repo'), BUILD_A)
+  const profile = fakeProfile(join(base, 'profile'))
+
+  const r = runDoctor(['--repo', repo, '--profile', profile], { env: NO_DSH })
+  assert.equal(r.code, 0)
+  assert.equal(r.err, '')
+  assert.match(r.out, /- dsh --dump-config 能看到 dsh-plugin-subagents（跳过：dsh 不可用）/)
+})
+
+test('doctor --profile：dsh 可用但 --dump-config 输出里没有该包 → exit 1', (t) => {
+  const base = tmp()
+  t.after(() => rmSync(base, { recursive: true, force: true }))
+  const repo = repoWithPackage(join(base, 'repo'), BUILD_A)
+  const profile = fakeProfile(join(base, 'profile'))
+  const runner = () => ({ status: 0, stdout: '{"plugins":[]}\n', stderr: '' })
+
+  const r = runDoctor(['--repo', repo, '--profile', profile], { env: { PATH: fakeDshBin(base) }, runner })
+  assert.equal(r.code, 1)
+  assert.match(r.err, /✗ dsh --dump-config 能看到 dsh-plugin-subagents/)
+})
+
+test('profile 目录口径：--profile 给了用它；不给用 $DSH_HOME/profiles/web（DSH_HOME 缺省 $HOME/.dsh）', () => {
+  assert.equal(resolveProfileDir('/tmp/custom', { DSH_HOME: '/x/.dsh' }), '/tmp/custom')
+  assert.equal(resolveProfileDir(undefined, { DSH_HOME: '/x/.dsh' }), join('/x/.dsh', 'profiles', 'web'))
+  assert.equal(resolveProfileDir(undefined, { HOME: '/u' }), join('/u', '.dsh', 'profiles', 'web'))
+  assert.equal(resolveProfileDir(undefined, {}), join(homedir(), '.dsh', 'profiles', 'web'))
 })
