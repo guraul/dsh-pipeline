@@ -70,6 +70,25 @@ test('currentBranch / headSha / remoteUrl：各自对应一条只读命令', () 
   assert.equal(remoteResult.data, 'git@github.com:guraul/dsh-pipeline.git')
 })
 
+test('branchShow / headOneline / worktreeListPlain：status 仓库概览用的三条只读命令', () => {
+  const branch = recorder({ status: 0, stdout: 'main\n', stderr: '' })
+  assert.equal(git.branchShow(CWD, { runner: branch }).data, 'main')
+  assert.deepEqual(branch.calls[0].args, ['-C', CWD, 'branch', '--show-current'])
+
+  // detached 时 --show-current 成功但输出空串：调用方据此拼 <detached> <sha7>
+  const detached = recorder({ status: 0, stdout: '', stderr: '' })
+  assert.equal(git.branchShow(CWD, { runner: detached }).data, '')
+  assert.equal(git.branchShow(CWD, { runner: detached }).ok, true)
+
+  const oneline = recorder({ status: 0, stdout: 'abc1234 修一个 bug\n', stderr: '' })
+  assert.equal(git.headOneline(CWD, { runner: oneline }).data, 'abc1234 修一个 bug')
+  assert.deepEqual(oneline.calls[0].args, ['-C', CWD, 'log', '--oneline', '-1'])
+
+  const list = recorder({ status: 0, stdout: '/repo (main)\n/wt (task/7)\n\n', stderr: '' })
+  assert.deepEqual(git.worktreeListPlain(CWD, { runner: list }).data, ['/repo (main)', '/wt (task/7)'])
+  assert.deepEqual(list.calls[0].args, ['-C', CWD, 'worktree', 'list'])
+})
+
 test('fetch：默认 origin，带 --prune，remote 可覆盖', () => {
   const runner = recorder({ status: 0, stdout: '', stderr: '' })
   git.fetch(CWD, { runner })
@@ -203,6 +222,7 @@ test('cwd 非法时拒绝，不调用 git', () => {
 test('导出面固定：只有具名操作，没有接受 argv 的通用入口', () => {
   const callables = Object.entries(git).filter(([, value]) => typeof value === 'function')
   assert.deepEqual(callables.map(([name]) => name).sort(), [
+    'branchShow',
     'checkout',
     'configGet',
     'configSet',
@@ -210,6 +230,7 @@ test('导出面固定：只有具名操作，没有接受 argv 的通用入口',
     'deleteBranch',
     'fetch',
     'gitCommonDir',
+    'headOneline',
     'headSha',
     'mergeFF',
     'push',
@@ -218,6 +239,7 @@ test('导出面固定：只有具名操作，没有接受 argv 的通用入口',
     'toplevel',
     'worktreeAdd',
     'worktreeList',
+    'worktreeListPlain',
     'worktreeRemove',
   ])
 

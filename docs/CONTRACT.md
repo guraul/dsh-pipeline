@@ -75,8 +75,8 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | `review publish --post-review` | 同时把判定发成 GitHub review（幂等） | **目标（P2）** |
 | `record` | 只落盘判定记录（供外部流程使用） | 现行 |
 | `gate` | 审核闸门检查（记录存在性、SHA 绑定、高风险路径） | 现行 |
-| `merge` | 闸门通过后 squash 合并 + 清理 worktree/分支 + 快进 main | 现行 |
-| `status` | 审核记录概况 | 现行 |
+| `merge` | 闸门通过后 squash 合并 + 清理 worktree/分支 + 快进 main；`--review-record` 是 `--record` 的兼容别名（旧写法，后续将弃用；两者取值不同则报错） | 现行 |
+| `status` | 审核记录概况，含仓库概览（root/branch/head/worktrees；git 取不到时该段只提示，不影响退出码） | 现行 |
 | `doctor` | 检查仓库装的共享包是否同一构建；`--profile <dir>` 可选：体检 profile 包声明、插件软链有效性、`dsh --dump-config` 可见性（dsh 不可用时跳过）、审核记录目录可写，另含原 review-loop-check.sh 没有的 `cordis.patch.yml` 非空与目录/DSH_HOME 报告两项 | 现行 |
 | `selftest` | 一致性自检（见 §9） | **目标（P2）** |
 | `check-all` | 按配置逐包跑声明的检查并汇总 | **目标（P2）** |

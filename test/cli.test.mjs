@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -288,6 +288,92 @@ test('merge: 记录通过但未配置 repo 时退出码 2', () => {
     2,
   )
   assert.match(io.state.err, /未配置仓库标识/)
+  assert.equal(calls.length, 0)
+})
+
+test('merge: --review-record 与 --record 等价（空格 / = 两种写法都放行合并）', () => {
+  const forms = [
+    (file) => ['--review-record', file],
+    (file) => [`--review-record=${file}`],
+    (file) => ['--record', file],
+  ]
+  for (const build of forms) {
+    const root = tmp()
+    withRepo(root)
+    const file = writeApprovedRecord(root)
+    const io = makeIO()
+    const { runner, calls } = stubRunner(root)
+
+    assert.equal(
+      run(['merge', '--pr', '7', '--root', root, ...build(file), '--head-sha', SHA], io, { runner }),
+      0,
+      io.state.err,
+    )
+    assert.match(io.state.out, /已合并 PR #7（--squash）/)
+    assert.equal(calls.filter((call) => call.command === 'gh' && call.args[1] === 'merge').length, 1)
+  }
+})
+
+test('merge: --review-record 的取值就是审核记录（head 不符照样闸门拒绝）', () => {
+  const root = tmp()
+  withRepo(root)
+  const file = writeApprovedRecord(root, { head_sha: OTHER_SHA })
+  const io = makeIO()
+  const { runner, calls } = stubRunner(root)
+
+  assert.equal(
+    run(['merge', '--pr', '7', '--root', root, '--review-record', file, '--head-sha', SHA], io, { runner }),
+    1,
+  )
+  assert.equal(calls.length, 0, '闸门拒绝时不发任何 gh / git 命令')
+  assert.match(io.state.err, /判定已作废/)
+})
+
+test('merge: --record 与 --review-record 取值不同 → 退 2 报两个参数冲突', () => {
+  const root = tmp()
+  withRepo(root)
+  const file = writeApprovedRecord(root)
+  const io = makeIO()
+  const { runner, calls } = stubRunner(root)
+
+  assert.equal(
+    run(
+      ['merge', '--pr', '7', '--root', root, '--record', file, '--review-record', 'other.json', '--head-sha', SHA],
+      io,
+      { runner },
+    ),
+    2,
+  )
+  assert.match(io.state.err, /两个参数冲突/)
+  assert.equal(io.state.out, '')
+  assert.equal(calls.length, 0, '参数错误不发出任何 gh / git 命令')
+})
+
+test('merge: 两个 flag 给同一取值不算冲突；--review-record 与 --no-review 仍互斥', () => {
+  const root = tmp()
+  withRepo(root)
+  const file = writeApprovedRecord(root)
+
+  const same = makeIO()
+  const { runner } = stubRunner(root)
+  assert.equal(
+    run(['merge', '--pr', '7', '--root', root, '--record', file, '--review-record', file, '--head-sha', SHA], same, {
+      runner,
+    }),
+    0,
+    same.state.err,
+  )
+  assert.match(same.state.out, /已合并 PR #7（--squash）/)
+
+  const denied = makeIO()
+  const { runner: other, calls } = stubRunner(root)
+  assert.equal(
+    run(['merge', '--pr', '7', '--root', root, '--review-record', file, '--no-review', '--reason', 'x'], denied, {
+      runner: other,
+    }),
+    2,
+  )
+  assert.match(denied.state.err, /不能同时使用 --record 与 --no-review/)
   assert.equal(calls.length, 0)
 })
 
@@ -791,6 +877,96 @@ test('status: 显式 --root 优先于 cwd，空值退出 2', () => {
   const empty = makeIO()
   assert.equal(run(['status', '--root', ''], empty, { cwd: cwdRoot }), 2)
   assert.match(empty.state.err, /--root 必须是非空目录路径/)
+})
+
+/** 造一个有提交、还带一棵 linked worktree 的临时 git 仓，返回分支名。 */
+function makeGitRepo(prefix) {
+  const repo = mkdtempSync(join(tmpdir(), prefix))
+  runGit(repo, ['init'])
+  runGit(repo, [
+    '-c',
+    'user.email=test@example.com',
+    '-c',
+    'user.name=test',
+    'commit',
+    '--allow-empty',
+    '-m',
+    'init commit',
+  ])
+  const branch = spawnSync('git', ['-C', repo, 'branch', '--show-current'], { encoding: 'utf8' })
+  assert.equal(branch.status, 0, branch.stderr)
+  return { repo, branch: branch.stdout.trim() }
+}
+
+test('status: 仓库概览打出根目录 / 分支 / HEAD / worktree 列表，且排在审核记录段之前', () => {
+  const { repo, branch } = makeGitRepo('dsh-status-overview-')
+  const wt = join(repo, 'wt')
+  runGit(repo, ['worktree', 'add', wt])
+
+  const io = makeIO()
+  assert.equal(run(['status', '--root', repo], io), 0, io.state.err)
+
+  const out = io.state.out
+  const overviewAt = out.indexOf('仓库概览:')
+  const recordsAt = out.indexOf('审核记录:')
+  assert.ok(overviewAt !== -1, `缺少仓库概览段:\n${out}`)
+  assert.ok(recordsAt > overviewAt, `仓库概览段应在审核记录段之前:\n${out}`)
+
+  assert.ok(branch.length > 0, '临时仓应停在某个分支上')
+  assert.ok(out.includes(`  根目录:   ${repo}`), out)
+  assert.ok(out.includes(`  当前分支: ${branch}`), out)
+  assert.match(out, /  HEAD:\s+\S+ init commit/)
+
+  const lines = out.split('\n')
+  // git worktree list 会把路径解析成真实路径（macOS 的 /var 是指向 /private/var 的符号链接），
+  // 并把路径列补齐到同一宽度，所以只断言「4 空格缩进 + 路径开头」
+  const realRepo = realpathSync(repo)
+  assert.ok(lines.some((line) => line.startsWith(`    ${realRepo}`)), `worktree 列表应逐行缩进:\n${out}`)
+  assert.ok(
+    lines.some((line) => line.startsWith(`    ${realRepo}/wt`)),
+    `worktree 列表应含 linked worktree:\n${out}`,
+  )
+
+  assert.ok(out.includes('审核记录: 0 条'), out)
+  assert.equal(io.state.err, '')
+})
+
+test('status: 非 git 目录只把概览段换成提示行，审核记录段照常、退出 0', () => {
+  const root = tmp()
+  const io = makeIO()
+
+  assert.equal(run(['status', '--root', root], io), 0, io.state.err)
+  assert.match(io.state.out, /仓库概览:\n（非 git 仓库或 git 不可用）/)
+  assert.match(io.state.out, /审核记录: 0 条/)
+  assert.match(io.state.out, /最近一条: 无/)
+  assert.equal(io.state.err, '')
+})
+
+test('status --json: payload 含 repo {root, branch, head, worktrees}；非 git 时降级为 null', () => {
+  const { repo, branch } = makeGitRepo('dsh-status-json-')
+
+  const io = makeIO()
+  assert.equal(run(['status', '--root', repo, '--json'], io), 0, io.state.err)
+  const payload = JSON.parse(io.state.out)
+  assert.equal(payload.repo.root, repo)
+  assert.equal(payload.repo.branch, branch)
+  assert.match(payload.repo.head, /init commit/)
+  assert.equal(Array.isArray(payload.repo.worktrees), true)
+  assert.ok(payload.repo.worktrees.length >= 1)
+  assert.equal(payload.records, 0)
+  assert.equal(payload.latest, null)
+  assert.equal(payload.invalid, 0)
+  assert.doesNotMatch(io.state.out, /审核记录:/)
+
+  const plainRoot = tmp()
+  const plain = makeIO()
+  assert.equal(run(['status', '--root', plainRoot, '--json'], plain), 0, plain.state.err)
+  assert.deepEqual(JSON.parse(plain.state.out).repo, {
+    root: plainRoot,
+    branch: null,
+    head: null,
+    worktrees: [],
+  })
 })
 
 test('参数错误退出码 2', () => {

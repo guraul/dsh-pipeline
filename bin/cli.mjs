@@ -28,16 +28,19 @@ import { evaluateGate } from '../lib/gate.mjs'
 import { issueView, prChecks, prDiff, prMerge, prView } from '../lib/gh.mjs'
 import { checkHook, installHook } from '../lib/hooks.mjs'
 import {
+  branchShow,
   checkout,
   currentBranch,
   deleteBranch,
   fetch as gitFetch,
   gitCommonDir,
+  headOneline,
   headSha as gitHeadSha,
   mergeFF,
   statusPorcelain,
   toplevel,
   worktreeList,
+  worktreeListPlain,
   worktreeRemove,
 } from '../lib/git.mjs'
 import { runMerge as runMergeFlow } from '../lib/merge.mjs'
@@ -117,7 +120,7 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
   gate       审核闸门检查
   merge      闸门通过后合并 PR（固定 --squash）并清理现场
   record     把审核响应落盘为记录
-  status     查看审核记录概况
+  status     查看仓库概览与审核记录概况
   doctor     检查各仓装的共享包是不是同一个构建（比对 build.json）
   --repo <a,b>       要检查的仓库根（逗号分隔；缺省当前目录）
   --json             机器可读输出（退出码与人读模式一致）
@@ -253,6 +256,7 @@ merge 额外选项:
   --check-only       只校验（闸门 + CI），不合并、不清理
   --checks-file <f>  用文件内容代替 gh pr checks（形如 {"state":"success"}）
   --force            CI 未过仍合并（闸门不受影响，仍强制生效）
+  --review-record <f>  --record 的旧写法，等价于 --record，后续将弃用（两者同时给且取值不同则报错）
 
 record 选项:
   --request <file>   审核请求 JSON（插件信封 {request,stats} 或扁平请求均可）
@@ -272,6 +276,8 @@ record 选项:
 
 status 选项:
   --root <dir>       仓库根目录（缺省主工作区；git 定位不到时退回当前目录）
+  --json             输出 {"repo":{"root","branch","head","worktrees"},"records":…,"latest":…,"invalid":…}；
+                     git 取不到时 repo 的 branch / head 为 null、worktrees 为空数组（退出码与人读模式一致）
 
 全局选项:
   -h, --help     显示帮助
@@ -364,7 +370,15 @@ function parseGateArgs(argv, { mergeOnly = false } = {}) {
   const root = requireRoot(options.root)
   if (root.error) return { error: root.error }
 
-  if (options.record !== undefined && options['no-review'] === true) {
+  // --review-record 是 --record 的旧写法（各仓文档仍在用），两者等价：
+  // 只给一个就用那个；同时给且取值不同直接报冲突，不做「谁覆盖谁」的猜测。
+  const alias = options['review-record']
+  if (alias !== undefined && options.record !== undefined && options.record !== alias) {
+    return { error: '--record 与 --review-record 两个参数冲突（取值不同）' }
+  }
+  const record = options.record !== undefined ? options.record : alias
+
+  if (record !== undefined && options['no-review'] === true) {
     return { error: '不能同时使用 --record 与 --no-review' }
   }
   if (options['no-review'] !== true && options.reason !== undefined) {
@@ -373,8 +387,8 @@ function parseGateArgs(argv, { mergeOnly = false } = {}) {
   if (options['no-review'] === true && !nonEmpty(options.reason)) {
     return { error: '--no-review 必须配合 --reason 说明跳过原因' }
   }
-  if (options.record !== undefined && !nonEmpty(options.record)) {
-    return { error: '--record 必须是非空文件路径' }
+  if (record !== undefined && !nonEmpty(record)) {
+    return { error: options.record !== undefined ? '--record 必须是非空文件路径' : '--review-record 必须是非空文件路径' }
   }
 
   const headSha = options['head-sha']
@@ -385,7 +399,7 @@ function parseGateArgs(argv, { mergeOnly = false } = {}) {
   const common = {
     pr: pr.value,
     root: root.value,
-    record: options.record,
+    record,
     noReview: options['no-review'] === true,
     reason: options.reason,
     headSha,
@@ -497,7 +511,8 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
 
 const GATE_VALUE_FLAGS = new Set(['pr', 'root', 'record', 'reason', 'head-sha'])
 const GATE_BOOL_FLAGS = new Set(['no-review'])
-const MERGE_VALUE_FLAGS = new Set([...GATE_VALUE_FLAGS, 'checks-file'])
+// review-record 只给 merge：它是 --record 的旧写法（文档里还在用），gate 不认
+const MERGE_VALUE_FLAGS = new Set([...GATE_VALUE_FLAGS, 'checks-file', 'review-record'])
 const MERGE_BOOL_FLAGS = new Set([...GATE_BOOL_FLAGS, 'check-only', 'force'])
 const RECORD_VALUE_FLAGS = new Set([
   'request',
@@ -513,7 +528,7 @@ const RECORD_VALUE_FLAGS = new Set([
 ])
 const RECORD_BOOL_FLAGS = new Set(['json'])
 const STATUS_VALUE_FLAGS = new Set(['root'])
-const STATUS_BOOL_FLAGS = new Set()
+const STATUS_BOOL_FLAGS = new Set(['json'])
 const TASK_VALUE_FLAGS = new Set(['root', 'slug', 'worktrees-dir'])
 const TASK_BOOL_FLAGS = new Set()
 const PR_VALUE_FLAGS = new Set(['root', 'issue'])
@@ -1796,6 +1811,38 @@ function runCheckAllCommand(argv, deps, io) {
   return result.ok ? 0 : 1
 }
 
+/**
+ * 仓库概览（status 的第一段）：根目录 / 当前分支 / HEAD 一行 / worktree 列表。
+ * 探测用 `rev-parse --show-toplevel`：非 git 仓库或 git 不可用时返回 null，
+ * 调用方只把这一段换成提示行——审核记录段与退出码都不受影响。
+ */
+function collectRepoOverview(root, deps) {
+  const options = { runner: deps.runner }
+  if (!toplevel(root, options).ok) return null
+
+  const branchName = branchShow(root, options)
+  const sha = gitHeadSha(root, options)
+  let branch
+  if (branchName.ok && nonEmpty(branchName.data)) {
+    branch = branchName.data
+  } else if (sha.ok && nonEmpty(sha.data)) {
+    branch = `<detached> ${sha.data.slice(0, 7)}`
+  } else {
+    branch = '?'
+  }
+
+  const oneline = headOneline(root, options)
+  const worktrees = worktreeListPlain(root, options)
+
+  return {
+    // 展示与 payload 一律给绝对路径（`--root .` 时也能看出是哪个仓），git 调用仍用原样 root
+    root: resolve(root),
+    branch,
+    head: oneline.ok ? oneline.data : null,
+    worktrees: worktrees.ok && Array.isArray(worktrees.data) ? worktrees.data : [],
+  }
+}
+
 function runStatus(argv, deps, io) {
   const parsed = parseArgs(argv, STATUS_VALUE_FLAGS, STATUS_BOOL_FLAGS)
   if (parsed.error) return argError(io, 'status', parsed.error)
@@ -1814,15 +1861,50 @@ function runStatus(argv, deps, io) {
     return 2
   }
 
+  let latest = null
+  if (collected.records.length > 0) {
+    const { record } = collected.records[0]
+    latest = {
+      pr: record.pr,
+      round: record.round,
+      verdict: record.verdict,
+      head_sha: typeof record.head_sha === 'string' ? record.head_sha : null,
+    }
+  }
+
+  // git 取不到时只有这一段降级：payload 里 repo 仍是固定四字段的形状
+  const repo = collectRepoOverview(root, deps)
+
+  if (parsed.options.json === true) {
+    io.out(
+      JSON.stringify({
+        repo: repo ?? { root: resolve(root), branch: null, head: null, worktrees: [] },
+        records: collected.records.length,
+        latest,
+        invalid: collected.invalid,
+      }),
+    )
+    return 0
+  }
+
+  // 仓库概览段固定排在审核记录段之前
+  io.out('仓库概览:')
+  if (repo === null) {
+    io.out('（非 git 仓库或 git 不可用）')
+  } else {
+    io.out(`  根目录:   ${repo.root}`)
+    io.out(`  当前分支: ${repo.branch}`)
+    io.out(`  HEAD:     ${repo.head ?? '?'}`)
+    io.out('  worktree:')
+    for (const line of repo.worktrees) io.out(`    ${line}`)
+  }
+
   io.out(`审核记录: ${collected.records.length} 条`)
-  if (collected.records.length === 0) {
+  if (latest === null) {
     io.out('最近一条: 无')
   } else {
-    const { record } = collected.records[0]
-    const sha = typeof record.head_sha === 'string' ? record.head_sha.slice(0, 8) : '未知'
-    io.out(
-      `最近一条: PR #${record.pr} 第 ${record.round} 轮 结论 ${record.verdict}（提交 ${sha}）`,
-    )
+    const sha = latest.head_sha === null ? '未知' : latest.head_sha.slice(0, 8)
+    io.out(`最近一条: PR #${latest.pr} 第 ${latest.round} 轮 结论 ${latest.verdict}（提交 ${sha}）`)
   }
   if (collected.invalid > 0) io.out(`无法解析的记录: ${collected.invalid} 条`)
   return 0
