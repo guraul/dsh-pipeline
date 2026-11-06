@@ -112,13 +112,15 @@ if [ -n "$missing" ]; then
   exit 1
 fi
 
-# 3) 原子切换 dist/pkg -> pkg-<sha8>（同文件系统 rename，不产生空窗）
+# 3) 原子切换 dist/pkg -> pkg-<sha8>（ln -sfn 会先删旧链接再建，窗口在微秒级）
 if [ -d "$DIST/pkg" ] && [ ! -L "$DIST/pkg" ]; then
-  # 一次性迁移：旧版可能是目录
   rm -rf "$DIST/pkg"
 fi
-ln -sfn "pkg-${sha8}" "$DIST/.pkg.new"
-mv -f "$DIST/.pkg.new" "$DIST/pkg"
+ln -sfn "pkg-${sha8}" "$DIST/pkg"
+if [ "$(readlink "$DIST/pkg")" != "pkg-${sha8}" ]; then
+  echo "切换失败: dist/pkg 未指向 pkg-${sha8}" >&2
+  exit 1
+fi
 
 # 4) 版本目录只留最近 2 个
 ls -1dt "$DIST"/pkg-* 2>/dev/null | tail -n +3 | while IFS= read -r old; do rm -rf "$old"; done
