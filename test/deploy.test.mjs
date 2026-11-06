@@ -1,11 +1,11 @@
 /**
  * deploy：契约 §10 落地第一步——`deploy` 配置字段 + caller workflow 骨架生成 / 校验。
  *
- * 覆盖：init 打印骨架（uses pin、with 逐项、concurrency、首尾标记、不落盘）、
- * init --write 落盘 + check 一致退 0、改配置后 check 打印第一处差异退 1、
+ * 覆盖：init 打印骨架（uses pin、with 逐项含 assemble、concurrency、首尾标记、不落盘）、
+ * init --write 落盘 + check 一致退 0、改配置后 check 打印第一处差异退 1（assemble 键也参与比对）、
  * 手改生成区一行退 1、标记之后追加 job 仍退 0、改配置重跑 --write 只换生成区并保留追加内容、
- * artifact=oci-image 退 2、缺文件 / 缺标记退 1、手写文件拒绝覆盖退 1、
- * 参数与缺 deploy 段 / 缺 build.json 退 2。
+ * node-standalone 放行（mode=releases + assemble）、artifact=oci-image 退 2、缺文件 / 缺标记退 1、
+ * 手写文件拒绝覆盖退 1、参数与缺 deploy 段 / 缺 build.json 退 2。
  * 构建标识经 deps.buildInfo 注入，不依赖包内 build.json（CI 源码运行没有该文件）。
  * 只调 runCli（注入输出流），不碰真实 gh / git。
  */
@@ -90,6 +90,7 @@ test('deploy init：不带 --write 只打印骨架，uses / with / concurrency /
   assert.ok(out.includes('on:\n  push:\n    branches:\n      - main\n  workflow_dispatch:\n'))
   // with：配置逐项填入，缺省值补齐
   assert.ok(out.includes("      mode: 'releases'\n"))
+  assert.ok(out.includes("      assemble: 'static-dir'\n"), 'with: 应按 artifact 追加 assemble')
   assert.ok(out.includes("      service: 'serve-9928'\n"))
   assert.ok(out.includes("      remote_dir: '/root/project/demo/demo-app'\n"))
   assert.ok(out.includes("      work_dir: 'demo-app'\n"))
@@ -106,19 +107,47 @@ test('deploy init：不带 --write 只打印骨架，uses / with / concurrency /
   assert.ok(!out.includes('public_health_url:'), '未配 publicUrl 不应出现')
 })
 
-test('deploy init：node-standalone 在生成阶段拒绝（构建步骤尚未参数化）', (t) => {
+test('deploy init：node-standalone 放行，mode=releases 且 with: 按 artifact 追加 assemble', (t) => {
   const root = tmp()
   t.after(() => rmSync(root, { recursive: true, force: true }))
   writeConfig(root, {
     artifact: 'node-standalone',
     service: 'serve-node',
     remoteDir: '/srv/node-app',
-    workDir: 'apps/api',
+    workDir: '.',
     health: { url: 'http://127.0.0.1:1/' },
   })
-  const r = run(['deploy', 'init', '--root', root], { buildInfo: { gitSha: 'a'.repeat(40) } })
-  assert.equal(r.code, 2)
-  assert.match(r.err, /node-standalone 尚未实现/)
+
+  const printed = init(root)
+  assert.equal(printed.code, 0)
+  assert.equal(printed.err, '')
+  assert.ok(printed.out.includes("      mode: 'releases'\n"), 'node-standalone 仍走 releases 布局')
+  assert.ok(printed.out.includes("      assemble: 'node-standalone'\n"), 'assemble 应取 artifact 的值')
+  assert.ok(printed.out.includes("      work_dir: '.'\n"))
+
+  assert.equal(init(root, ['--write']).code, 0)
+  const checked = check(root)
+  assert.equal(checked.code, 0)
+  assert.equal(checked.out, 'deploy check: 生成区与配置一致\n')
+})
+
+test('deploy check：assemble 键参与逐字节比对（改 artifact 后报第一处差异）', (t) => {
+  const root = tmp()
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  writeConfig(root, BASE_DEPLOY)
+  assert.equal(init(root, ['--write']).code, 0)
+
+  const configFile = join(root, '.dsh', 'pipeline.json')
+  const config = JSON.parse(readFileSync(configFile, 'utf8'))
+  config.deploy.artifact = 'node-standalone'
+  writeFileSync(configFile, JSON.stringify(config, null, 2), 'utf8')
+
+  const result = check(root)
+  assert.equal(result.code, 1)
+  assert.equal(result.out, '')
+  assert.match(result.err, /第一处差异在第 \d+ 行/)
+  assert.match(result.err, /期望:.*assemble: 'node-standalone'/)
+  assert.match(result.err, /实际:.*assemble: 'static-dir'/)
 })
 
 test('deploy init --write 落盘，deploy check 一致退 0', (t) => {

@@ -211,8 +211,9 @@ deploy 用法:
   按 <root>/.dsh/pipeline.json 的 deploy 段生成 <root>/.github/workflows/deploy-web.yml 骨架：
   生成区 = name / on / concurrency + 单个 job 的 uses + with + secrets，首尾用注释标记包裹；
   uses pin 当前安装包 build.json 的 gitSha（源码运行没有 build.json → 退 2）。
-  mode 由 artifact 推导（static-dir → releases）。node-standalone / oci-image 现在只收配置，
-  生成骨架时明确报「尚未实现」退 2（deploy.yml 的构建步骤尚未参数化）。
+  mode 由 artifact 推导（static-dir / node-standalone → releases），with: 里按 artifact 追加 assemble——
+  node-standalone 时由 deploy.yml 把 .next/standalone 组装成 release 目录。oci-image 现在只收配置，
+  生成骨架时明确报「尚未实现」退 2。
   不带 --write 只把骨架打印到 stdout；--write 时：文件不存在则创建，
   已有生成区则只替换生成区、保留标记之后本仓追加的后置 job，
   已存在但缺标记（手写文件）则拒绝覆盖并退 1。
