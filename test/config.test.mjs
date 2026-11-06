@@ -120,6 +120,23 @@ test('checks 里只允许 packages / exclude，且各自必须是非空字符串
   })
 })
 
+test('review.tier 缺省 tools，只接受 inline | tools', () => {
+  assert.deepEqual(loadConfig(tmp()).config.review, { tier: 'tools' })
+  assert.deepEqual(loadConfig(tmpAfterWriting({ review: { tier: 'inline' } })).config.review, {
+    tier: 'inline',
+  })
+  // 空对象合法：tier 缺省，由默认值补成 tools
+  assert.deepEqual(validateConfig({ review: {} }).review, {})
+  for (const value of ['inline', null, ['inline'], 42]) {
+    assert.throws(() => validateConfig({ review: value }), code('E_CONFIG'), String(value))
+  }
+  for (const tier of ['readonly', 'TOOLS', '', 1, null]) {
+    assert.throws(() => validateConfig({ review: { tier } }), code('E_CONFIG'), String(tier))
+  }
+  // review.* 的其余字段仍属目标：现在写进来就是未知字段
+  assert.throws(() => validateConfig({ review: { tier: 'inline', postReview: true } }), code('E_CONFIG'))
+})
+
 test('配置文件不是合法 JSON 时报 E_CONFIG', () => {
   const root = tmp()
   writeConfig(root, '{ not json')

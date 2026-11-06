@@ -199,6 +199,29 @@ test('buildPrompt：facts/includes 两段排在 diff 之后、输出要求之前
   assert.equal(prompt.includes('随附正文乙'), false, '随附文件不贴内容')
 })
 
+test('buildPrompt：tier 缺省为 tools，保留读仓库原文并要求把核验方式写进 evidence', () => {
+  const prompt = buildPrompt({
+    request: { pr: 1, head_sha: SHA, nonce: NONCE, diff: '+ x' },
+  })
+  assert.ok(prompt.includes('只有在需要核实实现细节时才读仓库文件'))
+  assert.ok(prompt.includes('你实际核验过的断言，必须把核验方式写进 evidence'))
+  assert.equal(prompt.includes('没有工具权限'), false)
+})
+
+test('buildPrompt：inline 档写明没有工具权限，且不出现读仓库的指引', () => {
+  const prompt = buildPrompt({
+    request: { pr: 1, head_sha: SHA, nonce: NONCE, diff: '+ x' },
+    tier: 'inline',
+  })
+  assert.ok(prompt.includes('没有工具权限'))
+  assert.ok(prompt.includes('判 ESCALATE 并在 findings 里写明缺什么证据'))
+  assert.equal(prompt.includes('读仓库文件'), false)
+  assert.equal(prompt.includes('你实际核验过的断言'), false)
+  // 判定行要求与 diff 围栏不因档位而变
+  assert.ok(prompt.includes(`${NONCE} VERDICT: <APPROVE|REJECT|ESCALATE> SHA: ${SHA}`))
+  assert.ok(prompt.includes('<<<DIFF_END>>>'))
+})
+
 test('reviewAction 映射三种判定', () => {
   assert.equal(reviewAction('APPROVE'), 'approve')
   assert.equal(reviewAction('REJECT'), 'request-changes')

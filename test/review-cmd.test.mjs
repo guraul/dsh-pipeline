@@ -37,22 +37,30 @@ function run(argv, io, deps = {}) {
 }
 
 /** 消费仓根目录；repo 为 null 时连 .dsh/pipeline.json 都不写。 */
-function makeRoot({ repo = 'owner/repo' } = {}) {
+function makeRoot({ repo = 'owner/repo', config = {} } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'dsh-review-'))
   if (repo !== null) {
     mkdirSync(join(root, '.dsh'), { recursive: true })
-    writeFileSync(join(root, '.dsh', 'pipeline.json'), JSON.stringify({ repo }), 'utf8')
+    writeFileSync(join(root, '.dsh', 'pipeline.json'), JSON.stringify({ repo, ...config }), 'utf8')
   }
   return root
 }
 
 /** 假 gh：pr view / pr diff / issue view 各给一份预设输出，其余命令一律失败。 */
-function ghRunner({ view, diff, issue, viewStatus = 0, diffStatus = 0, issueStatus = 0 } = {}) {
+function ghRunner({ view, diff, issue, viewStatus = 0, diffStatus = 0, issueStatus = 0, checks = [], checksStatus = 0 } = {}) {
   const calls = []
   const runner = (command, args) => {
     calls.push({ command, args: [...args] })
     if (command !== 'gh') return { status: 1, stdout: '', stderr: `意外的命令: ${command}` }
     if (args[0] === 'pr' && args[1] === 'view') {
+      // inline 档取 CI 结果：同一个 pr view 入口，按 --json 字段区分
+      if (args.includes('statusCheckRollup')) {
+        return {
+          status: checksStatus,
+          stdout: JSON.stringify({ statusCheckRollup: checks }),
+          stderr: checksStatus === 0 ? '' : 'gh 取 checks 失败',
+        }
+      }
       return {
         status: viewStatus,
         stdout: JSON.stringify(view ?? {}),
@@ -69,6 +77,42 @@ function ghRunner({ view, diff, issue, viewStatus = 0, diffStatus = 0, issueStat
         stderr: issueStatus === 0 ? '' : 'gh issue view 失败',
       }
     }
+    return { status: 1, stdout: '', stderr: `未预期的 gh 调用: ${args.join(' ')}` }
+  }
+  return { runner, calls }
+}
+
+/** inline 档的假 runner：git show --stat + gh（pr view / pr diff / statusCheckRollup）。 */
+function inlineRunner({
+  view = VIEW_OK,
+  diff = DIFF,
+  stat = ' lib/a.mjs | 2 ++\n 1 file changed, 2 insertions(+)',
+  statStatus = 0,
+  checks = [],
+  checksStatus = 0,
+} = {}) {
+  const calls = []
+  const runner = (command, args) => {
+    calls.push({ command, args: [...args] })
+    if (command === 'git') {
+      return {
+        status: statStatus,
+        stdout: statStatus === 0 ? stat : '',
+        stderr: statStatus === 0 ? '' : 'git show 失败',
+      }
+    }
+    if (command !== 'gh') return { status: 1, stdout: '', stderr: `意外的命令: ${command}` }
+    if (args[0] === 'pr' && args[1] === 'view' && args.includes('statusCheckRollup')) {
+      return {
+        status: checksStatus,
+        stdout: JSON.stringify({ statusCheckRollup: checks }),
+        stderr: checksStatus === 0 ? '' : 'gh 取 checks 失败',
+      }
+    }
+    if (args[0] === 'pr' && args[1] === 'view') {
+      return { status: 0, stdout: JSON.stringify(view), stderr: '' }
+    }
+    if (args[0] === 'pr' && args[1] === 'diff') return { status: 0, stdout: diff, stderr: '' }
     return { status: 1, stdout: '', stderr: `未预期的 gh 调用: ${args.join(' ')}` }
   }
   return { runner, calls }
@@ -401,6 +445,71 @@ test('review prepare：--facts 写进请求的 facts 字段，缺省不加该字
   assert.equal(run(['review', 'prepare', '--pr', '7', '--root', root], withoutFacts, { runner }), 0)
   const plain = JSON.parse(readFileSync(requestPath(root), 'utf8'))
   assert.equal('facts' in plain, false, '没给 --facts 时请求里不该有 facts 字段')
+})
+
+test('review prepare：inline 档自动把 git show --stat 与 gh pr checks 并进 facts', () => {
+  const root = makeRoot({ config: { review: { tier: 'inline' } } })
+  const { runner, calls } = inlineRunner({
+    stat: ' lib/config.mjs | 24 ++++++++++++++++++++++--\n 1 file changed, 24 insertions(+), 1 deletion(-)',
+    checks: [
+      { name: 'test (24)', state: 'SUCCESS' },
+      { name: 'pack', state: 'FAILURE' },
+    ],
+  })
+  const io = makeIO()
+
+  const code = run(['review', 'prepare', '--pr', '7', '--root', root], io, { runner })
+  assert.equal(code, 0, io.state.err)
+
+  const { facts } = JSON.parse(readFileSync(requestPath(root), 'utf8'))
+  assert.ok(facts.includes('git show --stat aaaaaaa:'), facts)
+  assert.ok(facts.includes('1 file changed, 24 insertions(+)'), facts)
+  assert.ok(facts.includes('gh pr checks #7:'), facts)
+  assert.ok(facts.includes('test (24): SUCCESS'), facts)
+  assert.ok(facts.includes('pack: FAILURE'), facts)
+
+  const gitCall = calls.find((call) => call.command === 'git')
+  assert.deepEqual(gitCall.args, ['-C', root, 'show', '--stat', SHA])
+})
+
+test('review prepare：inline 档与 --facts 同时存在时拼接，不覆盖调用方证据', () => {
+  const root = makeRoot({ config: { review: { tier: 'inline' } } })
+  const factsFile = join(root, 'facts.txt')
+  writeFileSync(factsFile, '调用方证据：本 PR 只改配置。', 'utf8')
+  const { runner } = inlineRunner({ checks: [] })
+  const io = makeIO()
+
+  assert.equal(
+    run(['review', 'prepare', '--pr', '7', '--root', root, '--facts', factsFile], io, { runner }),
+    0,
+    io.state.err,
+  )
+  const { facts } = JSON.parse(readFileSync(requestPath(root), 'utf8'))
+  assert.ok(facts.startsWith('调用方证据：本 PR 只改配置。\n\n'), facts)
+  assert.ok(facts.includes('git show --stat'), facts)
+  assert.ok(facts.includes('(无检查项)'), facts)
+})
+
+test('review prepare：inline 档取不到 git / checks 证据时写「未取到」，不失败', () => {
+  const root = makeRoot({ config: { review: { tier: 'inline' } } })
+  const { runner } = inlineRunner({ statStatus: 128, checksStatus: 1 })
+  const io = makeIO()
+
+  const code = run(['review', 'prepare', '--pr', '7', '--root', root], io, { runner })
+  assert.equal(code, 0, io.state.err)
+  assert.equal(existsSync(requestPath(root)), true, '证据取不到也要照常产出请求')
+  const { facts } = JSON.parse(readFileSync(requestPath(root), 'utf8'))
+  assert.equal((facts.match(/未取到/g) ?? []).length, 2, facts)
+})
+
+test('review prepare：缺省 tools 档不追加证据，也不发 git', () => {
+  const root = makeRoot()
+  const { runner, calls } = ghRunner({ view: VIEW_OK, diff: DIFF })
+  const io = makeIO()
+
+  assert.equal(run(['review', 'prepare', '--pr', '7', '--root', root], io, { runner }), 0, io.state.err)
+  assert.equal('facts' in JSON.parse(readFileSync(requestPath(root), 'utf8')), false)
+  assert.equal(calls.some((call) => call.command === 'git'), false, 'tools 档不该发 git 命令')
 })
 
 test('review prepare：--include 多路径逐个读入，path 保持调用方给的原样', () => {
@@ -847,6 +956,16 @@ test('review prompt：请求带 issue 正文时渲染验收依据段，取不到
   assert.equal(run(['review', 'prompt', '--request', withoutIssue], empty, { cwd: root }), 0, empty.state.err)
   assert.ok(empty.state.out.includes(`${heading}\n(空)`), `没有 issue 正文时应输出 (空)，实际:\n${empty.state.out}`)
   assert.equal(empty.state.out.includes('验收标准甲'), false)
+})
+
+test('review prompt：配置 review.tier=inline 时提示词写明没有工具权限', () => {
+  const root = makeRoot({ config: { review: { tier: 'inline' } } })
+  const file = writeRequest(root)
+  const io = makeIO()
+
+  assert.equal(run(['review', 'prompt', '--request', file], io, { cwd: root }), 0, io.state.err)
+  assert.ok(io.state.out.includes('没有工具权限'))
+  assert.equal(io.state.out.includes('读仓库文件'), false)
 })
 
 test('review prompt：请求缺 nonce 或 head_sha 时退出 2，提示缺哪个字段且不渲染提示词', () => {

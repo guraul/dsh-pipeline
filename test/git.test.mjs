@@ -235,6 +235,7 @@ test('导出面固定：只有具名操作，没有接受 argv 的通用入口',
     'mergeFF',
     'push',
     'remoteUrl',
+    'showStat',
     'statusPorcelain',
     'toplevel',
     'worktreeAdd',
@@ -252,6 +253,19 @@ test('导出面固定：只有具名操作，没有接受 argv 的通用入口',
   const runner = recorder({ status: 0, stdout: 'main\n', stderr: '' })
   git.currentBranch(CWD, { runner }, ['push', '--force'])
   assert.deepEqual(runner.calls[0].args, ['-C', CWD, 'rev-parse', '--abbrev-ref', 'HEAD'])
+})
+
+test('showStat：固定 argv，非法提交名不执行', () => {
+  const SHA = 'a'.repeat(40)
+  const ok = recorder({ status: 0, stdout: ' a.mjs | 2 ++\n' })
+  assert.equal(git.showStat(CWD, { sha: SHA, runner: ok }).data, ' a.mjs | 2 ++')
+  assert.deepEqual(ok.calls[0].args, ['-C', CWD, 'show', '--stat', SHA])
+
+  for (const sha of [undefined, '', '--all', 'a..b']) {
+    const never = recorder({ status: 0, stdout: '', stderr: '' })
+    assert.equal(git.showStat(CWD, { sha, runner: never }).code, 'E_INPUT', String(sha))
+    assert.equal(never.calls.length, 0)
+  }
 })
 
 test('toplevel / gitCommonDir / statusPorcelain / worktreeAdd / push：各自一条固定 argv', () => {

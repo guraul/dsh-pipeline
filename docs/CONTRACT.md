@@ -89,9 +89,9 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 **已实现**：`task` / `pr` / `review prepare|prompt|publish`（含 `--post-review`）/ `record` / `gate` / `merge` / `status` / `doctor`（含 `--profile`）/ `selftest`（`--shims` / `--config` / `--fast` / `--repos`）/ `shim install|check` / `hooks install|check` / `check-all` / `deploy init|check`（`artifact` 支持 `static-dir` 与 `node-standalone`）。
 
-**配置字段（已进 schema）**：`worktreesDir` 由 `task` 消费——缺省读配置、`--worktrees-dir` 优先；`checks` 由 `check-all` 消费——`--packages` 优先，其次 `checks.packages`（按给定顺序），再否则自动发现并按 `checks.exclude` 过滤；`deploy` 由 `deploy init|check` 消费（字段见 §7.1，部署行为见 §10）。
+**配置字段（已进 schema）**：`worktreesDir` 由 `task` 消费——缺省读配置、`--worktrees-dir` 优先；`checks` 由 `check-all` 消费——`--packages` 优先，其次 `checks.packages`（按给定顺序），再否则自动发现并按 `checks.exclude` 过滤；`deploy` 由 `deploy init|check` 消费（字段见 §7.1，部署行为见 §10）；`review.tier` 由 `review prepare` / `review prompt` 消费（见 §7.3），`review` 的其余字段仍为目标（P2）。
 
-**目标**：`selftest --lock` / `--peer` / `--exit-codes`（§9；`--lock` 尚未进选项表）、`pipeline.lock.json`（§7.2）、`review.*` 配置（§7.1）、`--legacy-exit-codes`（§4）、§6 的 root 统一，以及 §10 的「各仓接入 caller workflow 与回滚调用」。
+**目标**：`selftest --lock` / `--peer` / `--exit-codes`（§9；`--lock` 尚未进选项表）、`pipeline.lock.json`（§7.2）、`review` 的其余字段（§7.1）、`--legacy-exit-codes`（§4）、§6 的 root 统一，以及 §10 的「各仓接入 caller workflow 与回滚调用」。
 
 硬规则：目标条目在实现合并前**不得**被入口 shim 调用，也不得在文档里写成可用；§9 的门禁项同理——`selftest --lock` / `--peer` / `--exit-codes` 落地前，CI 不得引用它们。
 
@@ -160,6 +160,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
   "roles": {},                    // 可选；review prompt 的角色定义
   "worktreesDir": "~/workspace/<name>-worktrees",  // 可选；缺省 <主工作区>/.worktrees
   "checks": { "packages": ["pkg-a"], "exclude": ["tools"] },  // 可选；缺省 null：check-all 的显式包清单与自动发现排除项
+  "review": { "tier": "inline" },  // 可选；审核档位 inline | tools，缺省 tools（**已实现**，见 §7.3）
   "deploy": { … }                 // 可选；缺省 null：deploy init|check 消费，字段见下方「现行字段：deploy 段」
 }
 ```
@@ -215,6 +216,22 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 ```
 
 由发布脚本更新（包仓的工作），消费方只在 CI 与 `selftest` 里读，**不手改**。
+
+### 7.3 审核档位（`review.tier`，**现行**）
+
+审核分两档，由各仓 `.dsh/pipeline.json` 选择；**缺省 `tools`**，与加入档位前的行为一致。
+
+| 档位 | 审核方权限 | 依据 |
+|---|---|---|
+| `inline` | **没有工具权限**，不能读文件、不能执行命令 | 控制面内联的材料：diff、issue 正文、`request.facts` / `request.includes` |
+| `tools`（缺省） | 可读仓库、跑只读命令核验断言 | diff + 自己核验 |
+
+行为：
+
+- `review prepare` 在 `inline` 档**自动**把 `git show --stat <head_sha>` 与 `gh pr checks <pr>` 的结果并进 `request.facts`；两者取不到时写「未取到」，**不阻断 prepare**。调用方另传 `--facts` 时拼接，不覆盖。
+- `review prompt` 按档改「输出要求」第 0.1 条：`inline` 明确「没有工具权限，下面的材料就是全部依据」，无法核验的事实性断言应判 `ESCALATE`；`tools` 保留原文，并要求把实际核验方式写进 `evidence`。
+- **如实标注**：`tools` 档在 codebuddy 下**不是硬只读**——该产品没有「只读 + 工具」档位，审核方仍可能写入。兜底靠任务书写明边界 + 事后 `git status` + 闸门的 SHA 比对；记录与汇报里**不得**写成「只读审核」。
+- 选档看材料能否自证，不按改动大小拍脑袋：纯配置 / 纯文档且 diff 自包含用 `inline`；行为改动、跨文件改动，或 PR 里出现「我跑过 / 我验证过」这类需要复核的断言用 `tools`。
 
 ---
 
@@ -313,3 +330,4 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | 2026-11-06 | v1.2：按实现状态校正「现行 vs 目标」——`review publish --post-review`、`selftest`（`--shims` / `--config` / `--fast` / `--repos`）、`check-all`、`shim`、`hooks` 改为现行；`deploy` 段从「目标字段」移入现行字段；仍未实现项收敛为 `selftest --lock` / `--peer` / `--exit-codes`、`pipeline.lock.json`、`review.*`、`--legacy-exit-codes`、§6 的 root 统一与 §10 的各仓接入 / 回滚调用 |
 | 2026-11-06 | 删除顶层 `prepare` 占位（从未实现、无消费方、各分支均无实现痕迹）：§3.2 去掉该行，§3.3 从已实现清单移除；`dsh-pipeline prepare` 现在报「未知子命令」退 2 |
 | 2026-11-06 | 审核第 1 轮 REJECT 修正：§2 的 L2 状态改为「生成能力现行、各仓接入未完成」；§3.3 目标清单补 `selftest --lock`；§9 写清 `--lock` 尚未进选项表（传了报「未知选项」），与 `--peer` / `--exit-codes` 的「尚未实现」区分 |
+| 2026-11-06 | 新增 §7.3 审核档位：`review.tier`（inline / tools，缺省 tools）进 schema；`review prepare` 在 inline 档自动并入 `git show --stat` 与 `gh pr checks` 证据。v1.2 里「`review.*` 仍未实现」一项自此收窄为「`review` 的其余字段仍未实现」 |
