@@ -16,7 +16,7 @@
 | 改审核闸门、合并流程、高风险策略 | `docs/knowledge-base/modules/gate-merge.md` |
 | 改审核请求 / 判定解析 / 记录落盘 / 角色 | `docs/knowledge-base/modules/review-record.md` |
 | 改 task 建 worktree、pr 开 PR、git/gh 封装 | `docs/knowledge-base/modules/task-pr-git-gh.md` |
-| 改 selftest / shim / hooks / check-all / doctor | `docs/knowledge-base/modules/tooling.md` |
+| 改 selftest / lock / shim / hooks / check-all / doctor | `docs/knowledge-base/modules/tooling.md` |
 | 改部署 caller 骨架 / `deploy` 配置段 | `docs/knowledge-base/modules/deploy.md` |
 | 查产物落在哪、怎么查审核记录 | `docs/knowledge-base/DATA.md` |
 | 子命令清单、参数、退出码（接口视角） | `docs/knowledge-base/API.md` |

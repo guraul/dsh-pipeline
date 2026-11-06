@@ -89,6 +89,7 @@ import {
 import { runTask as runTaskFlow } from '../lib/task.mjs'
 import { describeBuild, readBuildInfo } from '../lib/build-info.mjs'
 import { describeRow, diagnose } from '../lib/doctor.mjs'
+import { LOCK_PATH, checkLock, formatExpect, readInstalledBuild, writeLock } from '../lib/lock.mjs'
 import { checkProfile } from '../lib/profile-check.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -100,6 +101,7 @@ const IMPLEMENTED = new Set([
   'doctor',
   'gate',
   'hooks',
+  'lock',
   'merge',
   'record',
   'selftest',
@@ -111,6 +113,7 @@ const IMPLEMENTED = new Set([
 ])
 const SUBCOMMANDS = [
   'task',
+  'lock',
   'pr',
   'merge',
   'gate',
@@ -142,19 +145,22 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
                      dsh --dump-config 可见性（dsh 不可用时跳过不算失败）、cordis.patch.yml、
                      审核记录目录可写；逐项 ✓/✗，任一 ✗ 退出 1。不给该 flag 则只比构建，
                      行为与现状一致
-  selftest   一致性自检（契约 §9；已实现 --shims / --config / --exit-codes / --repos，--lock / --peer 未实现）
+  selftest   一致性自检（契约 §9；已实现 --shims / --config / --lock / --exit-codes / --repos，--peer 未实现）
   shim       生成 / 校验入口 shim（契约 §8）
   hooks      安装 / 校验 pre-push 直推拦截钩子
   check-all  逐包跑 test / check / typecheck 并汇总（缺 node_modules 跳过不算失败）
   deploy     生成 / 校验部署 caller workflow 骨架（契约 §10）
+  lock       写入 / 核对 .dsh/pipeline.lock.json（契约 §7.2）
   task       从 issue 创建 task/<号>-<slug> 分支与 worktree
   pr         推送当前 task 分支并创建 PR
   review     生成审核请求（prepare）、审核提示词（prompt）并把判定落成记录（publish）
 
 selftest 用法:
-  dsh-pipeline selftest [--shims] [--config] [--exit-codes] [--fast | --repos <a,b,c>] [--json] [--root <dir>]
+  dsh-pipeline selftest [--shims] [--config] [--lock] [--exit-codes] [--fast | --repos <a,b,c>] [--json] [--root <dir>]
   --shims            6 个入口 == 按当前包版本渲染后的模板（<root>/scripts/pipeline 不存在即失败）
   --config           校验 <root>/.dsh/pipeline.json：能被 schema 接受、没有未声明字段
+  --lock             核对装包与 .dsh/pipeline.lock.json 的 expect（契约 §7.2）：一致→0；
+                     锁不存在 / 未装包→跳过（0）；装了旧版本包（无 build.json）或与锁不一致→1
   --exit-codes       退出码口径自检（契约 §4）：起子进程真跑六条用例——成功 0 / 业务拒绝 1 /
                      用法错误 2（缺参、未知参数、未知子命令）/ 环境错误 3（入口找不到共享包）；
                      任一不符退出 1，detail 指出哪条不符
@@ -167,7 +173,7 @@ selftest 用法:
                      带 --repos 时改为 {"ok":…,"baseline":"…","repos":[{"path","sha","builtAt","ok"}],"skipped":[{"path","reason"}]}
                      （退出码与人读模式一致）
   --root <dir>       仓库根目录（缺省主工作区；git 定位不到时退回当前目录）；--repos 用它解析相对路径
-  --lock / --peer    已识别但尚未实现（锁文件与 peer 范围比对）：
+  --peer             已识别但尚未实现（peer 范围比对）：
                      传入即报「尚未实现」并退出 2，不静默忽略
   退出码: 0 通过（没有配置文件也退 0）/ 1 检查不通过 / 2 用法错误或检查项未实现
 
@@ -226,6 +232,14 @@ deploy 用法:
   缺标记报「不是生成的骨架」退 1；文件不存在提示先跑 deploy init（退 1）。
   --root <dir>       仓库根目录（必填）
   退出码: 0 一致 / 1 不一致、缺标记或拒绝覆盖 / 2 用法、配置错误或 artifact 尚未实现
+
+lock 用法:
+  dsh-pipeline lock write --root <dir>   把当前装包的 build.json 写进 <dir>/.dsh/pipeline.lock.json
+                                         （内容 {"expect":"<sha7> <builtAt>"}；再次运行即刷新）
+  dsh-pipeline lock check --root <dir>   比对装包与锁：一致→0；不一致/格式非法/旧版本包→1；
+                                         锁不存在或未装包→跳过（0）。与 selftest --lock 同一实现
+  --root <dir>       仓库根目录（必填；不猜当前目录）
+  退出码: 0 一致或跳过 / 1 不一致、格式非法或旧版本包 / 2 用法错误或未装包
 
 task 用法:
   dsh-pipeline task <issue号> [--slug <slug>] [--root <dir>] [--worktrees-dir <dir>]
@@ -605,6 +619,8 @@ const HOOKS_INSTALL_VALUE_FLAGS = new Set(['root'])
 const HOOKS_INSTALL_BOOL_FLAGS = new Set(['force', 'allow-main'])
 const HOOKS_CHECK_VALUE_FLAGS = new Set(['root'])
 const HOOKS_CHECK_BOOL_FLAGS = new Set()
+const LOCK_VALUE_FLAGS = new Set(['root'])
+const LOCK_BOOL_FLAGS = new Set()
 const CHECK_ALL_VALUE_FLAGS = new Set(['root', 'packages'])
 const CHECK_ALL_BOOL_FLAGS = new Set(['json'])
 const DEPLOY_VALUE_FLAGS = new Set(['root'])
@@ -1594,6 +1610,54 @@ function resolveSelftestRoot(value, deps) {
  * 其余检查项只识别不执行，明确报错退 2。检查逻辑在 lib/selftest.mjs，--shims 的比对复用 lib/shim.mjs。
  * 退出码：0 通过（含「无配置文件跳过」「--repos 可比对的仓不足 2 个」）/ 1 检查不通过 / 2 用法错误或检查项未实现。
  */
+/**
+ * lock：锁文件的写入与核对（契约 §7.2）。
+ *
+ * write 从「装包位置的 build.json」取标识写进锁——不读源码目录的 build.json，
+ * 也不回退到「源码运行」，否则会写出一个别人装不上对不上的假 pin。
+ * check 与 selftest --lock 共用 checkLock，输出口径一致。
+ * 退出码：0 成功或跳过 / 1 不一致、格式非法或旧版本包 / 2 用法错误、未装包。
+ */
+function runLock(argv, deps, io) {
+  const [action, ...rest] = argv
+  if (action === undefined || action.startsWith('--')) {
+    return argError(io, 'lock', '用法: dsh-pipeline lock <write|check> --root <dir>')
+  }
+  if (action !== 'write' && action !== 'check') {
+    return argError(io, 'lock', `未知动作: ${action}（允许 write / check）`)
+  }
+  const parsed = parseArgs(rest, LOCK_VALUE_FLAGS, LOCK_BOOL_FLAGS)
+  if (parsed.error) return argError(io, 'lock', parsed.error)
+  if (!nonEmpty(parsed.options.root)) return argError(io, 'lock', '缺少必填参数 --root')
+  const root = parsed.options.root
+
+  if (action === 'check') {
+    const result = checkLock(root)
+    if (result.ok) {
+      io.out(`lock: ${result.detail}`)
+      return 0
+    }
+    io.err(`lock: ${result.detail}`)
+    return 1
+  }
+
+  const installed = readInstalledBuild(root)
+  if (installed.state === 'missing') {
+    return argError(io, 'lock', `${root} 下没有装共享包（tools/node_modules/dsh-pipeline），先 pnpm install`)
+  }
+  if (installed.state === 'legacy') {
+    return argError(io, 'lock', '装的是没有 build.json 的旧版本包，先重新打包并刷新依赖')
+  }
+  try {
+    writeLock(root, installed.build)
+    io.out(`lock: 已写入 ${LOCK_PATH.join('/')}（${formatExpect(installed.build)}）`)
+    return 0
+  } catch (error) {
+    io.err(`lock: 写入失败: ${messageOf(error)}`)
+    return 2
+  }
+}
+
 function runSelftest(argv, deps, io) {
   const parsed = parseArgs(argv, SELFTEST_VALUE_FLAGS, SELFTEST_BOOL_FLAGS)
   if (parsed.error) return argError(io, 'selftest', parsed.error)
@@ -1622,13 +1686,14 @@ function runSelftest(argv, deps, io) {
       : [
           ...(options.shims === true ? ['shims'] : []),
           ...(options.config === true ? ['config'] : []),
+          ...(options.lock === true ? ['lock'] : []),
           ...(options['exit-codes'] === true ? ['exit-codes'] : []),
         ]
   if (checks.length === 0) {
     return argError(
       io,
       'selftest',
-      '未指定检查项（当前可用 --shims / --config / --exit-codes / --fast / --repos）',
+      '未指定检查项（当前可用 --shims / --config / --lock / --exit-codes / --fast / --repos）',
     )
   }
 
@@ -2241,6 +2306,7 @@ export function runCli(argv, deps = {}) {
     if (first === 'review') return runReview(rest, deps, io)
     if (first === 'doctor') return runDoctor(rest, deps, io)
     if (first === 'selftest') return runSelftest(rest, deps, io)
+    if (first === 'lock') return runLock(rest, deps, io)
     if (first === 'shim') return runShim(rest, deps, io)
     if (first === 'hooks') return runHooks(rest, deps, io)
     if (first === 'check-all') return runCheckAllCommand(rest, deps, io)
