@@ -1849,7 +1849,7 @@ function runCheckAllCommand(argv, deps, io) {
  * deploy：动作是位置参数（init / check），渲染与生成区比对全在 lib/deploy.mjs（契约 §10）。
  * --root 必填：生成 / 校验必须显式指向目标仓，不猜当前目录。
  * 退出码：0 成功 / 1 不一致、缺标记或拒绝覆盖 / 2 用法、配置错误或 artifact 尚未实现。
- * deps.buildInfo 可注入（测试用），缺省读本包 build.json——源码运行没有它，拒绝生成假 pin。
+ * deps.buildInfo 显式注入即生效（含 null，表示「没有 build.json」），没注入才读本包 build.json——源码运行没有它，拒绝生成假 pin。
  */
 function runDeploy(argv, deps, io) {
   const [action, ...rest] = argv
@@ -1876,8 +1876,12 @@ function runDeploy(argv, deps, io) {
     return argError(io, 'deploy', '配置缺少 deploy 段（契约 §7.1），无法生成 / 校验部署骨架')
   }
 
-  const buildInfo = isPlainObject(deps.buildInfo) ? deps.buildInfo : readBuildInfo()
-  if (!nonEmpty(buildInfo?.gitSha)) {
+  // 判据必须是「显式传了没有」，不能用 isPlainObject：测试会注入 null 表示「这里没有 build.json」，
+  // 而 null 不是普通对象，用 isPlainObject 判会把它当成「没注入」→ 回退读真实文件。
+  // 打包期间仓根就有一个真的 build.json（scripts/pack.sh 先写它再跑测试），于是源码运行用例
+  // 读到打包标识而绿不了：注入值必须原样生效，没注入才读文件。
+  const buildInfo = 'buildInfo' in deps ? deps.buildInfo : readBuildInfo()
+  if (!isPlainObject(buildInfo) || !nonEmpty(buildInfo.gitSha)) {
     return argError(io, 'deploy', '当前包没有 build.json（源码运行），无法 pin uses 的 gitSha；请在已安装包内运行')
   }
 

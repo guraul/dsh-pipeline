@@ -13,11 +13,13 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { runCli } from '../bin/cli.mjs'
 import { DEPLOY_WORKFLOW_FILE, REGION_BEGIN, REGION_END } from '../lib/deploy.mjs'
 
+const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const GIT_SHA = '0123456789abcdef0123456789abcdef01234567'
 const BUILD_INFO = { gitSha: GIT_SHA, builtAt: '2026-11-06T00:00:00Z', dirty: false }
 
@@ -307,6 +309,32 @@ test('deploy：缺 --root / 未知动作 / 未知选项 / 缺 deploy 段 / 缺 b
   const noBuild = run(['deploy', 'init', '--root', root], { buildInfo: null })
   assert.equal(noBuild.code, 2)
   assert.match(noBuild.err, /没有 build.json/)
+})
+
+// 回归（issue #64）：pack.sh 先在包根写 build.json 再跑 node --test，此时注入的 null 会被
+// isPlainObject 判成「没注入」→ 回退读到真的 build.json → 上面那条用例绿成退出码 0，门禁整段红。
+// 断言用意：显式注入 null 表示「这里没有 build.json」，这个语义必须原样生效，不被真实文件顶掉。
+test('deploy：包根存在 build.json 时，注入 buildInfo:null 仍退 2（不回退读真实文件）', (t) => {
+  const root = tmp()
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  writeConfig(root, BASE_DEPLOY)
+
+  // 造一个包根 build.json 复刻打包期间的现场：只在原本没有时才造（打包期间那个是 pack.sh 的
+  // 产物，不能碰），且由本用例自己删掉，不留残留；文件在 .gitignore 里，不会弄脏 git status。
+  const repoBuild = join(REPO_ROOT, 'build.json')
+  const created = !existsSync(repoBuild)
+  if (created) {
+    writeFileSync(
+      repoBuild,
+      JSON.stringify({ gitSha: GIT_SHA, builtAt: '2026-11-06T00:00:00Z', dirty: false }),
+      'utf8',
+    )
+    t.after(() => rmSync(repoBuild, { force: true }))
+  }
+
+  const result = run(['deploy', 'init', '--root', root], { buildInfo: null })
+  assert.equal(result.code, 2, '显式注入 null 必须拒绝，不能读到包根 build.json 而退出码 0')
+  assert.match(result.err, /没有 build.json/)
 })
 
 test('deploy：配置字段不合规（未知键等）→ 退 2，不落盘', (t) => {
