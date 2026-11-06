@@ -87,8 +87,45 @@ fi
 
 cp -f "$tarball" "$DIST/latest.tgz"
 
+# ---- 单一安装位置：解包 latest.tgz，供各消费仓 `link:` 指向 ----
+sha8="$(printf '%s' "$git_sha" | cut -c1-8)"
+if [ -z "$sha8" ]; then sha8="unknown"; fi
+stamp="$(printf '%s' "$built_at" | tr -d ':-')"
+
+# 1) 归档可回滚副本，保留最近 10 个
+mkdir -p "$DIST/archive"
+cp -f "$DIST/latest.tgz" "$DIST/archive/${sha8}-${stamp}.tgz"
+ls -1t "$DIST"/archive/*.tgz 2>/dev/null | tail -n +11 | while IFS= read -r old; do rm -f "$old"; done
+
+# 2) 解包到版本目录（每次重建），并校验关键文件
+pkg_dir="$DIST/pkg-${sha8}"
+rm -rf "$pkg_dir"
+mkdir -p "$pkg_dir"
+tar -xzf "$DIST/latest.tgz" -C "$pkg_dir" --strip-components=1
+missing=""
+for f in bin/cli.mjs lib/review.mjs; do
+  if [ ! -f "$pkg_dir/$f" ]; then missing="${missing} ${f}"; fi
+done
+if [ -n "$missing" ]; then
+  echo "解包失败: 缺少${missing}" >&2
+  rm -rf "$pkg_dir"
+  exit 1
+fi
+
+# 3) 原子切换 dist/pkg -> pkg-<sha8>（同文件系统 rename，不产生空窗）
+if [ -d "$DIST/pkg" ] && [ ! -L "$DIST/pkg" ]; then
+  # 一次性迁移：旧版可能是目录
+  rm -rf "$DIST/pkg"
+fi
+ln -sfn "pkg-${sha8}" "$DIST/.pkg.new"
+mv -f "$DIST/.pkg.new" "$DIST/pkg"
+
+# 4) 版本目录只留最近 2 个
+ls -1dt "$DIST"/pkg-* 2>/dev/null | tail -n +3 | while IFS= read -r old; do rm -rf "$old"; done
+
 echo ""
 echo "版本: ${version}"
 echo "产物: ${tarball}"
 echo "最新: ${DIST}/latest.tgz"
 echo "测试: ${tests} 条，通过 ${pass}，失败 ${fail}"
+echo "安装位置: ${DIST}/pkg -> pkg-${sha8}（各仓 tools 用 link: 指向它）"
