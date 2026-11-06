@@ -214,12 +214,32 @@ test('buildPrompt：inline 档写明没有工具权限，且不出现读仓库�
     tier: 'inline',
   })
   assert.ok(prompt.includes('没有工具权限'))
-  assert.ok(prompt.includes('判 ESCALATE 并在 findings 里写明缺什么证据'))
+  assert.ok(prompt.includes('只对材料里的「必答问题」负责'))
+  assert.ok(prompt.includes('必答问题靠材料答不了'))
   assert.equal(prompt.includes('读仓库文件'), false)
   assert.equal(prompt.includes('你实际核验过的断言'), false)
   // 判定行要求与 diff 围栏不因档位而变
   assert.ok(prompt.includes(`${NONCE} VERDICT: <APPROVE|REJECT|ESCALATE> SHA: ${SHA}`))
   assert.ok(prompt.includes('<<<DIFF_END>>>'))
+  // 噪声治理：建议有上限、必须写去向、APPROVE 后不再提本 PR 的建议
+  assert.ok(prompt.includes('**最多 3 条**'))
+  assert.ok(prompt.includes('去向：本轮修'))
+  assert.ok(prompt.includes('若判定是 APPROVE'))
+  // 去向必须写在 message 里（record 只收四个字段，多一个键会写不进去）
+  assert.ok(prompt.includes('不要新增 JSON 字段'))
+  // 不重复的依据是「材料里已列出」，不依赖 buildPrompt 拿不到的轮次数据
+  assert.ok(prompt.includes('材料里已经列出的既有建议不要重复提'))
+})
+
+test('buildPrompt：tools 档同样带 4–8 条（档位只改 0.1）', () => {
+  const prompt = buildPrompt({
+    request: { pr: 1, head_sha: SHA, nonce: NONCE, diff: '+ x' },
+    tier: 'tools',
+  })
+  assert.ok(prompt.includes('ESCALATE 只用于'))
+  assert.ok(prompt.includes('**最多 3 条**'))
+  assert.ok(prompt.includes('若判定是 APPROVE'))
+  assert.ok(prompt.includes('另有 N 条同类未展开'))
 })
 
 test('reviewAction 映射三种判定', () => {
