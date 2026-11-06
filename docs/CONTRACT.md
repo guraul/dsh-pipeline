@@ -199,6 +199,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
     "qualityCmd": "pnpm run lint && pnpm test", // 可选字符串（渲染成 with.quality_cmd；缺省用共享 workflow 默认）
     "buildCmd": "pnpm run build",      // 可选字符串（渲染成 with.build_cmd；缺省用共享 workflow 默认）
     "paths": ["packages/web/**", "scripts/**"], // 可选字符串数组（渲染成 on.push.paths；缺省=任何 push 都部署）
+    "linkPaths": ["data=../../data"],  // 可选字符串数组，每项「相对路径=目标」含 '='（渲染成 with.link_paths，逗号+空格拼接；切 dist 软链前在 release 内逐对建持久化路径软链；缺省=不建、步骤跳过）
     "keepReleases": 5                  // 可选整数 1..50，缺省 5
   }
 }
@@ -345,3 +346,4 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | 2026-11-06 | 审核第 1 轮 REJECT 修正：§2 的 L2 状态改为「生成能力现行、各仓接入未完成」；§3.3 目标清单补 `selftest --lock`；§9 写清 `--lock` 尚未进选项表（传了报「未知选项」），与 `--peer` / `--exit-codes` 的「尚未实现」区分 |
 | 2026-11-06 | 新增 §7.3 审核档位：`review.tier`（inline / tools，缺省 tools）进 schema；`review prepare` 在 inline 档自动并入 `git show --stat` 与 `gh pr checks` 证据。v1.2 里「`review.*` 仍未实现」一项自此收窄为「`review` 的其余字段仍未实现」 |
 | 2026-11-06 | §7.1 `deploy` 段补 `qualityCmd` / `buildCmd` / `paths` 三个可选字段（issue #71），硬规则补「`paths` 空数组被拒」 |
+| 2026-11-06 | §7.1 `deploy` 段补 `linkPaths` 可选字段（issue #80）：渲染成 `with.link_paths`，切 dist 软链前在 release 内逐对建持久化路径软链；`deploy.yml` 新增同名 input 与 `Link persistent paths` 步骤 |

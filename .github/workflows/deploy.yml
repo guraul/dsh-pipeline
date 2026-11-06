@@ -4,7 +4,7 @@ name: deploy
 # 不得再在各自仓里复制部署步骤。手工兜底（GitHub 不可用时）见各仓 DEPLOY.md，
 # 命令里的值从 caller 的 inputs 里抄。
 # 服务器地址、SSH 密钥一律经 inputs / secrets 传入，本文件不写死任何主机或凭据。
-# mode=releases：rsync 进 releases/<id>/ → 切 dist 软链 → 重启 → 保留最近 N 份；
+# mode=releases：rsync 进 releases/<id>/ → 按 link_paths 建持久化软链（配了才做）→ 切 dist 软链 → 重启 → 保留最近 N 份；
 # mode=inplace：原地覆盖（给不能换目录的服务用，快照进 .deploy-history 供回滚）。
 # 健康检查有两种 health_check 模式：http 在 runner 上探 health_url（写对外地址，如 http://<host>:9928/）；
 # ssh 上服务器探本地端口——对外入口可能只收 HTTPS / 自签证书，runner 侧 curl 探不通，探本地端口更可靠
@@ -46,6 +46,11 @@ on:
         required: false
         type: string
         default: 'static-dir'
+      link_paths:
+        description: '持久化路径软链：逗号分隔的「相对路径=目标」对（如 data=../../data），release 就绪后切 dist 之前逐对建软链；留空不建'
+        required: false
+        type: string
+        default: ''
       health_url:
         description: '健康检查 URL，必须返回 200'
         required: true
@@ -275,6 +280,50 @@ jobs:
         run: |
           rsync -az --delete -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new" \
             "${WORK_DIR}/${ARTIFACT_DIR}/" "root@${HOST}:${REMOTE_DIR}/releases/${RELEASE}/"
+
+      # release 是不可变产物，但数据库 / 上传等状态必须外置：按 link_paths 在 release 内
+      # 建持久化路径软链（如 data -> ../../data）。必须在切 dist 软链之前完成——
+      # homebase 代码按 cwd/../../data 找库（cwd=dist/packages/web → releases/<id>/data），
+      # 软链没就位，服务一启动就因缺 data 目录崩溃。
+      - name: Link persistent paths
+        if: ${{ !inputs.dry_run && inputs.mode == 'releases' && inputs.link_paths != '' }}
+        env:
+          LINK_PATHS: ${{ inputs.link_paths }}
+          REMOTE_DIR: ${{ inputs.remote_dir }}
+          HOST: ${{ steps.target.outputs.host }}
+          RELEASE: ${{ steps.target.outputs.release }}
+        run: |
+          set -euo pipefail
+          # 渲染格式是「逗号+空格」分隔的「相对路径=目标」对；先整段校验再上服务器，
+          # 某项不含 = 或等号两侧为空一律 ::error:: 退 1，不带着畸形配置去动 release
+          IFS=',' read -ra pairs <<< "${LINK_PATHS}"
+          links=()
+          for pair in "${pairs[@]}"; do
+            pair="${pair#"${pair%%[![:space:]]*}"}"
+            pair="${pair%"${pair##*[![:space:]]}"}"
+            case "${pair}" in
+              *=*) ;;
+              *) echo "::error::link_paths 每项必须是「相对路径=目标」，缺 '=' 的项: ${pair}"; exit 1 ;;
+            esac
+            rel="${pair%%=*}"
+            target="${pair#*=}"
+            rel="${rel%"${rel##*[![:space:]]}"}"
+            target="${target#"${target%%[![:space:]]*}"}"
+            target="${target%"${target##*[![:space:]]}"}"
+            if [ -z "${rel}" ] || [ -z "${target}" ]; then
+              echo "::error::link_paths 等号两侧不能为空（相对路径与目标都要给）: ${pair}"
+              exit 1
+            fi
+            links+=("${rel}=${target}")
+          done
+          # 校验全过才开始动服务器：逐对 mkdir 父目录 → 清掉同名残留 → 建软链
+          for item in "${links[@]}"; do
+            rel="${item%%=*}"
+            target="${item#*=}"
+            ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new "root@${HOST}" \
+              "cd ${REMOTE_DIR} && mkdir -p \"\$(dirname \"releases/${RELEASE}/${rel}\")\" && rm -rf \"releases/${RELEASE}/${rel}\" && ln -s \"${target}\" \"releases/${RELEASE}/${rel}\""
+            echo "linked: releases/${RELEASE}/${rel} -> ${target}"
+          done
 
       - name: Flip symlink and restart
         if: ${{ !inputs.dry_run && inputs.mode == 'releases' }}

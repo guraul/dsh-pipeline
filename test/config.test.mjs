@@ -310,3 +310,27 @@ test('deploy.paths：可选非空字符串数组，缺省与 null 视为未设�
     )
   }
 })
+
+test('deploy.linkPaths：可选非空字符串数组且每项含 =，缺省与 null 视为未设置，非法 → E_CONFIG', () => {
+  const linkPaths = ['data=../../data', 'uploads=../../../uploads']
+  assert.deepEqual(validateConfig({ deploy: { ...MINIMAL_DEPLOY, linkPaths } }).deploy.linkPaths, linkPaths)
+  assert.equal(validateConfig({ deploy: { ...MINIMAL_DEPLOY, linkPaths: null } }).deploy.linkPaths, null)
+
+  // 非数组、空数组（等于悄悄丢掉软链）、元素非字符串或空串，一律 E_CONFIG
+  for (const bad of ['data=x', 42, true, {}, [], ['data=x', ''], ['data=x', 42], [null]]) {
+    assert.throws(
+      () => validateConfig({ deploy: { ...MINIMAL_DEPLOY, linkPaths: bad } }),
+      code('E_CONFIG'),
+      `linkPaths ${String(bad)}`,
+    )
+  }
+
+  // 元素必须是「相对路径=目标」：不含 '=' 一律拒（等号两侧为空由 workflow 的 Link 步骤拒绝）
+  for (const bad of [['data'], ['data/x', 'uploads'], ['a=../b', 'no-equals']]) {
+    assert.throws(
+      () => validateConfig({ deploy: { ...MINIMAL_DEPLOY, linkPaths: bad } }),
+      code('E_CONFIG'),
+      `linkPaths ${JSON.stringify(bad)}`,
+    )
+  }
+})

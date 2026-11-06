@@ -5,7 +5,9 @@
  * init --write 落盘 + check 一致退 0、改配置后 check 打印第一处差异退 1（assemble 键也参与比对）、
  * 手改生成区一行退 1、标记之后追加 job 仍退 0、改配置重跑 --write 只换生成区并保留追加内容、
  * node-standalone 放行（mode=releases + assemble）、qualityCmd / buildCmd / paths 三字段
- * （渲染顺序、paths 元素顺序、不配不出现、新行参与 check 逐字节比对）、artifact=oci-image 退 2、
+ * （渲染顺序、paths 元素顺序、不配不出现、新行参与 check 逐字节比对）、linkPaths 字段
+ * （link_paths 渲染在 build_cmd 之后、逗号+空格拼接、不配不出现、改配置后 check 报差异）、
+ * artifact=oci-image 退 2、
  * 缺文件 / 缺标记退 1、手写文件拒绝覆盖退 1、参数与缺 deploy 段 / 缺 build.json 退 2。
  * 构建标识经 deps.buildInfo 注入，不依赖包内 build.json（CI 源码运行没有该文件）。
  * 只调 runCli（注入输出流），不碰真实 gh / git。
@@ -108,6 +110,7 @@ test('deploy init：不带 --write 只打印骨架，uses / with / concurrency /
   assert.ok(!out.includes('public_health_url:'), '未配 publicUrl 不应出现')
   assert.ok(!out.includes('quality_cmd:'), '未配 qualityCmd 不应出现')
   assert.ok(!out.includes('build_cmd:'), '未配 buildCmd 不应出现')
+  assert.ok(!out.includes('link_paths:'), '未配 linkPaths 不应出现')
   assert.ok(!out.includes('paths:'), '未配 paths 时 on 段不带 paths')
 })
 
@@ -159,6 +162,48 @@ test('deploy init：配 qualityCmd / buildCmd / paths → 三处新行渲染、�
   assert.match(result.err, /第一处差异在第 \d+ 行/)
   assert.match(result.err, /期望:.*build_cmd: 'pnpm run build:prod'/)
   assert.match(result.err, /实际:.*build_cmd: 'pnpm run build'/)
+})
+
+test('deploy init：配 linkPaths → link_paths 渲染在 build_cmd 之后（逗号+空格拼接），参与 check 逐字节比对', (t) => {
+  const root = tmp()
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  writeConfig(root, {
+    ...BASE_DEPLOY,
+    buildCmd: 'pnpm run build',
+    linkPaths: ['data=../../data', 'uploads=../../../uploads'],
+  })
+
+  const printed = init(root)
+  assert.equal(printed.code, 0)
+  assert.equal(printed.err, '')
+  const out = printed.out
+
+  // 顺序：assemble → build_cmd → link_paths → service；元素顺序保持，逗号+空格拼接
+  assert.ok(
+    out.includes(
+      "      assemble: 'static-dir'\n"
+        + "      build_cmd: 'pnpm run build'\n"
+        + "      link_paths: 'data=../../data, uploads=../../../uploads'\n"
+        + "      service: 'serve-9928'\n",
+    ),
+    'link_paths 应紧跟 build_cmd 且在 service 之前',
+  )
+
+  // 落盘后 check 一致；改 linkPaths → 报第一处差异（新行参与逐字节比对）
+  assert.equal(init(root, ['--write']).code, 0)
+  assert.equal(check(root).code, 0)
+
+  const configFile = join(root, '.dsh', 'pipeline.json')
+  const config = JSON.parse(readFileSync(configFile, 'utf8'))
+  config.deploy.linkPaths = ['data=../../data']
+  writeFileSync(configFile, JSON.stringify(config, null, 2), 'utf8')
+
+  const result = check(root)
+  assert.equal(result.code, 1)
+  assert.equal(result.out, '')
+  assert.match(result.err, /第一处差异在第 \d+ 行/)
+  assert.match(result.err, /期望:.*link_paths: 'data=\.\.\/\.\.\/data'/)
+  assert.match(result.err, /实际:.*link_paths: 'data=\.\.\/\.\.\/data, uploads=\.\.\/\.\.\/\.\.\/uploads'/)
 })
 
 test('deploy init：node-standalone 放行，mode=releases 且 with: 按 artifact 追加 assemble', (t) => {
