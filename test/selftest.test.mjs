@@ -110,11 +110,13 @@ test('selftest：已识别但未实现的检查项 → 2，报「尚未实现」
   t.after(() => rmSync(root, { recursive: true, force: true }))
   writeConfig(root, VALID)
 
-  // --exit-codes 已实现，只剩 --peer 还在「已识别未实现」
-  const result = run(['selftest', '--peer', '--root', root])
-  assert.equal(result.code, 2)
-  assert.equal(result.err, 'selftest: 尚未实现: --peer\n')
-  assert.equal(result.out, '')
+  // --exit-codes 已实现；--lock / --peer 仍是「已识别未实现」（都退 2，不是「未知选项」）
+  for (const name of ['lock', 'peer']) {
+    const result = run(['selftest', `--${name}`, '--root', root])
+    assert.equal(result.code, 2, `--${name} 应退 2`)
+    assert.equal(result.err, `selftest: 尚未实现: --${name}\n`)
+    assert.equal(result.out, '')
+  }
 })
 
 test('selftest --exit-codes：真跑四类场景，退出码口径符合 → 0', (t) => {
@@ -124,29 +126,36 @@ test('selftest --exit-codes：真跑四类场景，退出码口径符合 → 0',
 
   const result = run(['selftest', '--exit-codes', '--root', root])
   assert.equal(result.code, 0, result.err)
-  assert.match(result.out, /退出码口径 4 条全部符合/)
+  assert.match(result.out, /退出码 6 条用例符合（成功 0 \/ 业务拒绝 1 \/ 用法错误 2 \/ 环境错误 3）/)
   assert.equal(result.err, '')
 })
 
-test('checkExitCodes：注入 runner，四类场景各发一条命令（node × 3 + bash × 1）', () => {
+test('checkExitCodes：注入 runner，六条用例各发一条命令（node × 5 + bash × 1）', () => {
   const calls = []
-  const runner = (command, args) => {
-    calls.push({ command, args })
-    // 入口找不到包那条用 bash 跑，其余是 node 跑 CLI
-    return { status: command === 'bash' ? 3 : 2 }
+  const runner = (command, args, options) => {
+    calls.push({ command, args, options })
+    if (command === 'bash') return { status: 3 }
+    // 闸门夹具：approve.json 应退 0、reject.json 应退 1；其余是用法错误 2
+    const record = args.find((arg, i) => args[i - 1] === '--record')
+    if (record !== undefined) return { status: record.endsWith('approve.json') ? 0 : 1 }
+    return { status: 2 }
   }
 
   const check = checkExitCodes({ runner })
   assert.equal(check.ok, true, check.detail)
   assert.equal(check.name, 'exit-codes')
-  assert.equal(calls.length, 4)
+  assert.equal(calls.length, 6)
   assert.equal(calls.filter((c) => c.command === 'bash').length, 1)
-  // 三次 node 调用分别验「缺参 / 未知参数 / 未知子命令」
-  const nodeArgs = calls.filter((c) => c.command !== 'bash').map((c) => c.args.slice(1))
+  const nodeCalls = calls.filter((c) => c.command !== 'bash').map((c) => c.args.slice(1))
   assert.deepEqual(
-    nodeArgs.map((args) => args[0]),
-    ['gate', 'gate', 'no-such-subcommand'],
+    nodeCalls.map((args) => args[0]),
+    ['gate', 'gate', 'no-such-subcommand', 'gate', 'gate'],
   )
+  // 每条子进程都在受控 cwd / 环境里跑：不随调用方所在仓库而变
+  for (const call of calls) {
+    assert.equal(typeof call.options.cwd, 'string')
+    assert.match(call.options.env.DSH_PIPELINE_HOME, /no-such-package$/)
+  }
 })
 
 test('checkExitCodes：某个场景实际退出码不符 → ok false，detail 点名是哪个场景', () => {
@@ -154,13 +163,26 @@ test('checkExitCodes：某个场景实际退出码不符 → ok false，detail �
     if (command === 'bash') return { status: 3 }
     // 「gate 无 --pr」本该退 2，这里故意返 0
     if (args.length === 2 && args[1] === 'gate') return { status: 0 }
+    // 闸门夹具照常
+    const record = args.find((arg, i) => args[i - 1] === '--record')
+    if (record !== undefined) return { status: record.endsWith('approve.json') ? 0 : 1 }
     return { status: 2 }
   }
 
   const check = checkExitCodes({ runner })
   assert.equal(check.ok, false)
   assert.match(check.detail, /缺必填参数 期望退出 2，实际 0/)
-  assert.match(check.detail, /退出码口径不符（1\/4）/)
+  assert.match(check.detail, /退出码用例不符（1\/6）/)
+})
+
+test('checkExitCodes：runner 抛异常 → 记成失败条目，不冒泡', () => {
+  const runner = () => {
+    throw new Error('spawn 挂了')
+  }
+
+  const check = checkExitCodes({ runner })
+  assert.equal(check.ok, false)
+  assert.match(check.detail, /执行失败: spawn 挂了/)
 })
 
 test('selftest --exit-codes --json：结构与其他检查项一致', (t) => {

@@ -142,7 +142,7 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
                      dsh --dump-config 可见性（dsh 不可用时跳过不算失败）、cordis.patch.yml、
                      审核记录目录可写；逐项 ✓/✗，任一 ✗ 退出 1。不给该 flag 则只比构建，
                      行为与现状一致
-  selftest   一致性自检（契约 §9；已实现 --shims / --config / --exit-codes / --repos，--peer 未实现）
+  selftest   一致性自检（契约 §9；已实现 --shims / --config / --exit-codes / --repos，--lock / --peer 未实现）
   shim       生成 / 校验入口 shim（契约 §8）
   hooks      安装 / 校验 pre-push 直推拦截钩子
   check-all  逐包跑 test / check / typecheck 并汇总（缺 node_modules 跳过不算失败）
@@ -155,8 +155,9 @@ selftest 用法:
   dsh-pipeline selftest [--shims] [--config] [--exit-codes] [--fast | --repos <a,b,c>] [--json] [--root <dir>]
   --shims            6 个入口 == 按当前包版本渲染后的模板（<root>/scripts/pipeline 不存在即失败）
   --config           校验 <root>/.dsh/pipeline.json：能被 schema 接受、没有未声明字段
-  --exit-codes       退出码口径自检（契约 §4）：起子进程真跑四类场景——缺必填参数 2 / 未知参数 2 /
-                     未知子命令 2 / 入口找不到共享包 3；任一不符退出 1，detail 指出哪条不符
+  --exit-codes       退出码口径自检（契约 §4）：起子进程真跑六条用例——成功 0 / 业务拒绝 1 /
+                     用法错误 2（缺参、未知参数、未知子命令）/ 环境错误 3（入口找不到共享包）；
+                     任一不符退出 1，detail 指出哪条不符
   --fast             等价于 --shims --config（契约 §9 的 pre-push 用法；不含 --repos / --exit-codes）
   --repos <a,b,c>    比对多个仓装的共享包是不是同一构建（读各自 build.json 的 gitSha/builtAt）。
                      绝对路径直接用、相对路径按 --root（缺省当前目录）解析、前导 ~/ 展开成家目录；
@@ -166,7 +167,8 @@ selftest 用法:
                      带 --repos 时改为 {"ok":…,"baseline":"…","repos":[{"path","sha","builtAt","ok"}],"skipped":[{"path","reason"}]}
                      （退出码与人读模式一致）
   --root <dir>       仓库根目录（缺省主工作区；git 定位不到时退回当前目录）；--repos 用它解析相对路径
-  --peer             已识别但尚未实现：传入即报「尚未实现」并退出 2，不静默忽略
+  --lock / --peer    已识别但尚未实现（锁文件与 peer 范围比对）：
+                     传入即报「尚未实现」并退出 2，不静默忽略
   退出码: 0 通过（没有配置文件也退 0）/ 1 检查不通过 / 2 用法错误或检查项未实现
 
 shim 用法:
@@ -585,12 +587,13 @@ const REVIEW_PUBLISH_BOOL_FLAGS = new Set(['post-review', 'dry-run'])
 const REVIEW_PROMPT_VALUE_FLAGS = new Set(['request', 'out', 'role'])
 const REVIEW_PROMPT_BOOL_FLAGS = new Set()
 const SELFTEST_VALUE_FLAGS = new Set(['root', 'repos'])
-// --peer 只是「被识别」：传了要报尚未实现退 2，不能落进未知选项；--lock 尚未进选项表（未知选项）
+// --lock / --peer 只是「被识别」：传了要报尚未实现退 2，不能落进未知选项
 const SELFTEST_BOOL_FLAGS = new Set([
   'config',
   'fast',
   'json',
   'shims',
+  'lock',
   'peer',
   'exit-codes',
 ])

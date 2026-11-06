@@ -77,7 +77,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | `merge` | 闸门通过后 squash 合并 + 清理 worktree/分支 + 快进 main；`--review-record` 是 `--record` 的兼容别名（旧写法，后续将弃用；两者取值不同则报错） | 现行 |
 | `status` | 审核记录概况，含仓库概览（root/branch/head/worktrees；git 取不到时该段只提示，不影响退出码） | 现行 |
 | `doctor` | 检查仓库装的共享包是否同一构建；`--profile <dir>` 可选：体检 profile 包声明、插件软链有效性、`dsh --dump-config` 可见性（dsh 不可用时跳过）、审核记录目录可写，另含原 review-loop-check.sh 没有的 `cordis.patch.yml` 非空与目录/DSH_HOME 报告两项 | 现行 |
-| `selftest` | 一致性自检（见 §9）：`--shims` / `--config` / `--exit-codes` / `--fast` / `--repos` 可用；`--lock` / `--peer` 两项仍为目标（`--peer` 已识别、传入报「尚未实现」退 2；`--lock` 尚未进选项表，传入报「未知选项」退 2） | 现行（两项子检查仍为目标） |
+| `selftest` | 一致性自检（见 §9）：`--shims` / `--config` / `--exit-codes` / `--fast` / `--repos` 可用；`--lock` / `--peer` 两项仍为目标（都已识别，传入报「尚未实现」退 2） | 现行（两项子检查仍为目标） |
 | `check-all` | 按配置逐包跑声明的检查并汇总 | 现行 |
 | `shim install\|check` | 生成 / 校验入口 shim | 现行 |
 | `hooks install\|check` | 安装 / 校验 pre-push 直推拦截钩子 | 现行 |
@@ -91,7 +91,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 **配置字段（已进 schema）**：`worktreesDir` 由 `task` 消费——缺省读配置、`--worktrees-dir` 优先；`checks` 由 `check-all` 消费——`--packages` 优先，其次 `checks.packages`（按给定顺序），再否则自动发现并按 `checks.exclude` 过滤；`deploy` 由 `deploy init|check` 消费（字段见 §7.1，部署行为见 §10）；`review.tier` 由 `review prepare` / `review prompt` 消费（见 §7.3），`review` 的其余字段仍为目标（P2）。
 
-**目标**：`selftest --lock` / `--peer`（§9；`--lock` 尚未进选项表）、`pipeline.lock.json`（§7.2）、`review` 的其余字段（§7.1）、`--legacy-exit-codes`（§4）、§6 的 root 统一，以及 §10 的「各仓接入 caller workflow 与回滚调用」。
+**目标**：`selftest --lock` / `--peer`（§9；两者均已识别，传入报「尚未实现」退 2）、`pipeline.lock.json`（§7.2）、`review` 的其余字段（§7.1）、`--legacy-exit-codes`（§4）、§6 的 root 统一，以及 §10 的「各仓接入 caller workflow 与回滚调用」。
 
 硬规则：目标条目在实现合并前**不得**被入口 shim 调用，也不得在文档里写成可用；§9 的门禁项同理——`selftest --lock` / `--peer` 落地前，CI 不得引用它们。
 
@@ -305,17 +305,17 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 ---
 
-## 9. 一致性门禁（`selftest`，**现行**；`--lock` / `--peer` 仍为目标）
+## 9. 一致性门禁（`selftest`，**现行**；`--lock` / `--peer` 两项子检查仍为目标）
 
-**已实现**：`--shims` / `--config` / `--exit-codes` / `--fast` / `--repos`（pre-push 用 `--fast`）。**未实现**：`--lock` / `--peer`。其中 `--peer` 已在选项表里，传入即报「尚未实现」并退 2；`--lock` 连选项都还没进 `SELFTEST_BOOL_FLAGS`，传了按「未知选项」退 2。两者都不静默忽略，但错误文案不同。
+**已实现**：`--shims` / `--config` / `--exit-codes` / `--fast` / `--repos`（pre-push 用 `--fast`）。**未实现**：`--lock` / `--peer`——两者都已在选项表里，传入即报「尚未实现」并退 2，不静默忽略、也不掉进「未知选项」。
 
 | 检查 | 内容 | 失败 |
 |---|---|---|
 | `--shims` | 6 个入口 == 按当前版本渲染后的模板 | 退出 1 |
 | `--config` | `.dsh/pipeline.json` 能被 schema 接受，无未声明字段 | 退出 1 |
-| `--lock` | 安装的构建 == `pipeline.lock.json` 的 `expect`（**未实现**） | 退出 1 |
-| `--peer` | 各插件声明的 peer 范围覆盖当前 DSH 版本（静态比较，不下载；**未实现**） | 退出 1 |
-| `--exit-codes` | 退出码表自检：起子进程真跑四类场景——缺必填参数→2、未知参数→2、未知子命令→2、入口找不到共享包→3；任一不符即失败并点名场景 | 退出 1 |
+| `--lock` | 安装的构建 == `pipeline.lock.json` 的 `expect`（**未实现**：已识别、传入报「尚未实现」退 2） | 退出 1 |
+| `--peer` | 各插件声明的 peer 范围覆盖当前 DSH 版本（静态比较，不下载；**未实现**：已识别、传入报「尚未实现」退 2） | 退出 1 |
+| `--exit-codes` | 退出码口径自检：起子进程真跑六条用例——APPROVE 记录过闸门→0、REJECT 记录过闸门→1、缺必填参数/未知参数/未知子命令→2、入口找不到共享包→3；子进程统一在受控 cwd 与环境里跑；任一不符即失败并点名用例 | 退出 1 |
 | `--repos` | 多个仓装的共享包是不是同一构建（读各自 `tools/node_modules/dsh-pipeline/build.json` 的 `gitSha`/`builtAt`，比对 `gitSha`；目录不存在 / 未装包的仓跳过并列出，可比对的仓不足 2 个则跳过退 0；`--json` 给 `{ok,baseline,repos,skipped}`） | 退出 1 |
 | `--fast` | 只跑 `--shims --config`（pre-push 用，<2 秒） | 退出 1 |
 
@@ -396,3 +396,4 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | 2026-11-06 | 审核第 1 轮 REJECT 修正（issue #81）：`linkPaths` 的路径部分拒绝绝对路径 / `..` 段 / `,`（它会拼进远端 `rm -f`/`ln -s` 的路径）；远端执行前用 `realpath` 断言仍在 `releases/<id>/` 内，且只对父目录做规范化、末段用 `rm -f` 解链重建（避免解析已存在的软链后误删目标） |
 | 2026-11-06 | §7.3 补「超时之后必须清理残留进程」与「审核材料的模板与上限」（issue #82）：600 秒超时后 `codebuddy -p` 残留会导致连续误超时；inline 材料按模板拼装、总长 ≤60 行（diff ≤40 行），超出即拆轮；清理判据用「父调用已超时」而非固定分钟数 |
 | 2026-11-06 | §9 实现 `selftest --exit-codes`（起子进程真跑：缺必填参数 / 未知参数 / 未知子命令 → 2，入口找不到共享包 → 3）；§3.2 / §3.3 / §9 标题与「仍未实现」清单同步收敛为 `--lock` / `--peer` |
+| 2026-11-06 | 按第 1 轮审核建议加固 `--exit-codes`：补「成功 0 / 业务拒绝 1」两条用例（用 APPROVE / REJECT 记录过闸门）、`runner` 抛异常折成失败条目、子进程统一在受控 cwd 与环境里跑；`--lock` 补进选项表，与 `--peer` 一样报「尚未实现」（不再是「未知选项」） |

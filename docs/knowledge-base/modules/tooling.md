@@ -8,7 +8,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| `lib/selftest.mjs` | `--shims` / `--config` / `--exit-codes`（+ `--repos`）检查实现；`--peer` 只识别不实现 |
+| `lib/selftest.mjs` | `--shims` / `--config` / `--exit-codes`（+ `--repos`）检查实现；`--lock` / `--peer` 只识别不实现 |
 | `lib/shim.mjs` | 模板渲染（`{{VERSION}}` / `{{CMD}}`）、6 入口定义、`install` 写入判定、`check` 逐字节比对 |
 | `templates/shim.sh` | shim 的唯一模板 |
 | `lib/hooks.mjs` | pre-push 钩子正文（含标记行）、目标路径推算、`install` / `check` |
@@ -30,7 +30,7 @@ dsh-pipeline selftest [--shims | --config | --fast | --repos a,b,c] [--json] [--
 | `--fast` | 等价 `--shims --config`（pre-push 用，契约 §9） | 已实现 |
 | `--repos a,b,c` | 多仓装的共享包是否同一构建（读各自 `tools/node_modules/dsh-pipeline/build.json` 的 `gitSha`） | 已实现 |
 | `--peer` | 插件 peer 范围覆盖当前 DSH 版本 | **未实现**：传入即报「尚未实现」退 2 |
-| `--exit-codes` | 起子进程真跑四类场景，断言契约 §4：缺必填参数→2、未知参数→2、未知子命令→2、入口找不到共享包→3 | 已实现（唯一会 spawn 的检查项） |
+| `--exit-codes` | 起子进程真跑六条用例，断言契约 §4：APPROVE 记录过闸门→0、REJECT 记录过闸门→1、缺必填参数/未知参数/未知子命令→2、入口找不到共享包→3；子进程统一在受控 cwd 与环境里跑 | 已实现（唯一会 spawn 的检查项） |
 
 - `--repos` 与 `--shims` / `--config` / `--fast` **互斥**（两者的 `--json` 形态不同）；
 - `--repos` 的路径：绝对路径直接用、相对路径按 `--root`（缺省当前目录）、`~/` 展开；
@@ -143,7 +143,7 @@ dsh-pipeline doctor [--repo a,b] [--json] [--expect <sha>] [--profile <dir>]
 3. **`--repos` 不足 2 个必须退 0**：CI 里没有兄弟仓，判失败会让 CI 必红。
 4. **`check-all` 缺依赖必须算跳过**：否则没装依赖的仓会永远红。
 5. **`profile-check` 不要打印文件内容**，也不要为了"更精确"去解析 profile JSON 全文。
-6. **新检查项先加契约**（§9 表格），再实现；`--peer` 目前只能报「尚未实现」退 2，`--lock` 连选项表都还没进（传了是「未知选项」）。
+6. **新检查项先加契约**（§9 表格），再实现；`--lock` / `--peer` 目前都只能报「尚未实现」退 2。
 
 ## 相关测试
 
