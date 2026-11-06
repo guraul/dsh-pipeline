@@ -53,7 +53,8 @@ dsh-pipeline lock check --root <仓>   # 与 selftest --lock 同一实现
 | 读 | `checkLock` 同时被 `lock check` 与 `selftest --lock` 使用，输出口径一致 |
 | 跳过 | 锁不存在、或装包目录不存在 → 跳过（退 0） |
 | 失败 | 旧版本包（无法证明）→ 1；锁与装包不一致 → 1（detail 同时给两边的值）；锁格式非法 → 1 |
-| 不手改 | 手工编辑绕过校验；`+dirty` 之类打包态信息不进锁（`formatExpect` 只取 sha7 + builtAt） |
+| 路径错 | `--root` 不存在或不是目录 → 退 2（不是静默跳过） |
+| 不手改 | 手工编辑绕过校验；`+dirty` 之类打包态信息不进锁（`formatExpect` 只取 sha7 + builtAt）；锁里写 40 位全 sha 也算格式错 |
 
 ## `shim`
 

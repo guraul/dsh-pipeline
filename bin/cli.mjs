@@ -1662,9 +1662,9 @@ function runLock(argv, deps, io) {
 
 /**
  * selftest：契约 §9 的一致性门禁。
- * --shims / --config 已实现（--fast 等价于 --shims --config）；--repos 是独立的多仓比对模式，
- * 与前三者互斥（--json 形态不同，合起来没有单一会话能同时表达两种结构）；
- * 其余检查项只识别不执行，明确报错退 2。检查逻辑在 lib/selftest.mjs，--shims 的比对复用 lib/shim.mjs。
+ * --shims / --config / --lock / --exit-codes 已实现（--fast 等价于 --shims --config）；--repos 是独立的多仓比对模式，
+ * 与其它检查项互斥（--json 形态不同，合起来没有单一会话能同时表达两种结构）；
+ * --peer 只识别不执行，明确报错退 2。检查逻辑在 lib/selftest.mjs，--shims 的比对复用 lib/shim.mjs。
  * 退出码：0 通过（含「无配置文件跳过」「--repos 可比对的仓不足 2 个」）/ 1 检查不通过 / 2 用法错误或检查项未实现。
  */
 function runSelftest(argv, deps, io) {

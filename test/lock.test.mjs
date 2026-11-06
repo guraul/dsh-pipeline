@@ -67,6 +67,18 @@ test('formatExpect：缺 gitSha / builtAt → LockError', () => {
   assert.throws(() => formatExpect(null), LockError)
 })
 
+test('formatExpect：非十六进制 sha / 含空白的 builtAt → LockError', () => {
+  assert.throws(() => formatExpect({ gitSha: 'unknown', builtAt: BUILT_AT }), /gitSha 必须是/)
+  assert.throws(() => formatExpect({ gitSha: SHA, builtAt: '2026-11-06 14:00:00' }), /builtAt 不能含空白/)
+})
+
+test('readLock：锁里写 40 位全 sha 也算格式错（写侧恒写 sha7）', (t) => {
+  const root = tmp()
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  writeLockFile(root, JSON.stringify({ expect: `${SHA} ${BUILT_AT}` }))
+  assert.throws(() => readLock(root), /expect 必须是「<sha7> <构建时间>」/)
+})
+
 test('readLock：文件不存在 → expect 为 null（合法状态）', (t) => {
   const root = tmp()
   t.after(() => rmSync(root, { recursive: true, force: true }))
@@ -199,6 +211,34 @@ test('lock write：未装包 → 2；旧版本包 → 2', (t) => {
   const b = run(['lock', 'write', '--root', legacy])
   assert.equal(b.code, 2)
   assert.match(b.err, /旧版本包/)
+})
+
+test('checkLock：build.json 的 gitSha 非十六进制（pack.sh 的 unknown）→ 失败退 1，不是冒泡', (t) => {
+  const root = makeRepo({ sha: 'unknown' })
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  writeLockFile(root, `{"expect":"${EXPECT}"}`)
+
+  const viaLock = run(['lock', 'check', '--root', root])
+  assert.equal(viaLock.code, 1, viaLock.err)
+  assert.match(viaLock.err, /gitSha 必须是/)
+
+  const viaSelftest = run(['selftest', '--lock', '--root', root])
+  assert.equal(viaSelftest.code, 1, viaSelftest.err)
+})
+
+test('lock check / write：--root 不存在或不是目录 → 2（路径打错不能静默通过）', (t) => {
+  const root = tmp()
+  const file = join(root, 'not-a-dir')
+  writeFileSync(file, 'x')
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+
+  const missing = run(['lock', 'check', '--root', join(root, 'nope')])
+  assert.equal(missing.code, 2)
+  assert.match(missing.err, /目录不存在/)
+
+  const notDir = run(['lock', 'write', '--root', file])
+  assert.equal(notDir.code, 2)
+  assert.match(notDir.err, /不是目录/)
 })
 
 test('lock check：与 selftest --lock 结论一致（0 / 1）', (t) => {
