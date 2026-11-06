@@ -291,6 +291,10 @@ jobs:
           HOST: ${{ steps.target.outputs.host }}
           RELEASE: ${{ steps.target.outputs.release }}
         run: |
+          # 首次部署时 releases/ 可能还不存在：rsync 只会创建最后一级，父目录缺失会直接失败，
+          # 所以先幂等建目录（对已有目录无副作用）。
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new "root@${HOST}" \
+            "mkdir -p '${REMOTE_DIR}/releases/${RELEASE}'"
           rsync -az --delete -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new" \
             "${WORK_DIR}/${ARTIFACT_DIR}/" "root@${HOST}:${REMOTE_DIR}/releases/${RELEASE}/"
 
