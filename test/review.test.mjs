@@ -214,12 +214,17 @@ test('buildPrompt：inline 档写明没有工具权限，且不出现读仓库�
     tier: 'inline',
   })
   assert.ok(prompt.includes('没有工具权限'))
-  assert.ok(prompt.includes('判 ESCALATE 并在 findings 里写明缺什么证据'))
+  assert.ok(prompt.includes('只对材料里的「必答问题」负责'))
+  assert.ok(prompt.includes('必答问题靠材料答不了'))
   assert.equal(prompt.includes('读仓库文件'), false)
   assert.equal(prompt.includes('你实际核验过的断言'), false)
   // 判定行要求与 diff 围栏不因档位而变
   assert.ok(prompt.includes(`${NONCE} VERDICT: <APPROVE|REJECT|ESCALATE> SHA: ${SHA}`))
   assert.ok(prompt.includes('<<<DIFF_END>>>'))
+  // 噪声治理：建议有上限、必须写去向、APPROVE 后不再提本 PR 的建议
+  assert.ok(prompt.includes('**最多 3 条**'))
+  assert.ok(prompt.includes('去向：本轮修'))
+  assert.ok(prompt.includes('若判定是 APPROVE'))
 })
 
 test('reviewAction 映射三种判定', () => {
