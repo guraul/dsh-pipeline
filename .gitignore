@@ -5,3 +5,4 @@ dist/
 .tmp/
 # 打包时生成（记录构建标识），不入库
 build.json
+.DS_Store
