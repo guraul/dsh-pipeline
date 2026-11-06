@@ -261,7 +261,8 @@ jobs:
                 pair="${pair#"${pair%%[![:space:]]*}"}"
                 pair="${pair%"${pair##*[![:space:]]}"}"
                 if [ -n "$pair" ]; then
-                  echo "${SSH} \"cd ${REMOTE_DIR} && mkdir -p \$(dirname releases/${RELEASE}/${pair%%=*}) && rm -f releases/${RELEASE}/${pair%%=*} && ln -s ${pair#*=} releases/${RELEASE}/${pair%%=*}\""
+                  # 下面是简化表示：真实执行还会先算 base/full 并断言 full 仍在 release 内，越界即失败
+                  echo "${SSH} \"cd ${REMOTE_DIR} && realpath 断言 && mkdir -p \$(dirname releases/${RELEASE}/${pair%%=*}) && rm -f releases/${RELEASE}/${pair%%=*} && ln -s ${pair#*=} releases/${RELEASE}/${pair%%=*}\""
                 fi
               done
             fi

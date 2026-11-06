@@ -212,7 +212,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 2. `ci` 已废弃，新配置不要写；
 3. 仓库差异只能落在 `repo` / `highRisk` / `roles` / `worktreesDir` / `checks.*` / `deploy.*` 之内，以及（P2 起）`review.*`；
 4. `deploy.paths` 是**非空**数组：写成 `[]` 会被拒（`E_CONFIG`）——空数组等于静默丢掉过滤，想要「任何 push 都部署」就整个省略该字段。
-5. `deploy.linkPaths` 的**路径部分**是相对路径、不许含 `..` 段、不许含 `,`：它会拼进远端 `rm -rf` 的路径，`../..` 能删到 release 之外。要外置状态就写 `data=../../shared/data` 这类平级路径。
+5. `deploy.linkPaths` 的**路径部分**是相对路径、不许含 `..` 段、不许含 `,`：它会拼进远端 `rm -f`/`ln -s` 的路径，`../..` 能建到 release 之外（越界由执行前的 `realpath` 断言拦下，属双保险）。要外置状态就写 `data=../../shared/data` 这类平级路径。
 
 > 反面教材：2026-11-04 有人往本文件加了 `doctorRepos`，包判未知字段，`task`/`pr`/`merge` 三条同时失效，CI 不覆盖这类错误。
 
@@ -349,4 +349,4 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | 2026-11-06 | 新增 §7.3 审核档位：`review.tier`（inline / tools，缺省 tools）进 schema；`review prepare` 在 inline 档自动并入 `git show --stat` 与 `gh pr checks` 证据。v1.2 里「`review.*` 仍未实现」一项自此收窄为「`review` 的其余字段仍未实现」 |
 | 2026-11-06 | §7.1 `deploy` 段补 `qualityCmd` / `buildCmd` / `paths` 三个可选字段（issue #71），硬规则补「`paths` 空数组被拒」 |
 | 2026-11-06 | §7.1 `deploy` 段补 `linkPaths` 可选字段（issue #80）：渲染成 `with.link_paths`，切 dist 软链前在 release 内逐对建持久化路径软链；`deploy.yml` 新增同名 input 与 `Link persistent paths` 步骤 |
-| 2026-11-06 | 审核第 1 轮 REJECT 修正（issue #81）：`linkPaths` 的路径部分拒绝绝对路径 / `..` 段 / `,`（它会拼进远端 `rm -rf`，`..` 能删到 release 之外）；远端执行前用 `realpath` 断言仍在 `releases/<id>/` 内，且只对父目录做规范化、末段用 `rm -f` 解链重建（避免解析已存在的软链后误删目标） |
+| 2026-11-06 | 审核第 1 轮 REJECT 修正（issue #81）：`linkPaths` 的路径部分拒绝绝对路径 / `..` 段 / `,`（它会拼进远端 `rm -f`/`ln -s` 的路径）；远端执行前用 `realpath` 断言仍在 `releases/<id>/` 内，且只对父目录做规范化、末段用 `rm -f` 解链重建（避免解析已存在的软链后误删目标） |
