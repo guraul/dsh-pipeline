@@ -31,6 +31,21 @@ on:
         required: false
         type: string
         default: 'dist'
+      quality_cmd:
+        description: '质量门禁命令，在 work_dir 里执行；非 Expo 仓传自己的类型检查 + 测试组合'
+        required: false
+        type: string
+        default: 'pnpm exec tsc --noEmit && pnpm test'
+      build_cmd:
+        description: '构建命令，在 work_dir 里执行'
+        required: false
+        type: string
+        default: 'pnpm exec expo export --platform web --clear'
+      assemble:
+        description: '产物组装方式：static-dir 直接用构建产物目录；node-standalone 把 Next standalone 组装成 release 目录'
+        required: false
+        type: string
+        default: 'static-dir'
       health_url:
         description: '健康检查 URL，必须返回 200'
         required: true
@@ -94,6 +109,7 @@ jobs:
         env:
           MODE: ${{ inputs.mode }}
           HEALTH_CHECK: ${{ inputs.health_check }}
+          ASSEMBLE: ${{ inputs.assemble }}
         run: |
           case "$MODE" in
             releases|inplace) ;;
@@ -102,6 +118,10 @@ jobs:
           case "$HEALTH_CHECK" in
             http|ssh) ;;
             *) echo "::error::health_check 只能是 http 或 ssh，当前: $HEALTH_CHECK"; exit 2 ;;
+          esac
+          case "$ASSEMBLE" in
+            static-dir|node-standalone) ;;
+            *) echo "::error::assemble 只能是 static-dir 或 node-standalone，当前: $ASSEMBLE"; exit 1 ;;
           esac
 
       # pnpm 必须在 setup-node 之前：setup-node 的 cache: pnpm 要先跑 `pnpm store path`
@@ -121,15 +141,71 @@ jobs:
         working-directory: ${{ inputs.work_dir }}
         run: pnpm install --frozen-lockfile
 
-      - name: Quality gates (tsc + test)
+      # 两步命令都从 inputs 来（缺省值 = 原先写死的 Expo 仓命令），老 caller 零改动
+      - name: Quality gates
         working-directory: ${{ inputs.work_dir }}
-        run: |
-          pnpm exec tsc --noEmit
-          pnpm test
+        run: ${{ inputs.quality_cmd }}
 
       - name: Build
         working-directory: ${{ inputs.work_dir }}
-        run: pnpm exec expo export --platform web --clear
+        run: ${{ inputs.build_cmd }}
+
+      # assemble=node-standalone：把 Next 的 standalone 产物组装成一个能直接 rsync 的 release 目录。
+      # 目录结构以 homebase 实测为准——standalone 自带仓根前缀，release 里 packages/web/ 与 scripts/ 同级；
+      # static 与 public 不在 standalone 里，按 standalone 自带的前缀补到同一位置。
+      # 只搬产物：不建 data 软链（数据目录由运维在服务器上准备）。
+      - name: Assemble release (node-standalone)
+        if: ${{ inputs.assemble == 'node-standalone' }}
+        env:
+          WORK_DIR: ${{ inputs.work_dir }}
+          ARTIFACT_DIR: ${{ inputs.artifact_dir }}
+        run: |
+          set -euo pipefail
+          # head 会提前关管道让 find 退 141，|| true 兜住，避免 pipefail 把脚本带崩
+          standalone="$(find "${WORK_DIR}" -type d -path '*/.next/standalone' -not -path '*/node_modules/*' | head -n 1 || true)"
+          if [ -z "${standalone}" ]; then
+            echo "::error::${WORK_DIR} 下没有 .next/standalone（build_cmd 需要产出 output: 'standalone'）"
+            exit 1
+          fi
+          app_dir="${standalone%/.next/standalone}"
+          # 应用前缀 = standalone 里 .next/server 所在目录相对 standalone 根的路径（homebase 实测为 packages/web）
+          server_dir="$(cd "${standalone}" && find . -type d -path '*/.next/server' -not -path '*/node_modules/*' | head -n 1 || true)"
+          if [ -z "${server_dir}" ]; then
+            echo "::error::${standalone} 里没有 .next/server"
+            exit 1
+          fi
+          prefix="${server_dir#./}"
+          prefix="${prefix%/.next/server}"
+          prefix="${prefix%.next/server}"
+          if [ -z "${prefix}" ]; then prefix="."; fi
+
+          release="${WORK_DIR}/${ARTIFACT_DIR}"
+          case "${release}" in
+            "${standalone}"*) echo "::error::artifact_dir 不能落在 standalone 目录内: ${release}"; exit 1 ;;
+          esac
+          mkdir -p "${release}"
+
+          # 1) standalone 整棵落到 release 根
+          cp -a "${standalone}/." "${release}/"
+          # 2) .next/static（standalone 不带 static，缺了页面全 404）
+          mkdir -p "${release}/${prefix}/.next"
+          cp -a "${app_dir}/.next/static" "${release}/${prefix}/.next/static"
+          # 3) public（homebase 没有 public/，缺就跳过）
+          if [ -d "${app_dir}/public" ]; then
+            mkdir -p "${release}/${prefix}"
+            cp -a "${app_dir}/public" "${release}/${prefix}/public"
+          else
+            echo "应用目录没有 public/，跳过"
+          fi
+          # 4) 仓根 scripts/ 整份并进 release（standalone 只带被 trace 到的那几个脚本）
+          if [ -d "scripts" ]; then
+            mkdir -p "${release}/scripts"
+            cp -a scripts/. "${release}/scripts/"
+          else
+            echo "仓根没有 scripts/，跳过"
+          fi
+          echo "release 组装完成: ${release}（应用前缀 ${prefix}）"
+          find "${release}" -maxdepth 2 -not -path '*/node_modules*' | sort | head -n 40
 
       # 部署目标：主机优先取 ssh_host，留空才从 health_url 解析；release id 用本次 run 的编号
       - name: Resolve deploy target
