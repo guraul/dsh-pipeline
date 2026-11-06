@@ -176,11 +176,12 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
   // deploy：**本轮已实现**（schema + `deploy init|check`，见 §10）；
   // 本块其余字段仍为目标（P2）
   "deploy": {
-    "artifact": "static-dir",          // 必填；static-dir | node-standalone | oci-image
-                                       // （oci-image 只收配置，生成骨架时报「尚未实现」退 2）
+    "artifact": "static-dir",          // 必填；static-dir 可用
+                                       // node-standalone / oci-image 仅 schema 放行，
+                                       // 生成骨架时报「尚未实现」退 2（deploy.yml 构建步骤尚未参数化）
     "service": "serve-9928",           // 必填非空字符串（systemd 服务名）
     "remoteDir": "/root/project/<app>", // 必填非空字符串（绝对路径，服务器部署根目录）
-    "workDir": "app",                  // 可选字符串（仓内构建目录；缺省不写进 with）
+    "workDir": "app",                  // 必填非空字符串（仓内构建目录；deploy.yml 的 work_dir 是必填 input）
     "artifactDir": "dist",             // 可选字符串（产物目录，相对 workDir）
     "sshHost": "10.0.0.8",             // 可选字符串（SSH 目标主机）
     "health": {                        // 必填对象
