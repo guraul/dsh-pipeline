@@ -196,6 +196,9 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
       "publicUrl": "https://…",        // 可选（对外链路检查）
       "insecure": true                 // 可选布尔，缺省 true（允许自签证书）
     },
+    "qualityCmd": "pnpm run lint && pnpm test", // 可选字符串（渲染成 with.quality_cmd；缺省用共享 workflow 默认）
+    "buildCmd": "pnpm run build",      // 可选字符串（渲染成 with.build_cmd；缺省用共享 workflow 默认）
+    "paths": ["packages/web/**", "scripts/**"], // 可选字符串数组（渲染成 on.push.paths；缺省=任何 push 都部署）
     "keepReleases": 5                  // 可选整数 1..50，缺省 5
   }
 }
@@ -205,7 +208,8 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 1. **未声明字段一律报错**（`E_CONFIG`）。新增字段顺序固定：**先改本包 schema → 再改本文件 → 最后改各仓配置**。顺序反了就是 2026-11-04 那次事故；
 2. `ci` 已废弃，新配置不要写；
-3. 仓库差异只能落在 `repo` / `highRisk` / `roles` / `worktreesDir` / `checks.*` / `deploy.*` 之内，以及（P2 起）`review.*`。
+3. 仓库差异只能落在 `repo` / `highRisk` / `roles` / `worktreesDir` / `checks.*` / `deploy.*` 之内，以及（P2 起）`review.*`；
+4. `deploy.paths` 是**非空**数组：写成 `[]` 会被拒（`E_CONFIG`）——空数组等于静默丢掉过滤，想要「任何 push 都部署」就整个省略该字段。
 
 > 反面教材：2026-11-04 有人往本文件加了 `doctorRepos`，包判未知字段，`task`/`pr`/`merge` 三条同时失效，CI 不覆盖这类错误。
 
@@ -331,3 +335,4 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | 2026-11-06 | 删除顶层 `prepare` 占位（从未实现、无消费方、各分支均无实现痕迹）：§3.2 去掉该行，§3.3 从已实现清单移除；`dsh-pipeline prepare` 现在报「未知子命令」退 2 |
 | 2026-11-06 | 审核第 1 轮 REJECT 修正：§2 的 L2 状态改为「生成能力现行、各仓接入未完成」；§3.3 目标清单补 `selftest --lock`；§9 写清 `--lock` 尚未进选项表（传了报「未知选项」），与 `--peer` / `--exit-codes` 的「尚未实现」区分 |
 | 2026-11-06 | 新增 §7.3 审核档位：`review.tier`（inline / tools，缺省 tools）进 schema；`review prepare` 在 inline 档自动并入 `git show --stat` 与 `gh pr checks` 证据。v1.2 里「`review.*` 仍未实现」一项自此收窄为「`review` 的其余字段仍未实现」 |
+| 2026-11-06 | §7.1 `deploy` 段补 `qualityCmd` / `buildCmd` / `paths` 三个可选字段（issue #71），硬规则补「`paths` 空数组被拒」 |

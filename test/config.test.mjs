@@ -274,3 +274,39 @@ test('deploy.keepReleases：必须是 1..50 的整数 → E_CONFIG', () => {
   }
   assert.equal(validateConfig({ deploy: { ...MINIMAL_DEPLOY, keepReleases: 5 } }).deploy.keepReleases, 5)
 })
+
+test('deploy.qualityCmd / buildCmd：可选非空字符串，缺省与 null 视为未设置，非法类型 → E_CONFIG', () => {
+  const full = { ...MINIMAL_DEPLOY, qualityCmd: 'pnpm run lint && pnpm test', buildCmd: 'pnpm run build' }
+  assert.equal(validateConfig({ deploy: full }).deploy.qualityCmd, 'pnpm run lint && pnpm test')
+  assert.equal(validateConfig({ deploy: full }).deploy.buildCmd, 'pnpm run build')
+  assert.equal(validateConfig({ deploy: { ...MINIMAL_DEPLOY, qualityCmd: null } }).deploy.qualityCmd, null)
+  assert.equal(validateConfig({ deploy: { ...MINIMAL_DEPLOY, buildCmd: null } }).deploy.buildCmd, null)
+
+  for (const bad of [42, true, '', '   ', ['pnpm test'], { cmd: 'x' }]) {
+    assert.throws(
+      () => validateConfig({ deploy: { ...MINIMAL_DEPLOY, qualityCmd: bad } }),
+      code('E_CONFIG'),
+      `qualityCmd ${String(bad)}`,
+    )
+    assert.throws(
+      () => validateConfig({ deploy: { ...MINIMAL_DEPLOY, buildCmd: bad } }),
+      code('E_CONFIG'),
+      `buildCmd ${String(bad)}`,
+    )
+  }
+})
+
+test('deploy.paths：可选非空字符串数组，缺省与 null 视为未设置，非法类型 → E_CONFIG', () => {
+  const paths = ['apps/web/**', 'scripts/**']
+  assert.deepEqual(validateConfig({ deploy: { ...MINIMAL_DEPLOY, paths } }).deploy.paths, paths)
+  assert.equal(validateConfig({ deploy: { ...MINIMAL_DEPLOY, paths: null } }).deploy.paths, null)
+
+  // 非数组、空数组（等于悄悄丢掉过滤）、元素非字符串或空串，一律 E_CONFIG
+  for (const bad of ['apps/**', 42, true, {}, [], ['ok', ''], ['ok', 42], [null]]) {
+    assert.throws(
+      () => validateConfig({ deploy: { ...MINIMAL_DEPLOY, paths: bad } }),
+      code('E_CONFIG'),
+      `paths ${String(bad)}`,
+    )
+  }
+})
