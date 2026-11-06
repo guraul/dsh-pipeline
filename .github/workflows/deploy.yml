@@ -205,7 +205,9 @@ jobs:
             echo "仓根没有 scripts/，跳过"
           fi
           echo "release 组装完成: ${release}（应用前缀 ${prefix}）"
-          find "${release}" -maxdepth 2 -not -path '*/node_modules*' | sort | head -n 40
+          # 只是给人看的摘要：head 提前退出会让上游 sort 收到 SIGPIPE（141），
+          # 在 set -euo pipefail 下会把「已组装完成」的步骤整步判失败，故兜底。
+          find "${release}" -maxdepth 2 -not -path '*/node_modules*' | sort | head -n 40 || true
 
       # 部署目标：主机优先取 ssh_host，留空才从 health_url 解析；release id 用本次 run 的编号
       - name: Resolve deploy target
