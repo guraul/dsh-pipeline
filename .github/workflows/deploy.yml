@@ -158,7 +158,7 @@ jobs:
       # assemble=node-standalone：把 Next 的 standalone 产物组装成一个能直接 rsync 的 release 目录。
       # 目录结构以 homebase 实测为准——standalone 自带仓根前缀，release 里 packages/web/ 与 scripts/ 同级；
       # static 与 public 不在 standalone 里，按 standalone 自带的前缀补到同一位置。
-      # 只搬产物：不建 data 软链（数据目录由运维在服务器上准备）。
+      # 只搬产物：不建 data 软链——需要外置状态时由 link_paths 在切软链前创建（见 Link persistent paths）。
       - name: Assemble release (node-standalone)
         if: ${{ inputs.assemble == 'node-standalone' }}
         env:
@@ -241,6 +241,7 @@ jobs:
           ARTIFACT_DIR: ${{ inputs.artifact_dir }}
           HEALTH_URL: ${{ inputs.health_url }}
           KEEP_RELEASES: ${{ inputs.keep_releases }}
+          LINK_PATHS: ${{ inputs.link_paths }}
           HOST: ${{ steps.target.outputs.host }}
           RELEASE: ${{ steps.target.outputs.release }}
         run: |
@@ -255,6 +256,17 @@ jobs:
             echo "rsync -az --delete ${WORK_DIR}/${ARTIFACT_DIR}/ root@${HOST}:${REMOTE_DIR}/releases/${RELEASE}/"
             echo "${SSH} \"cd ${REMOTE_DIR} && ln -sfn releases/${RELEASE} dist && systemctl restart ${SERVICE}\""
             echo "${SSH} \"cd ${REMOTE_DIR} && ls -1dt releases/*/ | tail -n +$((KEEP_RELEASES + 1)) | xargs -r rm -rf\""
+            if [ -n "$LINK_PATHS" ]; then
+              echo "# 切软链前，逐条在 release 内建持久化路径软链（相对目标按软链所在目录解析）:"
+              IFS=',' read -ra pairs <<< "$LINK_PATHS"
+              for pair in "${pairs[@]}"; do
+                pair="${pair#"${pair%%[![:space:]]*}"}"
+                pair="${pair%"${pair##*[![:space:]]}"}"
+                if [ -n "$pair" ]; then
+                  echo "${SSH} \"cd ${REMOTE_DIR} && ln -s ${pair#*=} releases/${RELEASE}/${pair%%=*}\""
+                fi
+              done
+            fi
           fi
           echo "curl -sS -m 8 -o /dev/null -w '%{http_code}' ${HEALTH_URL}"
           echo "若配置了 public_health_url，会在 Health check 之后额外探一次对外链路（Caddy/证书），非 200 即失败"
@@ -314,6 +326,14 @@ jobs:
               echo "::error::link_paths 等号两侧不能为空（相对路径与目标都要给）: ${pair}"
               exit 1
             fi
+            # rel 会拼进远端 rm -rf 的路径里，任其含 .. / 绝对化 / 逗号就能越出 release
+            case "${rel}" in
+              /*) echo "::error::link_paths 的路径必须是相对路径: ${rel}"; exit 1 ;;
+              *..*) case "/${rel}/" in */../*) echo "::error::link_paths 的路径不许含 '..'（会逃出 release 目录）: ${rel}"; exit 1 ;; esac ;;
+            esac
+            case "${rel}" in
+              *,*) echo "::error::link_paths 的路径不许含 ','（分隔符）: ${rel}"; exit 1 ;;
+            esac
             links+=("${rel}=${target}")
           done
           # 校验全过才开始动服务器：逐对 mkdir 父目录 → 清掉同名残留 → 建软链
@@ -321,7 +341,11 @@ jobs:
             rel="${item%%=*}"
             target="${item#*=}"
             ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new "root@${HOST}" \
-              "cd ${REMOTE_DIR} && mkdir -p \"\$(dirname \"releases/${RELEASE}/${rel}\")\" && rm -rf \"releases/${RELEASE}/${rel}\" && ln -s \"${target}\" \"releases/${RELEASE}/${rel}\""
+              "set -e; cd ${REMOTE_DIR} \
+                && base=\$(realpath -m \"releases/${RELEASE}\") \
+                && full=\$(realpath -m \"releases/${RELEASE}/${rel}\") \
+                && case \"\${full}\" in \"\${base}\"/*) ;; *) echo \"越界: \${full} 不在 \${base} 内\" >&2; exit 1 ;; esac \
+                && mkdir -p \"\$(dirname \"\${full}\")\" && rm -rf \"\${full}\" && ln -s \"${target}\" \"\${full}\""
             echo "linked: releases/${RELEASE}/${rel} -> ${target}"
           done
 
