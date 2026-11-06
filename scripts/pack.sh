@@ -95,35 +95,47 @@ stamp="$(printf '%s' "$built_at" | tr -d ':-')"
 # 1) 归档可回滚副本，保留最近 10 个
 mkdir -p "$DIST/archive"
 cp -f "$DIST/latest.tgz" "$DIST/archive/${sha8}-${stamp}.tgz"
-ls -1t "$DIST"/archive/*.tgz 2>/dev/null | tail -n +11 | while IFS= read -r old; do rm -f "$old"; done
+ls -1t "$DIST"/archive/*.tgz 2>/dev/null | tail -n +11 | while IFS= read -r old; do rm -f "$old"; done || true
 
-# 2) 解包到版本目录（每次重建），并校验关键文件
-pkg_dir="$DIST/pkg-${sha8}"
-rm -rf "$pkg_dir"
-mkdir -p "$pkg_dir"
-tar -xzf "$DIST/latest.tgz" -C "$pkg_dir" --strip-components=1
+# 2) 解包到临时目录 → 校验 → 原子改名到带时间戳的版本目录
+pkg_dir="$DIST/pkg-${sha8}-${stamp}"
+staging="$DIST/.staging-$$"
+rm -rf "$staging"
+mkdir -p "$staging"
+if ! tar -xzf "$DIST/latest.tgz" -C "$staging" --strip-components=1; then
+  echo "解包失败: tar 退出码 $?" >&2
+  rm -rf "$staging"
+  exit 1
+fi
 missing=""
 for f in bin/cli.mjs lib/review.mjs; do
-  if [ ! -f "$pkg_dir/$f" ]; then missing="${missing} ${f}"; fi
+  if [ ! -f "$staging/$f" ]; then missing="${missing} ${f}"; fi
 done
 if [ -n "$missing" ]; then
   echo "解包失败: 缺少${missing}" >&2
-  rm -rf "$pkg_dir"
+  rm -rf "$staging"
   exit 1
 fi
+rm -rf "$pkg_dir"
+mv "$staging" "$pkg_dir"
 
-# 3) 原子切换 dist/pkg -> pkg-<sha8>（ln -sfn 会先删旧链接再建，窗口在微秒级）
+# 3) 切换链接：先把链接指向已经完整的新目录，再清理旧目录（任何时刻目标都存在）
 if [ -d "$DIST/pkg" ] && [ ! -L "$DIST/pkg" ]; then
   rm -rf "$DIST/pkg"
 fi
-ln -sfn "pkg-${sha8}" "$DIST/pkg"
-if [ "$(readlink "$DIST/pkg")" != "pkg-${sha8}" ]; then
-  echo "切换失败: dist/pkg 未指向 pkg-${sha8}" >&2
+ln -sfn "pkg-${sha8}-${stamp}" "$DIST/pkg"
+if [ "$(readlink "$DIST/pkg")" != "pkg-${sha8}-${stamp}" ]; then
+  echo "切换失败: dist/pkg 未指向 pkg-${sha8}-${stamp}" >&2
   exit 1
 fi
 
-# 4) 版本目录只留最近 2 个
-ls -1dt "$DIST"/pkg-* 2>/dev/null | tail -n +3 | while IFS= read -r old; do rm -rf "$old"; done
+# 4) 版本目录只留最近 2 个，且永不删除当前链接指向的那个
+kept=0
+for old in $(ls -1dt "$DIST"/pkg-* 2>/dev/null); do
+  if [ "$old" = "$DIST/pkg-${sha8}-${stamp}" ]; then continue; fi
+  kept=$((kept + 1))
+  if [ "$kept" -gt 1 ]; then rm -rf "$old"; fi
+done
 
 echo ""
 echo "版本: ${version}"
