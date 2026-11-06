@@ -347,6 +347,9 @@ jobs:
                 && rdir=\$(dirname \"${rel}\") && rname=\$(basename \"${rel}\") \
                 && full=\"\$(realpath -m \"releases/${RELEASE}/\${rdir}\")/\${rname}\" \
                 && case \"\${full}\" in \"\${base}\"/*) ;; *) echo \"越界: \${full} 不在 \${base} 内\" >&2; exit 1 ;; esac \
+                && tgt=\"${target}\" \
+                && case \"\${tgt}\" in /*) tpath=\"\${tgt}\" ;; *) tpath=\"\$(realpath -m \"\$(dirname \"\${full}\")\"/\"\${tgt}\")\" ;; esac \
+                && { [ -e \"\${tpath}\" ] || { echo \"目标不存在: \${tpath}（持久化目录须先准备好，拒绝建悬空软链）\" >&2; exit 1; }; } \
                 && mkdir -p \"\$(dirname \"\${full}\")\" \
                 && rm -f \"\${full}\" && ln -s \"${target}\" \"\${full}\""
             echo "linked: releases/${RELEASE}/${rel} -> ${target}"
