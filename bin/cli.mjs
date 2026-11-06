@@ -8,7 +8,7 @@
  * task / pr 的流程分别交给 lib/task.mjs 与 lib/pr.mjs；
  * review 的 publish 复用 runRecord（与 record 同一条落盘路径），prepare 只编排 gh 读取，
  * --post-review 在落盘成功后把判定发成 GitHub review（幂等，见 sendReview），
- * prompt 只读请求文件并复用 buildPrompt（不发外部命令、不写请求）；
+ * prompt 只读请求文件与配置（取 review.tier）并复用 buildPrompt（不发外部命令、不写请求）；
  * selftest 只做参数编排与输出，检查逻辑在 lib/selftest.mjs（契约 §9，已实现 --shims / --config / --repos）；
  * shim 的渲染 / 写入 / 比对全在 lib/shim.mjs（契约 §8），这里只做动作与参数解析；
  * check-all 的逐包执行与汇总在 lib/check-all.mjs，这里只做包发现与参数解析；
@@ -48,6 +48,7 @@ import {
   headOneline,
   headSha as gitHeadSha,
   mergeFF,
+  showStat,
   statusPorcelain,
   toplevel,
   worktreeList,
@@ -258,6 +259,8 @@ review 用法:
            探测不到或 gh 取失败时不写 issue 字段、不失败（请求照常产出），
            并在 stdout 三行之后补一行「提示: 未取到 issue 正文（reviewer 的验收依据会是空的）」。
            --facts <文件> 把文件内容作为纯文本写进请求的 facts 字段（缺省不加该字段）；
+           配置 review.tier=inline 时自动把 git show --stat <head> 与 gh pr checks 的结果并进
+           facts（取不到写「未取到」，不让 prepare 失败；与 --facts 同时存在时拼接而非覆盖）；
            --include <路径,路径,...> 逐个读文件写进请求的 includes 数组（每项 {path, content}，
            path 保持调用方给的原样）；任一路径读不到或取值为空即退出 2，不写请求文件。
   publish  读 --response 并落盘 <root>/.dsh-web/reviews/<pr>-<sha>.json，复用 record 的落盘逻辑；
@@ -270,6 +273,7 @@ review 用法:
            身份（GH_CONFIG_DIR 等）由 gh 自己读环境变量，本命令只透传、不处理。
            --dry-run 不写盘、不发请求，只打印将要发送的 event 与 body 前 200 字。
   prompt   读 --request 指定的请求 JSON，用 buildPrompt 组出审核提示词（不发任何外部命令）；
+           审核档位取 .dsh/pipeline.json 的 review.tier（inline | tools，缺省 tools，见契约 §7.3）；
            --request 必填、没有缺省回退（拿错请求文件的代价是把错提示词发给 reviewer）；
            未给 --out 打到 stdout，给了就写文件并打印「已写入 <路径>」；
            --role <名> 取该角色的 instructions（默认角色 + .dsh/pipeline.json 的 roles 覆盖），未知角色退出 2。
@@ -1077,6 +1081,28 @@ function runReviewPrepare(argv, deps, io) {
     }
   }
 
+  // inline 档的审核方没有工具权限：把两段可核验的证据并进 facts。取不到就写「未取到」，
+  // 不让证据缺失打断 prepare——审核方看到「未取到」应判 ESCALATE，而不是默认采信。
+  if (config.review.tier === 'inline') {
+    const stat = showStat(root, { sha: headSha, runner })
+    const checks = prChecks(pr.value, { repo, runner })
+    let checksText = '未取到'
+    if (checks.ok && Array.isArray(checks.data) && checks.data.length > 0) {
+      checksText = checks.data.map((item) => `${item.name}: ${item.state}`).join('\n')
+    } else if (checks.ok) {
+      checksText = '(无检查项)'
+    }
+    const auto = [
+      `git show --stat ${headSha.slice(0, 7)}:`,
+      stat.ok && nonEmpty(stat.data) ? stat.data : '未取到',
+      '',
+      `gh pr checks #${pr.value}:`,
+      checksText,
+    ].join('\n')
+    // 调用方传了 --facts 就拼接，不覆盖
+    facts = facts === undefined ? auto : `${facts}\n\n${auto}`
+  }
+
   const request = {
     pr: pr.value,
     head_sha: headSha,
@@ -1358,10 +1384,18 @@ function runReviewPrompt(argv, deps, io) {
   })
   if (missing.length > 0) return argError(io, sub, `请求缺少字段: ${missing.join(', ')}`)
 
+  // 配置决定审核档位（review.tier，缺省 tools），所以即使没给 --role 也要读一次；
+  // 配置非法时直接退出 2，不静默按 tools 渲染一份错档的提示词。
+  let config
+  try {
+    config = loadConfig(resolveReviewRoot(undefined, deps)).config
+  } catch (error) {
+    return argError(io, sub, messageOf(error))
+  }
+
   let role = {}
   if (options.role !== undefined) {
     try {
-      const { config } = loadConfig(resolveReviewRoot(undefined, deps))
       const roles = resolveRoles(config)
       if (!Object.hasOwn(roles, options.role)) {
         return argError(io, sub, `未知角色: ${options.role}`)
@@ -1372,7 +1406,7 @@ function runReviewPrompt(argv, deps, io) {
     }
   }
 
-  const prompt = buildPrompt({ request, role })
+  const prompt = buildPrompt({ request, role, tier: config.review.tier })
 
   if (options.out === undefined) {
     io.out(prompt)
