@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, cpSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -73,16 +73,12 @@ test('指纹不一致 → not ok，reason 含「已过期」并给出前 8 位',
   assert.ok(result.reason.includes(result.actual.slice(0, 8)), 'reason 要带当前指纹前 8 位')
 })
 
-test('源码目录读取失败（路径中间是文件）→ not ok 且 reason 含「读取失败」', () => {
-  // 伪造异常：sourcePath 的父级是普通文件，readdirSync 抛 ENOTDIR——
-  // 这类环境异常不许被静默降级成「跳过」，否则守卫等于被关掉。
-  const block = tmp()
-  const asFile = join(block, 'not-a-dir')
-  writeFileSync(asFile, 'x')
-  const buildPath = writeBuild(tmp(), {
-    sourcePath: join(asFile, 'sub'),
-    sourceHash: 'e'.repeat(64),
-  })
+test('根目录存在但读不动（嵌套 ENOENT：坏符号链接）→ not ok 且 reason 含「读取失败」', () => {
+  // 只有「根目录不存在」才许 skip；根在、里面读不动（坏链接 / 权限 / 竞态）一律判不过，
+  // 否则环境异常会把守卫悄悄关掉。
+  const source = makeSource()
+  symlinkSync(join(source, 'gone-target'), join(source, 'lib', 'dangling'))
+  const buildPath = writeBuild(tmp(), { sourcePath: source, sourceHash: 'e'.repeat(64) })
   const result = verifyDistFreshness({ buildPath })
   assert.equal(result.ok, false)
   assert.equal(result.skipped, false)
@@ -164,4 +160,19 @@ test('CLI: dist 过期时无参与 -v 同样不拦（只警告 + 正常输出）
   assert.equal(version.status, 0, version.stderr)
   assert.match(version.stdout, /^\d+\.\d+\.\d+/)
   assert.match(version.stderr, /^警告：/m)
+})
+
+test('CLI: 过期时 `-- --help` 不算信息命令，仍然退 1', () => {
+  const pkgRoot = makeStalePkg()
+  const result = runPkg(pkgRoot, ['--', '--help'])
+  assert.equal(result.status, 1, result.stderr)
+  assert.match(result.stderr, /dist 已过期/)
+})
+
+test('CLI: 过期时子命令参数里的 -v 不算信息命令，仍然退 1', () => {
+  const pkgRoot = makeStalePkg()
+  const root = tmp()
+  const result = runPkg(pkgRoot, ['status', '--root', root, '-v'])
+  assert.equal(result.status, 1, result.stderr)
+  assert.match(result.stderr, /dist 已过期/)
 })

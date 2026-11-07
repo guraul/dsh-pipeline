@@ -80,3 +80,26 @@ test('root 不存在 → 抛错，而不是返回空指纹', () => {
   // 空指纹会让「异常」伪装成「哈希一致」，守卫等于被关掉
   assert.throws(() => sourceHash(join(tmp(), 'nope')), (error) => error?.code === 'ENOENT')
 })
+
+test('package.json 的 bin 字段变动改指纹，version 变动不改', () => {
+  const withBin = makeTree(tmp(), [
+    ['package.json', '{"name":"x","bin":{"cli":"bin/cli.mjs"},"version":"1.0.0"}\n'],
+    ...BASE.slice(1),
+  ])
+  const withOtherBin = makeTree(tmp(), [
+    ['package.json', '{"name":"x","bin":{"other":"bin/other.mjs"},"version":"1.0.0"}\n'],
+    ...BASE.slice(1),
+  ])
+  const bumped = makeTree(tmp(), [
+    ['package.json', '{"name":"x","bin":{"cli":"bin/cli.mjs"},"version":"2.0.0"}\n'],
+    ...BASE.slice(1),
+  ])
+
+  assert.notEqual(sourceHash(withBin), sourceHash(withOtherBin), 'bin 影响应进指纹')
+  assert.equal(sourceHash(withBin), sourceHash(bumped), 'version 不影响产物，不进指纹')
+})
+
+test('空 TARGETS → 抛「源码指纹为空」，不返回常量空哈希', () => {
+  // sha256(空) 是常量：返回它等于「什么都对」，守卫被静默关掉
+  assert.throws(() => sourceHash(tmp()), /源码指纹为空/)
+})

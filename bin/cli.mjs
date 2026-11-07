@@ -2597,7 +2597,9 @@ if (invokedDirectly()) {
   const argv = process.argv.slice(2)
   const freshness = verifyDistFreshness()
   const stale = !freshness.ok && process.env.DSH_PIPELINE_ALLOW_STALE !== '1'
-  const infoOnly = argv.length === 0 || argv.some((arg) => INFO_ARGS.has(arg))
+  // 只看首 token：子命令参数里的 `-v`（verbose）或 `-- --help` 不算「看一眼」，不能只警告就带旧代码继续跑
+  const first = argv[0]
+  const infoOnly = first === undefined || INFO_ARGS.has(first)
 
   if (stale && !infoOnly) {
     process.stderr.write(
@@ -2605,12 +2607,12 @@ if (invokedDirectly()) {
     )
     // 不用 process.exit：它会截断尚未 flush 的 stderr，设 exitCode 让进程自然退出
     process.exitCode = 1
-  } else if (stale) {
-    process.stderr.write(
-      `警告：${freshness.reason}（帮助 / 版本照常输出；正式使用前请 \`pnpm pack\` 或设 DSH_PIPELINE_ALLOW_STALE=1）\n`,
-    )
-    process.exitCode = runCli(argv)
   } else {
-    process.exit(runCli(argv))
+    if (stale) {
+      process.stderr.write(
+        `警告：${freshness.reason}（帮助 / 版本照常输出；正式使用前请 \`pnpm pack\` 或设 DSH_PIPELINE_ALLOW_STALE=1）\n`,
+      )
+    }
+    process.exitCode = runCli(argv)
   }
 }

@@ -102,7 +102,7 @@ argv
 
 `{ gitSha, builtAt, dirty, sourcePath, sourceHash }`。源码目录里没有它（在 `.gitignore` 里），`readBuildInfo()` 返回 `null` 并说明是「源码」，不当作错误。
 
-`sourcePath`（`pwd -P` 绝对路径）与 `sourceHash`（`scripts/source-hash.mjs` 对运行时载荷 `lib/**`、`bin/**`、`templates/**` 的「路径 + 内容」按字典序做的 sha256，不含 mtime、不含 `package.json`——改版本号 / 加 devDependency 不需要重建 dist）供 `lib/dist-freshness.mjs` 的 `verifyDistFreshness()` 在 CLI 启动时比对：源码改了却没重新 pack → 退 1，放行开关是环境变量 `DSH_PIPELINE_ALLOW_STALE=1`（唯一的放行机制）。无 `build.json` / 源码 checkout 不在 / 旧版打包缺字段 → 跳过；源码目录读取失败（权限、坏链接）→ 判不过。
+`sourcePath`（`pwd -P` 绝对路径）与 `sourceHash`（`scripts/source-hash.mjs` 对运行时载荷 `lib/**`、`bin/**`、`templates/**` 的「路径 + 内容」按字典序做的 sha256，不含 mtime；`package.json` **只取影响产物形状的字段** `bin`/`engines`/`exports`/`files`/`main`/`type`，`version`/`scripts`/`devDependencies` 不进——改版本号 / 加 devDependency 不需要重建 dist）供 `lib/dist-freshness.mjs` 的 `verifyDistFreshness()` 在 CLI 启动时比对：源码改了却没重新 pack → 退 1，放行开关是环境变量 `DSH_PIPELINE_ALLOW_STALE=1`（唯一的放行机制）。无 `build.json` / 源码根目录不存在（`existsSync` 前置判定，唯一 skip）/ 旧版打包缺字段 → 跳过；根目录存在但读不动（嵌套 ENOENT、坏符号链接、权限、竞态）→ 判不过。
 
 ## 4. 数据存储位置与格式
 
