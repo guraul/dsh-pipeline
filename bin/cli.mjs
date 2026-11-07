@@ -229,8 +229,8 @@ deploy 用法:
   生成区 = name / on / concurrency + 单个 job 的 uses + with + secrets，首尾用注释标记包裹；
   uses pin 当前安装包 build.json 的 gitSha（源码运行没有 build.json → 退 2）。
   mode 由 artifact 推导（static-dir / node-standalone → releases），with: 里按 artifact 追加 assemble——
-  node-standalone 时由 deploy.yml 把 .next/standalone 组装成 release 目录。oci-image 现在只收配置，
-  生成骨架时明确报「尚未实现」退 2。
+  node-standalone 时由 deploy.yml 把 .next/standalone 组装成 release 目录。容器部署已明确不做
+  （契约 §10），配 artifact=oci-image 在配置层就报 E_CONFIG。
   不带 --write 只把骨架打印到 stdout；--write 时：文件不存在则创建，
   已有生成区则只替换生成区、保留标记之后本仓追加的后置 job，
   已存在但缺标记（手写文件）则拒绝覆盖并退 1。
@@ -245,7 +245,7 @@ deploy 用法:
   部署 caller 不存在提示先跑 deploy init（退 1）。
   --root <dir>       仓库根目录（必填）
   退出码: 0 一致（含回滚 caller 缺失 / 手写跳过）/ 1 不一致、部署 caller 缺标记或拒绝覆盖 /
-          2 用法、配置错误或 artifact 尚未实现
+          2 用法或配置错误
 
 lock 用法:
   dsh-pipeline lock write --root <dir>   把当前装包的 build.json 写进 <dir>/.dsh/pipeline.lock.json
@@ -2115,7 +2115,7 @@ function runCheckAllCommand(argv, deps, io) {
 /**
  * deploy：动作是位置参数（init / check），渲染与生成区比对全在 lib/deploy.mjs（契约 §10）。
  * --root 必填：生成 / 校验必须显式指向目标仓，不猜当前目录。
- * 退出码：0 成功 / 1 不一致、缺标记或拒绝覆盖 / 2 用法、配置错误或 artifact 尚未实现。
+ * 退出码：0 成功 / 1 不一致、缺标记或拒绝覆盖 / 2 用法或配置错误。
  * deps.buildInfo 显式注入即生效（含 null，表示「没有 build.json」），没注入才读本包 build.json——源码运行没有它，拒绝生成假 pin。
  */
 function runDeploy(argv, deps, io) {
