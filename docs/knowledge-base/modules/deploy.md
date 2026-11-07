@@ -12,13 +12,13 @@
 |---|---|
 | `lib/deploy.mjs` | 标记文案、路径常量、`resolveDeploy`（补默认值）、`renderRegion` / `renderSkeleton`、`extractRegion`、`firstDifference`、`replaceRegion` |
 | `lib/config.mjs` | `deploy` 段的 schema 校验（`DEPLOY_FIELDS` / `DEPLOY_HEALTH_FIELDS` / `DEPLOY_ARTIFACTS` / `DEPLOY_HEALTH_CHECKS`） |
-| `bin/cli.mjs` | `runDeploy`（`init` / `check` 两个动作、`--write`、读 `build.json` 拿 gitSha） |
+| `bin/cli.mjs` | `runDeploy`（`init` / `check` 两个动作、`--write` / `--rollback`、读 `build.json` 拿 gitSha） |
 
 ## 产物与标记
 
 | 项 | 值 |
 |---|---|
-| 生成文件 | `<root>/.github/workflows/deploy-web.yml` |
+| 生成文件 | `<root>/.github/workflows/deploy-web.yml`；带 `--rollback`（或文件已存在）时另有 `<root>/.github/workflows/rollback-web.yml` |
 | 起始标记 | `# >>> dsh-pipeline 生成区（勿手改，改配置后重跑 deploy init）` |
 | 结束标记 | `# <<< dsh-pipeline 生成区结束（以下可追加本仓自己的后置 job）` |
 | 生成区内容 | `name` / `on`（push main + workflow_dispatch）/ `concurrency` + 单个 job 的 `uses` + `with` + `secrets: inherit` |
@@ -28,13 +28,13 @@
 ## 命令
 
 ```bash
-dsh-pipeline deploy init --root <dir> [--write]
+dsh-pipeline deploy init --root <dir> [--write] [--rollback]
 dsh-pipeline deploy check --root <dir>
 ```
 
 | 动作 | 行为 | 退出码 |
 |---|---|---|
-| `init`（不带 `--write`） | 只把骨架打到 stdout | 0 |
+| `init`（不带 `--write`） | 只把骨架打到 stdout；`--rollback` 必须与 `--write` 同用，否则退 2 | 0 |
 | `init --write`，文件不存在 | 创建（`mkdir -p` 目录） | 0 |
 | `init --write`，已有生成区 | **只替换生成区**，标记之后的追加 job 原样保留 | 0 |
 | `init --write`，已有文件但缺标记（手写文件） | 拒绝覆盖 | 1 |

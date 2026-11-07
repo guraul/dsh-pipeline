@@ -18,7 +18,7 @@
  * 退出码：0 通过 / 1 闸门拒绝 / 2 参数或环境错误 / 3 环境错误（--post-review 的 gh 调用失败）。
  * runner 可注入，测试用假 runner 断言实际发出的命令，不碰真实 gh/git。
  */
-import { mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import {existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync} from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -35,6 +35,7 @@ import {
   firstDifference,
   renderRegion,
   renderRollbackRegion,
+  renderRollbackSkeleton,
   replaceRegion,
 } from '../lib/deploy.mjs'
 import { evaluateGate } from '../lib/gate.mjs'
@@ -2096,7 +2097,7 @@ function runDeploy(argv, deps, io) {
     }
     throw error
   }
-  const rollbackSkeleton = `${REGION_BEGIN}\n${rollbackRegion}\n${REGION_END}`
+  const rollbackSkeleton = renderRollbackSkeleton(config.deploy, buildInfo.gitSha)
   // 两个 caller 走同一套「写 / 校验」流程，只是文件与期望内容不同
   const targets = [
     { file: DEPLOY_WORKFLOW_FILE, region, skeleton },
@@ -2104,11 +2105,18 @@ function runDeploy(argv, deps, io) {
   ]
 
   if (action === 'init') {
+    if (options.rollback === true && options.write !== true) {
+      return argError(io, 'deploy', '--rollback 必须与 --write 同用（它只影响落盘，不影响打印）')
+    }
     if (options.write !== true) {
       io.out(skeleton)
       return 0
     }
-    const writeTargets = options.rollback === true ? targets : targets.slice(0, 1)
+    // 回滚 caller：显式 --rollback 或文件已存在时都刷新，避免包升级后留下旧 uses pin
+    const rollbackExists = existsSync(join(options.root, DEPLOY_ROLLBACK_FILE))
+    const writeTargets = options.rollback === true || rollbackExists ? targets : targets.slice(0, 1)
+    // 先全部读一遍并校验「已有文件必须是生成的骨架」，再统一写：避免写了一半才失败
+    const planned = []
     for (const target of writeTargets) {
       const file = join(options.root, target.file)
       let existing = null
@@ -2117,18 +2125,21 @@ function runDeploy(argv, deps, io) {
       } catch (error) {
         if (error?.code !== 'ENOENT') return argError(io, 'deploy', `读取 ${target.file} 失败: ${messageOf(error)}`)
       }
+      const merged = existing === null ? null : replaceRegion(existing, target.skeleton)
+      if (existing !== null && merged === null) {
+        io.err(`deploy init: ${target.file} 已存在且不是生成的骨架（缺标记），拒绝覆盖`)
+        return 1
+      }
+      planned.push({ file, target, existing, merged })
+    }
+    for (const { file, target, existing, merged } of planned) {
       if (existing === null) {
         mkdirSync(dirname(file), { recursive: true })
         writeFileSync(file, `${target.skeleton}\n`, 'utf8')
         io.out(`deploy init: 已写入 ${target.file}`)
         continue
       }
-      // 已有文件只替换生成区，标记之后的追加内容原样保留；缺标记 = 手写文件，拒绝覆盖
-      const merged = replaceRegion(existing, target.skeleton)
-      if (merged === null) {
-        io.err(`deploy init: ${target.file} 已存在且不是生成的骨架（缺标记），拒绝覆盖`)
-        return 1
-      }
+      // 已有文件只替换生成区，标记之后的追加内容原样保留（可写性上面已校验过）
       writeFileSync(file, merged, 'utf8')
       io.out(`deploy init: 已更新 ${target.file} 的生成区（标记之后的追加内容保留）`)
     }
