@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * 源码指纹：对 `lib/**`、`bin/**`、`templates/**`、`package.json` 的
- * 「相对路径 + 文件内容」按路径字典序拼接后做 sha256。
+ * 源码指纹：对运行时载荷 `lib/**`、`bin/**`、`templates/**` 的
+ * 「相对路径 + 文件内容」按路径字典序拼接后做 sha256（不含 `package.json`：
+ * 改分支名 / 加 devDependency / bump 版本都不需要重建 dist）。
  *
  * 只看内容、不看 mtime/权限/所有者，因此同一份源码在任何机器上算出同一个值。
  * 消费方 link 的是 `dist/pkg`，打包时把该指纹写进 `build.json.sourceHash`，

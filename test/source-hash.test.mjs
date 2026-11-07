@@ -62,7 +62,21 @@ test('各机器不一致的条目（隐藏文件、node_modules）不进指纹',
   assert.equal(sourceHash(a), sourceHash(b))
 })
 
+test('package.json 变动不改指纹（bump 版本 / 加 devDependency 不必重建 dist）', () => {
+  const a = makeTree(tmp(), BASE)
+  const b = makeTree(tmp(), [
+    ['package.json', '{"name":"x","version":"9.9.9","devDependencies":{"z":"1"}}\n'],
+    ...BASE.slice(1),
+  ])
+  assert.equal(sourceHash(a), sourceHash(b))
+})
+
 test('缺目标目录只影响该目标，不抛错', () => {
-  const root = makeTree(tmp(), [['package.json', '{"name":"y"}\n']])
+  const root = makeTree(tmp(), [['lib/only.mjs', 'export const z = 0\n']])
   assert.match(sourceHash(root), /^[0-9a-f]{64}$/)
+})
+
+test('root 不存在 → 抛错，而不是返回空指纹', () => {
+  // 空指纹会让「异常」伪装成「哈希一致」，守卫等于被关掉
+  assert.throws(() => sourceHash(join(tmp(), 'nope')), (error) => error?.code === 'ENOENT')
 })

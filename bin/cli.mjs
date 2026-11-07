@@ -2589,14 +2589,28 @@ function invokedDirectly() {
   }
 }
 
+/** 启动期只该「看一眼」的参数：包装坏了也得能看到帮助 / 版本，排障第一步不能被堵死。 */
+const INFO_ARGS = new Set(['-h', '--help', '-v', '--version'])
+
+// 启动即校验 dist 新鲜度：消费方 link 的是 dist/pkg，源码改了却忘 pack 会静默跑旧代码。
 if (invokedDirectly()) {
-  // 启动即校验 dist 新鲜度：消费方 link 的是 dist/pkg，源码改了却忘 pack 会静默跑旧代码。
+  const argv = process.argv.slice(2)
   const freshness = verifyDistFreshness()
-  if (!freshness.ok && process.env.DSH_PIPELINE_ALLOW_STALE !== '1') {
+  const stale = !freshness.ok && process.env.DSH_PIPELINE_ALLOW_STALE !== '1'
+  const infoOnly = argv.length === 0 || argv.some((arg) => INFO_ARGS.has(arg))
+
+  if (stale && !infoOnly) {
     process.stderr.write(
       `${freshness.reason}\n要么 \`pnpm pack\` 重新打包，要么设 DSH_PIPELINE_ALLOW_STALE=1 临时放行。\n`,
     )
-    process.exit(1)
+    // 不用 process.exit：它会截断尚未 flush 的 stderr，设 exitCode 让进程自然退出
+    process.exitCode = 1
+  } else if (stale) {
+    process.stderr.write(
+      `警告：${freshness.reason}（帮助 / 版本照常输出；正式使用前请 \`pnpm pack\` 或设 DSH_PIPELINE_ALLOW_STALE=1）\n`,
+    )
+    process.exitCode = runCli(argv)
+  } else {
+    process.exit(runCli(argv))
   }
-  process.exit(runCli(process.argv.slice(2)))
 }

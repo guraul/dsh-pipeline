@@ -1,10 +1,14 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { copyFileSync, cpSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { sourceHash, verifyDistFreshness } from '../lib/dist-freshness.mjs'
+
+const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url))
 
 function tmp() {
   return mkdtempSync(join(tmpdir(), 'dsh-dist-freshness-'))
@@ -69,10 +73,20 @@ test('指纹不一致 → not ok，reason 含「已过期」并给出前 8 位',
   assert.ok(result.reason.includes(result.actual.slice(0, 8)), 'reason 要带当前指纹前 8 位')
 })
 
-test('allowStale 不改变 ok（是否放行由调用方判断）', () => {
-  const source = makeSource()
-  const buildPath = writeBuild(tmp(), { sourcePath: source, sourceHash: 'c'.repeat(64) })
-  assert.equal(verifyDistFreshness({ buildPath, allowStale: true }).ok, false)
+test('源码目录读取失败（路径中间是文件）→ not ok 且 reason 含「读取失败」', () => {
+  // 伪造异常：sourcePath 的父级是普通文件，readdirSync 抛 ENOTDIR——
+  // 这类环境异常不许被静默降级成「跳过」，否则守卫等于被关掉。
+  const block = tmp()
+  const asFile = join(block, 'not-a-dir')
+  writeFileSync(asFile, 'x')
+  const buildPath = writeBuild(tmp(), {
+    sourcePath: join(asFile, 'sub'),
+    sourceHash: 'e'.repeat(64),
+  })
+  const result = verifyDistFreshness({ buildPath })
+  assert.equal(result.ok, false)
+  assert.equal(result.skipped, false)
+  assert.match(result.reason, /源码目录读取失败（.+）：/)
 })
 
 test('旧版打包（缺 sourcePath/sourceHash）→ 跳过，不打挂消费方', () => {
@@ -85,4 +99,69 @@ test('旧版打包（缺 sourcePath/sourceHash）→ 跳过，不打挂消费方
   assert.equal(result.ok, true)
   assert.equal(result.skipped, true)
   assert.match(result.reason, /旧版打包/)
+})
+
+// ---- CLI 级：起真实子进程，包根是临时副本（避免污染本仓的 build.json 影响并行用例）----
+
+/** 造一个「装坏了的包」：独立包根 + 过期 build.json，可直接 node <root>/bin/cli.mjs。 */
+function makeStalePkg() {
+  const pkgRoot = tmp()
+  cpSync(join(REPO_ROOT, 'bin'), join(pkgRoot, 'bin'), { recursive: true })
+  cpSync(join(REPO_ROOT, 'lib'), join(pkgRoot, 'lib'), { recursive: true })
+  copyFileSync(join(REPO_ROOT, 'package.json'), join(pkgRoot, 'package.json'))
+  writeFileSync(
+    join(pkgRoot, 'build.json'),
+    `${JSON.stringify({
+      gitSha: 'a'.repeat(40),
+      builtAt: '2026-11-07T00:00:00Z',
+      dirty: false,
+      sourcePath: makeSource(),
+      sourceHash: 'f'.repeat(64),
+    })}\n`,
+  )
+  return pkgRoot
+}
+
+function runPkg(pkgRoot, args, env = {}) {
+  const { DSH_PIPELINE_ALLOW_STALE: _inherited, ...base } = process.env
+  return spawnSync(process.execPath, [join(pkgRoot, 'bin/cli.mjs'), ...args], {
+    encoding: 'utf8',
+    env: { ...base, ...env },
+  })
+}
+
+test('CLI: dist 过期时普通命令退 1 并打印原因', () => {
+  const pkgRoot = makeStalePkg()
+  const result = runPkg(pkgRoot, ['status', '--root', tmp()])
+  assert.equal(result.status, 1, result.stderr)
+  assert.match(result.stderr, /dist 已过期：源码已改但未重新 pack/)
+  assert.match(result.stderr, /DSH_PIPELINE_ALLOW_STALE=1/)
+})
+
+test('CLI: DSH_PIPELINE_ALLOW_STALE=1 时过期也退 0', () => {
+  const pkgRoot = makeStalePkg()
+  const result = runPkg(pkgRoot, ['status', '--root', tmp()], { DSH_PIPELINE_ALLOW_STALE: '1' })
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(result.stderr, '')
+})
+
+test('CLI: dist 过期时 --help 仍退 0，只在 stderr 警告', () => {
+  const pkgRoot = makeStalePkg()
+  const result = runPkg(pkgRoot, ['--help'])
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /用法: dsh-pipeline/)
+  assert.match(result.stderr, /^警告：dist 已过期/m)
+})
+
+test('CLI: dist 过期时无参与 -v 同样不拦（只警告 + 正常输出）', () => {
+  const pkgRoot = makeStalePkg()
+  const bare = runPkg(pkgRoot, [])
+  assert.equal(bare.status, 0, bare.stderr)
+  assert.match(bare.stdout, /用法: dsh-pipeline/)
+  assert.match(bare.stderr, /^警告：/m)
+
+  const version = runPkg(pkgRoot, ['-v'])
+  assert.equal(version.status, 0, version.stderr)
+  assert.match(version.stdout, /^\d+\.\d+\.\d+/)
+  assert.match(version.stderr, /^警告：/m)
 })
