@@ -5,7 +5,7 @@
  * 覆盖：expect 的格式化；锁不存在 → 跳过（0）；格式非法 / 多余字段 → 1；
  * 未装包 → 跳过（0）；旧版本包（无 build.json）→ 1；与锁不一致 → 1 且 detail 同时给出两边值；
  * `lock write` 落盘内容与再次运行即刷新；`lock write` 未装包 → 2；
- * `selftest --lock` 与 `lock check` 同一结论；`--peer` 仍是「尚未实现」退 2。
+ * `selftest --lock` 与 `lock check` 同一结论；`--peer` 已实现（无声明时跳过）。
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -263,14 +263,18 @@ test('lock：用法错误统一退 2（缺动作 / 未知动作 / 缺 --root）'
   assert.equal(run(['lock', 'check']).code, 2)
 })
 
-test('selftest：--peer 仍是「尚未实现」退 2；未指定检查项的提示包含 --lock', () => {
-  const peer = run(['selftest', '--peer'])
-  assert.equal(peer.code, 2)
-  assert.equal(peer.err, 'selftest: 尚未实现: --peer\n')
+test('selftest：--peer 已实现（无声明 → 跳过 0）；未指定检查项的提示包含 --lock / --peer', (t) => {
+  const root = tmp()
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+
+  const peer = run(['selftest', '--peer', '--root', root])
+  assert.equal(peer.code, 0, peer.err)
+  assert.match(peer.out, /未发现声明 DSH 版本的包（跳过）/)
 
   const none = run(['selftest'])
   assert.equal(none.code, 2)
   assert.match(none.err, /--lock/)
+  assert.match(none.err, /--peer/)
 })
 
 test('selftest --lock --json：结构与其它检查项一致', (t) => {
