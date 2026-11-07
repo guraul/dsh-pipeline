@@ -166,7 +166,8 @@ selftest 用法:
   --exit-codes       退出码口径自检（契约 §4）：起子进程真跑七条用例——成功 0 / 业务拒绝 1 /
                      用法错误 2（缺参、未知参数、未知子命令）/ 环境错误 3（入口找不到共享包）；
                      任一不符退出 1，detail 指出哪条不符
-  --fast             等价于 --shims --config（契约 §9 的 pre-push 用法；--repos / --lock / --peer / --exit-codes 会被忽略）
+  --fast             等价于 --shims --config（契约 §9 的 pre-push 用法；--lock / --peer / --exit-codes 会被忽略，
+                     --repos 与 --fast 互斥、组合即退 2）
   --repos <a,b,c>    比对多个仓装的共享包是不是同一构建（读各自 build.json 的 gitSha/builtAt）。
                      绝对路径直接用、相对路径按 --root（缺省当前目录）解析、前导 ~/ 展开成家目录；
                      目录不存在或未装包的仓跳过并列出，可比对的仓不足 2 个则跳过退出 0；
