@@ -841,14 +841,33 @@ function changedFiles(request) {
   return Array.isArray(request.files) ? request.files : diffPaths(request.diff)
 }
 
-/** 变更行数（增删合计），忽略 diff 的 +++/--- 文件头。 */
-function countChangedLines(diff) {
-  let count = 0
+/** 测试文件：`__tests__/`、`tests/`、`test/` 目录下，或 `.test.` / `.spec.` 结尾的源码。 */
+const TEST_FILE_RE = /(^|\/)(__tests__|tests?)\/|\.(test|spec)\.(ts|tsx|js|mjs|cjs)$/
+
+/**
+ * 变更行数（增删合计），忽略 diff 的 +++/--- 文件头。
+ * 按 `diff --git` 头分段识别测试文件，返回总量与生产/测试拆分——
+ * 行数上限只按生产行判定，测试写得厚不该触发人工放行。
+ * @returns {{ total: number, production: number, testLines: number }}
+ */
+export function countChangedLines(diff) {
+  let total = 0
+  let testLines = 0
+  let currentIsTest = false
   for (const line of String(diff ?? '').split('\n')) {
+    if (line.startsWith('diff --git ')) {
+      // 形如 `diff --git a/path b/path`，取 b/ 后的路径
+      const m = /^diff --git a\/(.+) b\/(.+)$/.exec(line)
+      currentIsTest = m ? TEST_FILE_RE.test(m[2]) : false
+      continue
+    }
     if (line.startsWith('+++') || line.startsWith('---')) continue
-    if (line.startsWith('+') || line.startsWith('-')) count += 1
+    if (line.startsWith('+') || line.startsWith('-')) {
+      total += 1
+      if (currentIsTest) testLines += 1
+    }
   }
-  return count
+  return { total, production: total - testLines, testLines }
 }
 
 function parseDuration(value) {
@@ -955,11 +974,14 @@ function runRecord(argv, deps, io) {
   let policy
   try {
     const { config } = loadConfig(root)
+    const lines = countChangedLines(request.diff)
     policy = mergePolicy({ highRiskAppend: config.highRisk }).hit(
       changedFiles(request),
-      countChangedLines(request.diff),
+      lines.production,
       { diff: request.diff },
     )
+    // 行数拆分随 policy 段落盘：gate 失败时能看出测试行被排除在上限之外。
+    policy = { ...policy, changedLines: { total: lines.total, production: lines.production, testLines: lines.testLines } }
   } catch (error) {
     // 策略算不出来就写不了可信记录：宁可失败，也不写一条 policy 缺失的记录。
     io.err(`record: 高风险判定失败: ${messageOf(error)}`)

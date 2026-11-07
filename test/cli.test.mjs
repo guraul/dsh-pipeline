@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { runCli } from '../bin/cli.mjs'
+import { runCli, countChangedLines } from '../bin/cli.mjs'
 import {
   PACKAGE_VERSION,
   SCHEMA_VERSION,
@@ -625,6 +625,23 @@ test('record: 命中 .env 高风险时 policy.hit=true、errorCode=E_POLICY，�
   assert.equal(saved.verdict, 'APPROVE', '高风险只标注错误码，不改判定')
 })
 
+test('countChangedLines: 测试文件行单独拆出，上限只看生产行', () => {
+  const diff = [
+    'diff --git a/packages/web/lib/x.ts b/packages/web/lib/x.ts',
+    '--- a/packages/web/lib/x.ts',
+    '+++ b/packages/web/lib/x.ts',
+    ...Array.from({ length: 10 }, (_, i) => `+prod-${i}`),
+    ...Array.from({ length: 2 }, (_, i) => `-old-${i}`),
+    'diff --git a/packages/web/lib/x.test.ts b/packages/web/lib/x.test.ts',
+    '--- a/packages/web/lib/x.test.ts',
+    '+++ b/packages/web/lib/x.test.ts',
+    ...Array.from({ length: 100 }, (_, i) => `+test-${i}`),
+  ].join('\n')
+
+  assert.deepEqual(countChangedLines(diff), { total: 112, production: 12, testLines: 100 })
+  assert.deepEqual(countChangedLines(undefined), { total: 0, production: 0, testLines: 0 })
+})
+
 test('record: 请求没带 files 时从 diff 头还原路径，高风险不漏判', () => {
   const root = tmp()
   const request = {
@@ -640,6 +657,33 @@ test('record: 请求没带 files 时从 diff 头还原路径，高风险不漏�
   const saved = readRecord(recordFile(reviewsDir(root), 7, SHA))
   assert.equal(saved.policy.hit, true)
   assert.equal(saved.errorCode, 'E_POLICY')
+})
+
+test('record: policy.changedLines 记录 total/production/testLines 拆分', () => {
+  const root = tmp()
+  const request = {
+    pr: 7,
+    head_sha: SHA,
+    nonce: NONCE,
+    diff: [
+      'diff --git a/lib/x.ts b/lib/x.ts',
+      '--- a/lib/x.ts',
+      '+++ b/lib/x.ts',
+      '+a',
+      '-b',
+      'diff --git a/lib/x.test.ts b/lib/x.test.ts',
+      '--- a/lib/x.test.ts',
+      '+++ b/lib/x.test.ts',
+      '+t1',
+      '+t2',
+      '+t3',
+    ].join('\n'),
+  }
+
+  const { code } = runRecordWith(root, request, { extra: ['--root', root] })
+  assert.equal(code, 0)
+  const saved = readRecord(recordFile(reviewsDir(root), 7, SHA))
+  assert.deepEqual(saved.policy.changedLines, { total: 5, production: 2, testLines: 3 })
 })
 
 test('record: 高风险追加规则来自 <root>/.dsh/pipeline.json，policyVersion 等于 package.json 版本', () => {

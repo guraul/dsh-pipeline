@@ -90,7 +90,7 @@ mergePolicy({ highRiskAppend })  // → { patterns, hit(files, changedLines, {di
 
 - **默认清单恒生效**（`DEFAULT_HIGH_RISK`，14 条）：`.github/**`、`scripts/pipeline/**`、`AGENTS.md`、`docs/pipeline/**`、`**/.gitignore`、`.dsh/profiles/**`、`.dsh/**`、`**/.env*`、`**/*.pem`、`**/*.key`、`**/*.p12`、`**/deploy.sh`、`**/rollback.sh`、`**/package.json`（**仅当依赖段变更时**）；
 - 仓库配置的 `highRisk` 是**追加**（同 glob 时以追加的 `reason` 为准），不能替换默认；
-- `changedLines > 400` 也命中（`变更 N 行，超过 400 行上限`）；
+- `changedLines > 400` 也命中（`变更 N 行（不含测试文件），超过 400 行上限`）；`changedLines` 由 `bin/cli.mjs` 的 `countChangedLines(diff)` 按 `diff --git` 头分段统计，测试文件（`__tests__/`、`test(s)/` 目录、`.test.`/`.spec.` 源码）的增删行只计入 `testLines`，上限判定用 `production`；行数拆分以 `policy.changedLines: { total, production, testLines }` 落盘；
 - glob 只实现 `**`（跨目录）、`*`（单层）、`?`（单字符）；路径先 `normalizePath`（反斜杠转 `/`、去 `./`、合并 `//`），否则同一路径换个写法就能绕过；
 - `dependencyChange` 用正则判断 diff 里是否增删了 `"dependencies"` / `"devDependencies"` / `"optionalDependencies"` 段。
 
