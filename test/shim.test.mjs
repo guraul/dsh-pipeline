@@ -151,12 +151,14 @@ test('shim check：目录枚举不了 → 退 3，不把失败说成通过（fai
   // 只有执行位、没有读位：按名字读 6 个入口仍成功，但 readdir 会 EACCES
   chmodSync(dir, 0o111)
 
-  const result = run(['shim', 'check', '--root', root])
-  if (result.code === 0) {
-    // 以 root 身份运行时 chmod 挡不住 readdir，这条用例无意义
-    t.skip('当前身份不受目录权限限制（如 root），跳过')
+  // 只有 root 才不受目录读位限制；非 root 下必须真的断言退 3
+  // （不能拿「code === 0 就 skip」兜底——旧 fail-open 实现同样退 0，会让这条用例形同虚设）
+  if (process.getuid?.() === 0) {
+    t.skip('以 root 运行，chmod 挡不住 readdir，这条用例无意义')
     return
   }
+
+  const result = run(['shim', 'check', '--root', root])
   assert.equal(result.code, 3, result.err)
   assert.match(result.err, /无法枚举/)
 })

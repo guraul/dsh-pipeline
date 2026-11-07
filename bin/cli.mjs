@@ -1917,11 +1917,6 @@ function runReposCheck(raw, options, deps, io) {
   return 0
 }
 
-/**
- * shim：动作是位置参数（install / check），渲染与比对逻辑在 lib/shim.mjs。
- * 根目录口径与 selftest 一致（显式 --root > 主工作区 > 当前目录）。
- * 退出码：0 成功 / 1 内容冲突或不一致 / 2 用法错误。
- */
 /** 多余条目的处置提示：元数据文件与私有脚本分开说，免得让人以为 .DS_Store 是脚本。 */
 function describeExtra(name) {
   return name === '.DS_Store' || name === 'Thumbs.db'
@@ -1929,6 +1924,11 @@ function describeExtra(name) {
     : '，私有脚本请移出该目录'
 }
 
+/**
+ * shim：动作是位置参数（install / check），渲染与比对逻辑在 lib/shim.mjs。
+ * 根目录口径与 selftest 一致（显式 --root > 主工作区 > 当前目录）。
+ * 退出码：0 成功 / 1 内容冲突、不一致或目录里有私有文件 / 2 用法错误 / 3 无法枚举目录。
+ */
 function runShim(argv, deps, io) {
   const [action, ...rest] = argv
   if (action === undefined || action.startsWith('--')) {
