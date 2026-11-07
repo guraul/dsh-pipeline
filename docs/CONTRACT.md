@@ -92,7 +92,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 **配置字段（已进 schema）**：`worktreesDir` 由 `task` 消费——缺省读配置、`--worktrees-dir` 优先；`checks` 由 `check-all` 消费——`--packages` 优先，其次 `checks.packages`（按给定顺序），再否则自动发现并按 `checks.exclude` 过滤；`deploy` 由 `deploy init|check` 消费（字段见 §7.1，部署行为见 §10）；`review` 段的 `tier` / `postReview` / `identity` / `rounds` 全部进 schema 并被消费（见 §7.3）。
 
-**目标**：只剩 §5 的「错误行带错误码」（P2，与退出码统一同批做）。其余（§3.2 / §4 / §6 / §7 / §9 / §10）已全部落地；容器部署（原 `oci-image` 占位）已明确不做，见 §10。
+**目标**：只剩三处输出/约束层的 P2 项——§5 的「状态行改成 `<阶段>: <状态>`」「错误行带错误码」（与退出码统一同批做），以及 §11 的「`shim check` 强制 `scripts/pipeline/` 下没有仓库私有文件」。其余（§3.2 / §4 / §6 / §7 / §9 / §10）已全部落地；容器部署（原 `oci-image` 占位）已明确不做，见 §10。
 
 硬规则：目标条目在实现合并前**不得**被入口 shim 调用，也不得在文档里写成可用；§9 的门禁项现已全部落地，CI 可以直接引用。
 
@@ -438,4 +438,4 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | 2026-11-07 | §9 实现 `selftest --peer`：四来源按优先级，版本取 `--dsh-version` 或仓内装包；门禁项全部落地 |
 | 2026-11-07 | §6 的 root 统一落地：`record` / `review prepare\|publish` 与 `selftest` / `shim` / `hooks` / `status` 共用 `resolveMainWorktreeRoot`（显式 `--root` > 主工作区 > 当前目录），审核记录不再随 worktree 被删；上面 v1.2 那条里「§6 的 root 统一」已不再是目标 |
 | 2026-11-07 | §7.1 的 `review` 目标字段全部落地：`postReview`（配置层默认发送）、`identity.ghConfigDir` / `identity.account`（发送身份与账号校验）、`rounds`（1..3，缺省 3，同时约束 `--round`、请求里的 `round`、`gate` 与 `merge`）；§3.3 目标清单只剩 `oci-image` |
-| 2026-11-07 | 删掉 `oci-image` 空枚举：明确不做容器部署（不引入 Docker / Kubernetes），`DEPLOY_ARTIFACTS` 只留 `static-dir` / `node-standalone`，配了 `oci-image` 在配置层即 `E_CONFIG`；§3.3 目标清单只剩 §5 的「错误行带错误码」 |
+| 2026-11-07 | 删掉 `oci-image` 空枚举：明确不做容器部署（不引入 Docker / Kubernetes），`DEPLOY_ARTIFACTS` 只留 `static-dir` / `node-standalone`，配了 `oci-image` 在配置层即 `E_CONFIG`；§3.3 目标清单如实收敛为三处 P2（§5 状态行格式 / §5 错误行错误码 / §11 shim check 私有文件） |
