@@ -227,7 +227,7 @@ test('deploy init：node-standalone 放行，mode=releases 且 with: 按 artifac
   assert.equal(init(root, ['--write']).code, 0)
   const checked = check(root)
   assert.equal(checked.code, 0)
-  assert.equal(checked.out, 'deploy check: 生成区与配置一致\n')
+  assert.equal(checked.out, '构建: 生成区与配置一致\n')
 })
 
 test('deploy check：assemble 键参与逐字节比对（改 artifact 后报第一处差异）', (t) => {
@@ -257,13 +257,13 @@ test('deploy init --write 落盘，deploy check 一致退 0', (t) => {
   const written = init(root, ['--write'])
   assert.equal(written.code, 0)
   assert.equal(written.err, '')
-  assert.equal(written.out, `deploy init: 已写入 ${DEPLOY_WORKFLOW_FILE}\n`)
+  assert.equal(written.out, `构建: 已写入 ${DEPLOY_WORKFLOW_FILE}\n`)
   const file = workflowPath(root)
   assert.ok(existsSync(file), '应生成 workflow 文件')
 
   const result = check(root)
   assert.equal(result.code, 0)
-  assert.equal(result.out, 'deploy check: 生成区与配置一致\n')
+  assert.equal(result.out, '构建: 生成区与配置一致\n')
   assert.equal(result.err, '')
 })
 
@@ -321,7 +321,7 @@ test('deploy check：标记之后追加 job → 仍退 0（追加内容不参与
 
   const result = check(root)
   assert.equal(result.code, 0)
-  assert.equal(result.out, 'deploy check: 生成区与配置一致\n')
+  assert.equal(result.out, '构建: 生成区与配置一致\n')
 })
 
 test('deploy init --write --rollback：两份 caller 都落盘，rollback 用 workflow_dispatch + rollback.yml', (t) => {
@@ -406,7 +406,7 @@ test('deploy check：手写的回滚 caller → 跳过并提示、退 0（与 in
 
   const result = check(root)
   assert.equal(result.code, 0, result.err)
-  assert.equal(result.out, 'deploy check: 生成区与配置一致\n')
+  assert.equal(result.out, '构建: 生成区与配置一致\n')
   assert.match(result.err, /rollback-web\.yml 是手写文件（缺生成区标记），已跳过/)
 })
 
@@ -418,7 +418,7 @@ test('deploy check：两份都在 → 两个生成区一致；改坏回滚那份
 
   const ok = check(root)
   assert.equal(ok.code, 0, ok.err)
-  assert.equal(ok.out, 'deploy check: 两个生成区都与配置一致\n')
+  assert.equal(ok.out, '构建: 两个生成区都与配置一致\n')
 
   const rollbackFile = join(root, DEPLOY_ROLLBACK_FILE)
   const broken = readFileSync(rollbackFile, 'utf8').replace('      remote_dir:', '      remote_dir_x:')

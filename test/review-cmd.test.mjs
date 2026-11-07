@@ -653,7 +653,7 @@ test('review publish：按默认路径读请求并落盘，轮次与提供方取
 
   const code = run(['review', 'publish', '--pr', '7', '--response', response, '--root', root], io, { cwd: root })
   assert.equal(code, 0, io.state.err)
-  assert.match(io.state.out, /已写入审核记录: /)
+  assert.match(io.state.out, /审核: 已写入审核记录: /)
 
   const saved = readRecord(recordFile(reviewsDir(root), 7, SHA))
   assert.equal(saved.pr, 7)

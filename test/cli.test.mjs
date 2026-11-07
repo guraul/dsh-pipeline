@@ -134,7 +134,7 @@ test('gate: 有效记录放行，退出码 0', () => {
   const io = makeIO()
 
   assert.equal(run(['gate', '--pr', '7', '--root', root, '--record', file, '--head-sha', SHA], io), 0)
-  assert.match(io.state.out, /审核闸门: PR #7 通过/)
+  assert.match(io.state.out, /审核: PR #7 通过/)
   assert.equal(io.state.err, '')
 })
 
@@ -405,7 +405,7 @@ test('record: 解析响应并落盘，文件名与字段正确', () => {
     cwd: root,
   })
   assert.equal(code, 0)
-  assert.match(io.state.out, /已写入审核记录: /)
+  assert.match(io.state.out, /审核: 已写入审核记录: /)
 
   const file = recordFile(reviewsDir(root), 7, SHA)
   const saved = readRecord(file)

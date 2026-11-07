@@ -204,7 +204,7 @@ test('不带 --post-review：只落盘，gh 一次都不调', (t) => {
   const result = runPublish(fixture)
 
   assert.equal(result.status, 0, result.stderr)
-  assert.match(result.stdout, /已写入审核记录: /)
+  assert.match(result.stdout, /审核: 已写入审核记录: /)
   assert.ok(existsSync(recordPath(fixture)), '记录必须落盘')
   assert.deepEqual(ghCalls(fixture), [], '没带 --post-review 时不许发出任何 gh 调用')
 })
@@ -321,7 +321,7 @@ test('已有同 SHA 且含标记的 review：跳过发送，不发 POST，退 0'
   const result = runPublish(fixture, ['--post-review'], { STUB_REVIEWS_JSON: existing })
 
   assert.equal(result.status, 0, result.stderr)
-  assert.match(result.stdout, /review publish: 已存在同 SHA 的 review，跳过发送/)
+  assert.match(result.stdout, /审核: 已存在同 SHA 的 review，跳过发送/)
   const calls = ghCalls(fixture)
   assert.deepEqual(calls, [LIST_CALL], '幂等命中时只允许列一次，不许 POST')
   assert.ok(existsSync(recordPath(fixture)), '记录照常落盘')
