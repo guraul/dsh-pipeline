@@ -46,7 +46,7 @@ dsh-pipeline deploy check --root <dir>
 | `check`，部署 caller 不存在 | 提示先跑 `deploy init` | 1 |
 | `check`，回滚 caller 不存在 | 静默跳过（迁移期，不改变既有输出） | 0 |
 | `check`，回滚 caller 是手写文件 | 跳过 + stderr 提示（与 `init` 同口径） | 0 |
-| 参数错误 / 配置错误 / `artifact=oci-image` | 明确报错 | 2 |
+| 参数错误 / 配置错误 | 明确报错 | 2 |
 
 **源码运行不能生成**：`uses` 必须 pin 到 `build.json` 的 gitSha，源码目录没有 `build.json` → 退 2 并提示「请在已安装包内运行」；不要用假 pin 掩盖这一点。
 
@@ -54,7 +54,7 @@ dsh-pipeline deploy check --root <dir>
 
 | 字段 | 必填 | 缺省 / 约束 |
 |---|---|---|
-| `artifact` | 是 | `static-dir` / `node-standalone` 可用；`oci-image` 只在 schema 层放行，生成时报「尚未实现」退 2 |
+| `artifact` | 是 | 只有 `static-dir` / `node-standalone`；`oci-image` 在配置层即 `E_CONFIG`（容器部署明确不做，见契约 §10） |
 | `service` | 是 | 非空字符串（systemd 服务名） |
 | `remoteDir` | 是 | 非空字符串 + **绝对路径** |
 | `workDir` | 是 | 非空字符串（`deploy.yml` 的 `work_dir` 是必填 input） |
@@ -91,7 +91,7 @@ dsh-pipeline deploy check --root <dir>
 2. **比对只比生成区**：不要改成比整份文件，否则各仓追加的后置 job 会被判不一致。
 3. **`firstDifference` 给的是第一处差异**，不要只打印「不一致」——排障时要能直接看到哪一行。
 4. **不要给可选项写默认值**：`resolveDeploy` 的 `null` 语义是「不写这一行」，写成空串会顶掉 `deploy.yml` 的默认值。
-5. **`artifact=oci-image` 目前只在 schema 放行**：实现前不要让它生成骨架（会静默产出一个跑不通的 caller）。
+5. **不要重新引入 `oci-image` 枚举**：容器部署已明确不做（契约 §10），该值在配置层就 `E_CONFIG`；真要支持容器是新需求，需同时加 `deploy.yml` 分支并更新契约。
 
 ## 相关测试
 

@@ -245,7 +245,7 @@ deploy 用法:
   部署 caller 不存在提示先跑 deploy init（退 1）。
   --root <dir>       仓库根目录（必填）
   退出码: 0 一致（含回滚 caller 缺失 / 手写跳过）/ 1 不一致、部署 caller 缺标记或拒绝覆盖 /
-          2 用法、配置错误或 artifact 尚未实现
+          2 用法或配置错误
 
 lock 用法:
   dsh-pipeline lock write --root <dir>   把当前装包的 build.json 写进 <dir>/.dsh/pipeline.lock.json
@@ -2115,7 +2115,7 @@ function runCheckAllCommand(argv, deps, io) {
 /**
  * deploy：动作是位置参数（init / check），渲染与生成区比对全在 lib/deploy.mjs（契约 §10）。
  * --root 必填：生成 / 校验必须显式指向目标仓，不猜当前目录。
- * 退出码：0 成功 / 1 不一致、缺标记或拒绝覆盖 / 2 用法、配置错误或 artifact 尚未实现。
+ * 退出码：0 成功 / 1 不一致、缺标记或拒绝覆盖 / 2 用法或配置错误。
  * deps.buildInfo 显式注入即生效（含 null，表示「没有 build.json」），没注入才读本包 build.json——源码运行没有它，拒绝生成假 pin。
  */
 function runDeploy(argv, deps, io) {
