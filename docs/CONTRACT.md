@@ -60,7 +60,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 关于 `-C/--root`：包侧只认 `--root <dir>`（`parseArgs` 拒绝非 `--` 形式的位置参数）。**由 shim 负责把 `-C <dir>` 翻译成 `--root <dir>`**，包本身不解析 `-C`。
 
-各子命令的 `--root` 缺省值**不统一**（现状）：`pr` 取当前任务 worktree；`record` / `review` 取当前目录；`merge` 取主工作区。`status` 不列入本名单——它缺省自行定位主工作区，与 `doctor` 一样无需显式传。统一为「主工作区」是目标（P2），见 §6。
+各子命令的 `--root` 缺省值（**现行**）：`pr` 取当前任务 worktree（提交必须落在被审分支上）；`record` / `review` / `selftest` / `shim` / `hooks` / `status` 缺省定位**主工作区**（同一实现 `resolveMainWorktreeRoot`，见 §6）；`merge` / `gate` **必填** `--root`。`doctor` / `check-all` 按当前目录。
 
 ### 3.2 包子命令全集
 
@@ -92,7 +92,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 **配置字段（已进 schema）**：`worktreesDir` 由 `task` 消费——缺省读配置、`--worktrees-dir` 优先；`checks` 由 `check-all` 消费——`--packages` 优先，其次 `checks.packages`（按给定顺序），再否则自动发现并按 `checks.exclude` 过滤；`deploy` 由 `deploy init|check` 消费（字段见 §7.1，部署行为见 §10）；`review.tier` 由 `review prepare` / `review prompt` 消费（见 §7.3），`review` 的其余字段仍为目标（P2）。
 
-**目标**：`review` 的其余字段（§7.1）、`--legacy-exit-codes`（§4）、§6 的 root 统一，以及 §10 的「各仓接入 caller workflow 与回滚调用」。
+**目标**：`review` 的其余字段（§7.1）、`--legacy-exit-codes`（§4），以及 §10 的「各仓接入 caller workflow 与回滚调用」。
 
 硬规则：目标条目在实现合并前**不得**被入口 shim 调用，也不得在文档里写成可用；§9 的门禁项现已全部落地，CI 可以直接引用。
 
@@ -139,9 +139,9 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | 审核记录 | `<root>/.dsh-web/reviews/<pr>-<head_sha>.json` | 现行 |
 | 跳过审计 | `<root>/.dsh-web/reviews/skips/<ts>-<pr>.json` | 现行 |
 
-**现状**：`<root>` 取各命令自己的缺省（见 §3.1）——在 worktree 里跑 `record` / `review`，记录会落进 worktree，随 worktree 一起被删（2026-11-04 真实发生过）。
+**现行**：产生上述产物的命令，`<root>` 缺省口径统一——显式 `--root` 优先；否则定位**主工作区**（`git rev-parse --git-common-dir` 的父目录，即 `git worktree list --porcelain` 首条）；git 定位不到（非仓库 / git 失败）退回当前目录。
 
-**目标（P2）**：`<root>` 一律取**主工作区**（`git worktree list --porcelain` 首条、分支为 `main` 的那个）。在实现前，worktree 里跑这两个命令必须显式给 `--root <主工作区>`。
+这条口径就是为 2026-11-04 那次事故设的：在 task worktree 里跑 `record` / `review`，记录会落进 worktree，`merge` 清理时连同 worktree 一起删掉，事后查不到「审过没有」。现在 `record` / `review prepare|publish` / `selftest` / `shim` / `hooks` / `status` 共用同一个 `resolveMainWorktreeRoot`。
 
 **全部产物不入库**：`.gitignore` 覆盖 `.tmp/` 与 `.dsh-web/`。
 

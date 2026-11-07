@@ -30,8 +30,8 @@ dsh-pipeline review publish --pr <N> --response <响应文件> [--request <文�
 - 请求 JSON 字段：`{pr, head_sha, round, nonce, model, provider, form, files, diff}`；`nonce` 是 12 位 base32（`A-Z2-7`）一次性标记。`.tmp/` 已被忽略，请求文件不入库。
 - `publish` 复核后转交 `record` 落盘（复用 `record`，不另起一套落盘逻辑）：判定行解析不出、或判定 SHA 与请求不符时**仍写一条 ESCALATE 记录**并退出 1，审计轨迹不丢。
 - `--request` 缺省为 `<root>/.tmp/review/<N>/request.json`；`--round` 与请求里的 `round` 不一致时报错退出 2（拿错请求文件当场失败），没给则沿用请求里的 `round`。
-- **落盘口径**：`--root` 取**主工作区**——请求落 `<root>/.tmp/review/<N>/`、记录落 `<root>/.dsh-web/reviews/`，都写进主仓，不会随工作树（worktree）清理被删；转发壳固定把 root 指到主工作区。
-  本包 CLI 自己**不会**上溯主工作区：`--root` 缺省依次取 `deps.cwd`、`process.cwd()`，所以在 worktree 内直接调本包又没给 `--root` 时，请求与记录会写进那个 worktree。要这个保证就走转发壳，或自己传主工作区路径。
+- **落盘口径**：`--root` 缺省定位**主工作区**（`git rev-parse --git-common-dir` 的父目录）——请求落 `<root>/.tmp/review/<N>/`、记录落 `<root>/.dsh-web/reviews/`，都写进主仓，不会随工作树（worktree）清理被删。git 定位不到（非仓库 / git 失败）才退回当前目录；显式 `--root` 永远优先。
+  这条口径与 `selftest` / `status` / `shim` / `hooks` 共用 `resolveMainWorktreeRoot`：在 task worktree 里直接跑本包，记录也落主仓。
 
 **消费仓接入现状**：`agent-mobile`、`homebase` 已有 `scripts/pipeline/review.sh` 转发壳（只做参数校验再转给本包）；`self-dsh-plugins` 仍用自有实现（多 `--facts` / `--include` / 提示词生成），属已知欠账，正在统一到本包。
 

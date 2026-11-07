@@ -36,7 +36,7 @@
 
 | # | 问题 | 状态 | 说明 |
 |---|---|---|---|
-| 1 | 契约把已实现能力标成「目标」 | **已修（本 PR，契约 v1.2）** | §3.2 / §3.3 / §9 / §10 改为现行；仍未实现项已收敛为 `review.*`、`--legacy-exit-codes`、§6 的 root 统一与 §10 的各仓接入 / 回滚调用（`--exit-codes`、`--lock`、`--peer`、`pipeline.lock.json` 均已实现） |
+| 1 | 契约把已实现能力标成「目标」 | **已修（本 PR，契约 v1.2）** | §3.2 / §3.3 / §9 / §10 改为现行；仍未实现项已收敛为 `review.*`、`--legacy-exit-codes` 与 §10 的各仓接入 / 回滚调用（`--exit-codes`、`--lock`、`--peer`、`pipeline.lock.json`、§6 的 root 统一均已实现） |
 | 2 | README 的「已实现」清单不全 | **已修（本 PR）** | 补到 14 个子命令（含 `deploy init` / `check`）；顶层 `prepare` 占位已删除 |
 | 3 | README 的「本仓高风险只列了 `.github/**`」易被误读 | **已修（本 PR）** | 改为「配置只**追加**了 `.github/**`，而 `lib/policy.mjs` 的默认清单恒生效」——改 `AGENTS.md`、`.gitignore` 等同样属高风险 |
 | 4 | `deploy.yml` 只适配 Expo 类仓 | **已修（#67）** | 新增 `quality_cmd` / `build_cmd` / `assemble` 三个 input，均有默认值（老 caller 零改动）；缺省构建命令仍是 Expo Web 导出，非 Expo 仓要显式传 |
@@ -74,7 +74,7 @@
 ## 5. 易踩的坑
 
 1. **两种 root**：`pr` 要当前工作树，`task` / `selftest` / `status` / `hooks` 要主工作区。在 worktree 里按 cwd 推 worktree 容器会嵌套出 `<wt>/.worktrees/<x>`（脚本以 `--git-common-dir` 的父目录为准，不是 `--show-toplevel`）。
-2. **记录落进 worktree**：`record` / `review` 缺省不会上溯主工作区，记录会随 worktree 清理被删（2026-11-04 真实发生）。要保证写进主仓就走转发壳，或显式 `--root <主工作区>`。
+2. **记录落进 worktree**：已修（`record` / `review` 缺省上溯主工作区）。历史：2026-11-04 记录随 worktree 清理被删；现在若显式给了 `--root <worktree>` 仍会写进 worktree——那是调用方自己的选择。
 3. **`merge` 取的是 PR head，不是本机 HEAD**：合并通常从主工作区发起，本机 HEAD 是 main，拿它比记录永远对不上。
 4. **主工作区停在 PR 分支**：`merge --ff-only origin/main` 必失败；脚本会先 checkout（干净时）或跳过快进并给提示（脏时），不会静默失败。
 5. **主工作区不可 `worktree remove`**：git 报 `is a main working tree`；脚本识别后跳过移除、只删分支。

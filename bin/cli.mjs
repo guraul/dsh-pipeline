@@ -270,6 +270,8 @@ review 用法:
                                [--root <dir>] [--model <m>] [--provider <p>] [--form <f>]
                                [--post-review] [--dry-run]
   dsh-pipeline review prompt --request <file> [--out <file>] [--role <名>]
+  --root <dir>       仓库根目录（缺省主工作区，git 定位不到时用当前目录）；
+                     prepare 的请求、publish 的记录都写 <root>/.tmp 与 <root>/.dsh-web
 
   prepare  用 gh 读 PR 的 head 提交、改动文件与 diff，生成请求 JSON（含 12 位 base32 nonce）
            到 <root>/.tmp/review/<pr>/request.json（--out 可改路径）；
@@ -285,6 +287,8 @@ review 用法:
            facts（取不到写「未取到」，不让 prepare 失败；与 --facts 同时存在时拼接而非覆盖）；
            --include <路径,路径,...> 逐个读文件写进请求的 includes 数组（每项 {path, content}，
            path 保持调用方给的原样）；任一路径读不到或取值为空即退出 2，不写请求文件。
+           --facts / --include 的相对路径按**调用处目录**解析（不是 --root），在 worktree 里
+           prepare 时读的是被审分支的文件。
   publish  读 --response 并落盘 <root>/.dsh-web/reviews/<pr>-<sha>.json，复用 record 的落盘逻辑；
            --request 缺省为 <root>/.tmp/review/<pr>/request.json；
            --round 与请求里的 round 不一致时报错退出 2，没给则沿用请求里的 round。
@@ -319,7 +323,7 @@ record 选项:
   --response <file>  reviewer 响应文本
   --findings <file>  响应里没有 json 代码块时的兜底（{\"findings\":[...],\"evidence\":[...]}）
   --round <n>        审核轮次（1..${MAX_ROUND}，默认 1）
-  --root <dir>       仓库根目录（默认当前工作目录），记录写入 <root>/.dsh-web/reviews
+  --root <dir>       仓库根目录（缺省主工作区，git 定位不到时用当前目录），记录写入 <root>/.dsh-web/reviews
   --model <名>       产生判定的模型（缺省取请求里的 model）
   --name <文件名>    自定义落盘文件名（默认 <pr>-<sha>.json；分片审核用它直接写分片名，
                      避免「先写规范名再删除」的窗口）
@@ -904,7 +908,7 @@ function runRecord(argv, deps, io) {
     }
   }
 
-  const root = nonEmpty(options.root) ? options.root : nonEmpty(deps.cwd) ? deps.cwd : process.cwd()
+  const root = resolveReviewRoot(options.root, deps)
   let policy
   try {
     const { config } = loadConfig(root)
@@ -972,10 +976,10 @@ function runRecord(argv, deps, io) {
   }
 }
 
-/** review 两个动作共用的根目录口径：--root > 注入的 cwd > 当前工作目录。 */
+/** review 三个动作共用的根目录口径：--root > 主工作区 > 当前目录（与 record / selftest 一致）。 */
 function resolveReviewRoot(value, deps) {
-  if (value !== undefined) return value
-  return nonEmpty(deps.cwd) ? deps.cwd : process.cwd()
+  // 与 selftest / status 同一口径：缺省落主工作区，显式 --root 才用调用方给的目录
+  return resolveMainWorktreeRoot(value, deps)
 }
 
 /**
@@ -1008,9 +1012,11 @@ function runReviewPrepare(argv, deps, io) {
   const root = resolveReviewRoot(options.root, deps)
 
   // 证据包先读、后发 gh：读不到是调用方的参数错误，要在打网络之前就失败，
-  // 更不能落盘一个缺证据的请求文件。相对路径按 --root 解析（与消费仓口径一致）。
+  // 更不能落盘一个缺证据的请求文件。相对路径按**调用处**解析——root 缺省是主工作区，
+  // 若按 root 解析，在 task worktree 里 prepare 会读到主分支的文件，把过期内容当证据。
+  const evidenceBase = nonEmpty(deps.cwd) ? deps.cwd : process.cwd()
   const readEvidence = (file, label) => {
-    const target = isAbsolute(file) ? file : join(root, file)
+    const target = isAbsolute(file) ? file : join(evidenceBase, file)
     try {
       const text = readFileSync(target, 'utf8')
       // 空内容与读不到同口径：没有证据却写成 content: ""，会让 reviewer 以为证据看过是空的
@@ -1589,12 +1595,11 @@ function buildMatchesExpected(actual, expected) {
 }
 
 /**
- * 根目录口径（selftest / shim / hooks / status 共用）：显式 --root 直接用；缺省先定位
- * 主工作区（契约 §9 的门禁查的是仓库配置，在 task worktree 里跑也该查主工作区那一份；
- * status 同理——审核记录只落在主仓 .dsh-web/reviews），git 定位不到
- * （非仓库 / git 失败）时退回当前目录，与 record / review 的口径一致。
+ * 根目录口径（record / review / selftest / shim / hooks / status 共用）：显式 --root 直接用；
+ * 缺省先定位主工作区——审核记录与请求只该落在主仓（契约 §6），在 task worktree 里跑也一样，
+ * 否则 merge 删掉 worktree 时记录跟着没了；git 定位不到（非仓库 / git 失败）时退回当前目录。
  */
-function resolveSelftestRoot(value, deps) {
+function resolveMainWorktreeRoot(value, deps) {
   if (nonEmpty(value)) return value
   const cwd = nonEmpty(deps.cwd) ? deps.cwd : process.cwd()
   const resolved = resolveMainRoot({
@@ -1711,7 +1716,7 @@ function runSelftest(argv, deps, io) {
     )
   }
 
-  const root = resolveSelftestRoot(options.root, deps)
+  const root = resolveMainWorktreeRoot(options.root, deps)
 
   // --peer 要先知道「当前 DSH 版本」：显式参数优先，其次读仓里装的 @deepseek-ai/dsh
   let dshVersion
@@ -1827,7 +1832,7 @@ function runShim(argv, deps, io) {
   if (options.root !== undefined && !nonEmpty(options.root)) {
     return argError(io, 'shim', '--root 必须是非空目录路径')
   }
-  const root = resolveSelftestRoot(options.root, deps)
+  const root = resolveMainWorktreeRoot(options.root, deps)
 
   if (action === 'install') {
     const result = installShims(root, { force: options.force === true })
@@ -1877,7 +1882,7 @@ function runHooks(argv, deps, io) {
   if (options.root !== undefined && !nonEmpty(options.root)) {
     return argError(io, 'hooks', '--root 必须是非空目录路径')
   }
-  const root = resolveSelftestRoot(options.root, deps)
+  const root = resolveMainWorktreeRoot(options.root, deps)
 
   if (action === 'install') {
     const result = installHook(root, {
@@ -2149,9 +2154,9 @@ function runStatus(argv, deps, io) {
   if (parsed.options.root !== undefined && !nonEmpty(parsed.options.root)) {
     return argError(io, 'status', '--root 必须是非空目录路径')
   }
-  // 缺省口径复用 resolveSelftestRoot（显式 --root > 主工作区 > 当前目录）：
+  // 缺省口径复用 resolveMainWorktreeRoot（显式 --root > 主工作区 > 当前目录）：
   // 审核记录只落在主仓，在 task worktree 里跑 status 也该看主工作区那一份。
-  const root = resolveSelftestRoot(parsed.options.root, deps)
+  const root = resolveMainWorktreeRoot(parsed.options.root, deps)
 
   let collected
   try {

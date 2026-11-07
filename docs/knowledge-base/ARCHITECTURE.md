@@ -122,10 +122,10 @@ argv
 | 函数 | 取哪个目录 | 消费者 |
 |---|---|---|
 | `resolveRoot` | 当前工作树顶层（`git rev-parse --show-toplevel`） | `pr` |
-| `resolveMainRoot` | 主工作区（`git rev-parse --git-common-dir` 的父目录）；显式 root 落在某个 linked worktree 顶层时**折回主工作区** | `task`、`selftest`、`status`、`hooks`（经 `resolveSelftestRoot`） |
-| 各命令自己的缺省 | `record` / `review` 取 `--root` > `deps.cwd` > `process.cwd()`；`merge` / `gate` **必填** `--root` | — |
+| `resolveMainRoot` | 主工作区（`git rev-parse --git-common-dir` 的父目录）；`task` 的显式 root 若落在 linked worktree 顶层会**折回主工作区**，其余命令显式 root 原样使用 | `task`；`record`/`review`/`selftest`/`shim`/`status`/`hooks` 经 `bin/cli.mjs` 的 `resolveMainWorktreeRoot`（显式 `--root` > 主工作区 > 当前目录） |
+| 各命令自己的缺省 | `pr` 取当前任务 worktree；`doctor` / `check-all` 按当前目录；`merge` / `gate` **必填** `--root` | — |
 
-**后果**：在 worktree 里跑 `record` / `review` 又没给 `--root` 时，记录会落进那个 worktree，随后随 worktree 一起被删（2026-11-04 真实发生过）。契约 §6 把「统一取主工作区」列为目标（P2），**尚未实现**。
+**后果（已修）**：2026-11-04 曾发生「在 worktree 里跑 `record` / `review`，记录随 worktree 被删」；现在两者与 `selftest` / `status` 共用 `resolveMainWorktreeRoot`，缺省就落主工作区（契约 §6）。
 
 ## 5. 关键判定链
 
