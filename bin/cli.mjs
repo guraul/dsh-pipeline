@@ -710,10 +710,10 @@ const PUBLIC_CODES = Object.freeze(['E_USAGE', 'E_CONFIG', 'E_RECORD', 'E_PARSE'
  */
 function publicCode(internal, fallback = 'E_STATE') {
   if (PUBLIC_CODES.includes(internal)) return internal
+  // gh / git 封装失败时带的是**数字退出码**（或 null）：那是外部命令失败，归 E_ENV
+  if (typeof internal === 'number' || internal === null) return 'E_ENV'
   switch (internal) {
     case 'E_CONFIG':
-    case 'E_POLICY':
-    case 'E_POLICY_VERSION':
       return 'E_CONFIG'
     case 'E_RECORD':
     case 'E_SCHEMA':
@@ -723,9 +723,13 @@ function publicCode(internal, fallback = 'E_STATE') {
     case 'E_ENV':
     case 'E_CI':
     case 'E_AUDIT':
+    case 'E_GH':
+    case 'E_GIT':
+    case 'E_HEAD':
       return 'E_ENV'
     default:
-      // E_VERDICT / E_EXPIRED / E_SHA_MISMATCH / E_PR_MISMATCH / E_INPUT … 都是「状态不对」
+      // E_VERDICT / E_EXPIRED / E_SHA_MISMATCH / E_PR_MISMATCH / E_INPUT / E_POLICY /
+      // E_POLICY_VERSION … 都是「状态不对」，不是配置读不出来
       return PUBLIC_CODES.includes(fallback) ? fallback : 'E_STATE'
   }
 }
@@ -1183,7 +1187,7 @@ function runReviewPrepare(argv, deps, io) {
 
   const runner = deps.runner
   const view = prView(pr.value, { repo, runner })
-  if (!view.ok) return argError(io, sub, `无法读取 PR #${pr.value}: ${view.error}`)
+  if (!view.ok) return argError(io, sub, `无法读取 PR #${pr.value}: ${view.error}`, 'E_ENV')
   const headSha = view.data?.headRefOid
   if (typeof headSha !== 'string' || !SHA_PATTERN.test(headSha)) {
     return argError(io, sub, `PR #${pr.value} 没有可用的 head 提交: ${String(headSha)}`)
@@ -1195,7 +1199,7 @@ function runReviewPrepare(argv, deps, io) {
     options.issue !== undefined ? Number(options.issue) : detectIssueFromBody(view.data?.body)
 
   const diffResult = prDiff(pr.value, { repo, runner })
-  if (!diffResult.ok) return argError(io, sub, `无法读取 PR #${pr.value} 的 diff: ${diffResult.error}`)
+  if (!diffResult.ok) return argError(io, sub, `无法读取 PR #${pr.value} 的 diff: ${diffResult.error}`, 'E_ENV')
   const diff = typeof diffResult.data === 'string' ? diffResult.data : ''
 
   // gh 给了改动文件就用它；没给时从 diff 的 `+++ b/<path>` 头还原——
@@ -1274,7 +1278,7 @@ function runReviewPrepare(argv, deps, io) {
     mkdirSync(dirname(target), { recursive: true })
     writeFileSync(target, `${JSON.stringify(request, null, 2)}\n`, 'utf8')
   } catch (error) {
-    return argError(io, sub, `写入请求文件失败: ${messageOf(error)}`)
+    return argError(io, sub, `写入请求文件失败: ${messageOf(error)}`, 'E_ENV')
   }
 
   io.out(`请求文件: ${target}`)
