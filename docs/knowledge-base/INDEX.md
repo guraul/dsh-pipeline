@@ -76,7 +76,7 @@ dsh-pipeline/
 │   └── knowledge-base/      # 本知识库
 ├── .dsh/pipeline.json       # 本仓配置：repo / ci / highRisk
 ├── .github/workflows/       # ci.yml（测试）、deploy.yml、rollback.yml（复用）
-├── test/                    # 24 个 *.test.mjs + fixtures/plugin-record.json
+├── test/                    # *.test.mjs + fixtures/plugin-record.json
 ├── .tmp/ .dsh-web/          # 本机产物（gitignore，不入库）
 ├── .worktrees/              # task 缺省 worktree 容器（空目录）
 ├── dist/                    # 打包产物（gitignore）

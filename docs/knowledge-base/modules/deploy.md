@@ -4,7 +4,7 @@
 
 ## 职责
 
-各仓的部署 caller workflow **不是手写的**：由 `deploy init` 按该仓 `.dsh/pipeline.json` 的 `deploy` 段生成、由 `deploy check` 逐字节校验。回滚 caller（`rollback-web.yml`）由 `deploy init --write --rollback` 一并生成，`deploy check` 在它存在时也逐字节校验——回滚与前进同构，只是 `uses` 指向 `rollback.yml`、触发方式换成 `workflow_dispatch`。真正的部署实现在本包仓的 `.github/workflows/deploy.yml` 与 `rollback.yml`（`on: workflow_call`），消费仓只留一个十几行的 caller。
+各仓的部署 caller workflow **不是手写的**：由 `deploy init` 按该仓 `.dsh/pipeline.json` 的 `deploy` 段生成、由 `deploy check` 逐字节校验。回滚 caller（`rollback-web.yml`）由 `deploy init --write --rollback` 一并生成，`deploy check` 在它已是生成物时也逐字节校验——回滚与前进同构，只是 `uses` 指向 `rollback.yml`、触发方式换成 `workflow_dispatch`。真正的部署实现在本包仓的 `.github/workflows/deploy.yml` 与 `rollback.yml`（`on: workflow_call`），消费仓只留一个十几行的 caller。
 
 ## 关键文件
 
@@ -42,7 +42,7 @@ dsh-pipeline deploy check --root <dir>
 | `init --write`，回滚 caller 是手写文件 | 跳过它并提示，部署 caller 照常刷新；显式 `--rollback` 才拒绝覆盖 | 0 / 1 |
 | `check`，生成区一致 | 打印一致 | 0 |
 | `check`，不一致 | 打印**第一处差异**（行号 + 期望 / 实际两行） | 1 |
-| `check`，缺标记 | 「不是生成的骨架」 | 1 |
+| `check`，部署 caller 缺标记 | 「不是生成的骨架」 | 1 |
 | `check`，部署 caller 不存在 | 提示先跑 `deploy init` | 1 |
 | `check`，回滚 caller 不存在 | 静默跳过（迁移期，不改变既有输出） | 0 |
 | `check`，回滚 caller 是手写文件 | 跳过 + stderr 提示（与 `init` 同口径） | 0 |
@@ -87,7 +87,7 @@ dsh-pipeline deploy check --root <dir>
 
 ## 修改本模块的注意事项
 
-1. **标记文案与路径是契约**：改了标记，所有已生成的 caller 都会被判「不是生成的骨架」（`check` 退 1、`init` 拒绝覆盖）。
+1. **标记文案与路径是契约**：改了标记，已生成的**部署** caller 会被判「不是生成的骨架」（`check` 退 1、`init` 拒绝覆盖）；回滚 caller 因缺标记会被当作手写文件跳过（退 0）——所以改标记时必须同步重建回滚 caller，不能指望 `check` 报错。
 2. **比对只比生成区**：不要改成比整份文件，否则各仓追加的后置 job 会被判不一致。
 3. **`firstDifference` 给的是第一处差异**，不要只打印「不一致」——排障时要能直接看到哪一行。
 4. **不要给可选项写默认值**：`resolveDeploy` 的 `null` 语义是「不写这一行」，写成空串会顶掉 `deploy.yml` 的默认值。

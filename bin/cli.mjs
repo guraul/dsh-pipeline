@@ -239,11 +239,13 @@ deploy 用法:
   rollback-web.yml 已是生成物时，只跑 --write 也会一并刷新（不用每次记着加 --rollback）；
   它是手写文件时跳过并提示、退 0（显式 --rollback 才拒绝覆盖退 1）。
   dsh-pipeline deploy check --root <dir>
-  取出生成区与按配置渲染的期望值逐字节比对：一致退 0（rollback-web.yml 存在时一并校验）；
+  取出生成区与按配置渲染的期望值逐字节比对：一致退 0（rollback-web.yml 是生成物时一并校验）；
   不一致打印第一处差异（行号 + 期望 / 实际两行）退 1；
-  缺标记报「不是生成的骨架」退 1；文件不存在提示先跑 deploy init（退 1）。
+  部署 caller 缺标记报「不是生成的骨架」退 1；回滚 caller 缺失或手写则跳过（手写给 stderr 提示）；
+  部署 caller 不存在提示先跑 deploy init（退 1）。
   --root <dir>       仓库根目录（必填）
-  退出码: 0 一致 / 1 不一致、缺标记或拒绝覆盖 / 2 用法、配置错误或 artifact 尚未实现
+  退出码: 0 一致（含回滚 caller 缺失 / 手写跳过）/ 1 不一致、部署 caller 缺标记或拒绝覆盖 /
+          2 用法、配置错误或 artifact 尚未实现
 
 lock 用法:
   dsh-pipeline lock write --root <dir>   把当前装包的 build.json 写进 <dir>/.dsh/pipeline.lock.json

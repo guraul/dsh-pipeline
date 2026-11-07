@@ -82,7 +82,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | `check-all` | 按配置逐包跑声明的检查并汇总 | 现行 |
 | `shim install\|check` | 生成 / 校验入口 shim | 现行 |
 | `hooks install\|check` | 安装 / 校验 pre-push 直推拦截钩子 | 现行 |
-| `deploy init\|check` | 生成 / 校验 caller workflow 骨架：`deploy-web.yml`（生成区 = `name` / `on` / `concurrency` + 单 job 的 `uses`+`with`+`secrets`，`with:` 含按 artifact 推导的 `mode` 与 `assemble`）；`--write --rollback` 连带生成 / 更新 `rollback-web.yml`（`workflow_dispatch` + `rollback.yml` 同一 pin，见 §10）。**回滚文件已是生成物时，只跑 `--write` 也会刷新它**（不用每次记着加 `--rollback`）；它是手写文件时跳过并提示（显式 `--rollback` 才拒绝覆盖）。`check` 逐字节比对：部署 caller 必须存在且一致，回滚 caller 存在才校验、不存在静默跳过；标记之后允许各仓追加自己的后置 job | **现行** |
+| `deploy init\|check` | 生成 / 校验 caller workflow 骨架：`deploy-web.yml`（生成区 = `name` / `on` / `concurrency` + 单 job 的 `uses`+`with`+`secrets`，`with:` 含按 artifact 推导的 `mode` 与 `assemble`）；`--write --rollback` 连带生成 / 更新 `rollback-web.yml`（`workflow_dispatch` + `rollback.yml` 同一 pin，见 §10）。**回滚文件已是生成物时，只跑 `--write` 也会刷新它**（不用每次记着加 `--rollback`）；它是手写文件时跳过并提示（显式 `--rollback` 才拒绝覆盖）。`check` 逐字节比对：部署 caller 必须存在且一致（缺标记退 1），回滚 caller 是生成物才校验——**不存在或手写（缺标记）都跳过并退 0**（手写时 stderr 提示「要接管请删除它再跑 `deploy init --write --rollback`」），因此 CI 不能强制回滚 caller 被接管；标记之后允许各仓追加自己的后置 job | **现行** |
 
 新增子命令属于**契约变更**，必须同时更新本文件与 §3.3。
 
@@ -92,7 +92,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 **配置字段（已进 schema）**：`worktreesDir` 由 `task` 消费——缺省读配置、`--worktrees-dir` 优先；`checks` 由 `check-all` 消费——`--packages` 优先，其次 `checks.packages`（按给定顺序），再否则自动发现并按 `checks.exclude` 过滤；`deploy` 由 `deploy init|check` 消费（字段见 §7.1，部署行为见 §10）；`review.tier` 由 `review prepare` / `review prompt` 消费（见 §7.3），`review` 的其余字段仍为目标（P2）。
 
-**目标**：`review` 的其余字段（§7.1）、`--legacy-exit-codes`（§4），以及 §10 的「各仓接入 caller workflow 与回滚调用」。
+**目标**：`review` 的其余字段（§7.1）与 `oci-image` 产物（§10）。
 
 硬规则：目标条目在实现合并前**不得**被入口 shim 调用，也不得在文档里写成可用；§9 的门禁项现已全部落地，CI 可以直接引用。
 
