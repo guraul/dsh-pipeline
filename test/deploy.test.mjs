@@ -352,7 +352,8 @@ test('deploy init --rollback 缺 --write → 退 2（它只影响落盘，不静
   const result = init(root, ['--rollback'])
   assert.equal(result.code, 2)
   assert.match(result.err, /--rollback 必须与 --write 同用/)
-  assert.ok(!existsSync(workflowPath(root)), '参数错误不该落盘')
+  assert.ok(!existsSync(workflowPath(root)), '参数错误不该落盘（部署 caller）')
+  assert.ok(!existsSync(join(root, DEPLOY_ROLLBACK_FILE)), '参数错误不该落盘（回滚 caller）')
 })
 
 test('deploy init --write：已生成的回滚 caller 会被自动刷新 pin，标记后的追加 job 保留', (t) => {
@@ -391,6 +392,22 @@ test('deploy init --write：手写的回滚 caller 不阻断部署 caller 刷新
   const explicit = run(['deploy', 'init', '--root', root, '--write', '--rollback'])
   assert.equal(explicit.code, 1)
   assert.match(explicit.err, /拒绝覆盖/)
+})
+
+test('deploy check：手写的回滚 caller → 跳过并提示、退 0（与 init 同口径）', (t) => {
+  const root = tmp()
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  writeConfig(root, BASE_DEPLOY)
+  assert.equal(init(root, ['--write']).code, 0)
+
+  const file = join(root, DEPLOY_ROLLBACK_FILE)
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, 'name: rollback-web\n# 手写\n', 'utf8')
+
+  const result = check(root)
+  assert.equal(result.code, 0, result.err)
+  assert.equal(result.out, 'deploy check: 生成区与配置一致\n')
+  assert.match(result.err, /rollback-web\.yml 是手写文件（缺生成区标记），已跳过/)
 })
 
 test('deploy check：两份都在 → 两个生成区一致；改坏回滚那份 → 退 1 并点名', (t) => {

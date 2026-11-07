@@ -41,7 +41,7 @@
 |---|---|---|---|
 | 运行时 | Node.js | `engines.node >=20`；CI 用 24 | 纯 ESM，`"type": "module"` |
 | 依赖 | 无（零运行时依赖、零 devDependency） | — | glob / 校验 / 参数解析全部手写 |
-| 测试 | `node:test` + `node:assert/strict` | 随 Node | `pnpm test` = `node --test`，25 个测试文件 / 363 条用例 |
+| 测试 | `node:test` + `node:assert/strict` | 随 Node | `pnpm test` = `node --test`（条数随 PR 变化，不写死） |
 | 包管理 | pnpm | CI 钉 `12.6.0`（`pnpm-lock.yaml` 只有 2 行，无依赖） | 只允许 pnpm |
 | CI | GitHub Actions | `actions/checkout@v4`、`pnpm/action-setup@v4`、`actions/setup-node@v4` | `node --test`，不打包、不上传产物 |
 | 部署 | GitHub Actions 复用 workflow | `deploy.yml` / `rollback.yml`（`on: workflow_call`） | rsync + `releases/<id>` + `dist` 软链 + 重启 + 验活 |

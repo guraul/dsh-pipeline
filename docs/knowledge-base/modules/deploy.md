@@ -1,6 +1,6 @@
 # 模块：部署 caller 骨架（deploy）
 
-**最后更新**：2026-11-06 · 对应提交 `cf7544f`
+**最后更新**：2026-11-07 · 对应提交 `943d92a`
 
 ## 职责
 
@@ -45,6 +45,7 @@ dsh-pipeline deploy check --root <dir>
 | `check`，缺标记 | 「不是生成的骨架」 | 1 |
 | `check`，部署 caller 不存在 | 提示先跑 `deploy init` | 1 |
 | `check`，回滚 caller 不存在 | 静默跳过（迁移期，不改变既有输出） | 0 |
+| `check`，回滚 caller 是手写文件 | 跳过 + stderr 提示（与 `init` 同口径） | 0 |
 | 参数错误 / 配置错误 / `artifact=oci-image` | 明确报错 | 2 |
 
 **源码运行不能生成**：`uses` 必须 pin 到 `build.json` 的 gitSha，源码目录没有 `build.json` → 退 2 并提示「请在已安装包内运行」；不要用假 pin 掩盖这一点。
