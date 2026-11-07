@@ -121,6 +121,59 @@ test('shim check：入口目录不存在 → 退 1，提示先跑 shim install',
   assert.match(result.err, /不存在或不是目录，请先运行 shim install/)
 })
 
+test('shim check：目录里有私有文件 → 退 1，逐个点名（契约 §11）', (t) => {
+  const root = tmp()
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  assert.equal(install(root).code, 0)
+
+  const dir = join(root, 'scripts', 'pipeline')
+  writeFileSync(join(dir, 'my-private.sh'), '#!/bin/sh\n', 'utf8')
+  writeFileSync(join(dir, '.DS_Store'), '', 'utf8')
+
+  const result = run(['shim', 'check', '--root', root])
+  assert.equal(result.code, 1)
+  assert.equal(result.out, '')
+  assert.match(result.err, /不允许的私有文件: \.DS_Store/)
+  assert.match(result.err, /不允许的私有文件: my-private\.sh/)
+  assert.match(result.err, /只放生成物/)
+})
+
+test('shim check：目录枚举不了 → 退 3，不把失败说成通过（fail-closed）', (t) => {
+  const root = tmp()
+  const dir = join(root, 'scripts', 'pipeline')
+  t.after(() => {
+    try {
+      chmodSync(dir, 0o755)
+    } catch {}
+    rmSync(root, { recursive: true, force: true })
+  })
+  assert.equal(install(root).code, 0)
+  // 只有执行位、没有读位：按名字读 6 个入口仍成功，但 readdir 会 EACCES
+  chmodSync(dir, 0o111)
+
+  // 只有 root 才不受目录读位限制；非 root 下必须真的断言退 3
+  // （不能拿「code === 0 就 skip」兜底——旧 fail-open 实现同样退 0，会让这条用例形同虚设）
+  if (process.getuid?.() === 0) {
+    t.skip('以 root 运行，chmod 挡不住 readdir，这条用例无意义')
+    return
+  }
+
+  const result = run(['shim', 'check', '--root', root])
+  assert.equal(result.code, 3, result.err)
+  assert.match(result.err, /无法枚举/)
+})
+
+test('selftest --shims：私有文件同样判失败，明细里点名', (t) => {
+  const root = tmp()
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  assert.equal(install(root).code, 0)
+  writeFileSync(join(root, 'scripts', 'pipeline', 'extra.sh'), '#!/bin/sh\n', 'utf8')
+
+  const result = run(['selftest', '--shims', '--root', root])
+  assert.equal(result.code, 1)
+  assert.match(result.err, /不允许的私有文件: extra\.sh/)
+})
+
 test('shim install：二次运行全部跳过，不重写文件', (t) => {
   const root = tmp()
   t.after(() => rmSync(root, { recursive: true, force: true }))
