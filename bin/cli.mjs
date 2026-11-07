@@ -1695,6 +1695,7 @@ function runLock(argv, deps, io) {
  * --shims / --config / --lock / --exit-codes 已实现（--fast 等价于 --shims --config）；--repos 是独立的多仓比对模式，
  * 与其它检查项互斥（--json 形态不同，合起来没有单一会话能同时表达两种结构）；
  * 没有未实现的检查项。检查逻辑在 lib/selftest.mjs，--shims 的比对复用 lib/shim.mjs。
+ * --fast 只跑 --shims --config（契约 §9），与 --lock / --peer / --exit-codes 组合时后三者被忽略。
  * 退出码：0 通过（含「无配置文件跳过」「--repos 可比对的仓不足 2 个」）/ 1 检查不通过 / 2 用法错误或检查项未实现。
  */
 function runSelftest(argv, deps, io) {
