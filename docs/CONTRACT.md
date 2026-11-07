@@ -82,7 +82,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | `check-all` | 按配置逐包跑声明的检查并汇总 | 现行 |
 | `shim install\|check` | 生成 / 校验入口 shim | 现行 |
 | `hooks install\|check` | 安装 / 校验 pre-push 直推拦截钩子 | 现行 |
-| `deploy init\|check` | 生成 / 校验部署 caller workflow 骨架：生成区（`name` / `on` / `concurrency` + 单 job 的 `uses`+`with`+`secrets`）用注释标记包裹，`with:` 含按 artifact 推导的 `mode` 与 `assemble`，`check` 逐字节比对，标记之后允许各仓追加自己的后置 job（见 §10） | **现行** |
+| `deploy init\|check` | 生成 / 校验 caller workflow 骨架：`deploy-web.yml`（生成区 = `name` / `on` / `concurrency` + 单 job 的 `uses`+`with`+`secrets`，`with:` 含按 artifact 推导的 `mode` 与 `assemble`）；`--write --rollback` 连带生成 / 更新 `rollback-web.yml`（`workflow_dispatch` + `rollback.yml` 同一 pin，见 §10）。**回滚文件已是生成物时，只跑 `--write` 也会刷新它**（不用每次记着加 `--rollback`）；它是手写文件时跳过并提示（显式 `--rollback` 才拒绝覆盖）。`check` 逐字节比对：部署 caller 必须存在且一致，回滚 caller 存在才校验、不存在静默跳过；标记之后允许各仓追加自己的后置 job | **现行** |
 
 新增子命令属于**契约变更**，必须同时更新本文件与 §3.3。
 
@@ -356,7 +356,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 2. **原子切换**：切换必须一步完成——新 release 就绪后一次性把 `dist` 软链指过去再重启；切换失败时线上仍指向上一个可用 release，不存在「切了一半」的中间态。
 3. **回滚与前进同构**：回滚不走特殊路径——把目标换成旧 release id，其余步骤（切软链、重启、验活、按 `keepReleases` 清理）与前进完全相同；因此两者同样幂等、同样可重复执行，回滚也不重新构建、不重新上传。
 
-**本轮已落地**：`deploy` 配置字段（§7.1）与 `deploy init | check`（§3.2）——caller workflow 骨架由包生成、生成区逐字节校验；复用 workflow 的构建步骤已参数化，`artifact=node-standalone` 可生成可用骨架。各仓接入与回滚调用仍为目标（P3）。
+**本轮已落地**：`deploy` 配置字段（§7.1）与 `deploy init | check`（§3.2）——部署 caller 骨架由包生成、生成区逐字节校验；复用 workflow 的构建步骤已参数化，`artifact=node-standalone` 可生成可用骨架；`deploy init --write --rollback` 连带生成回滚 caller（`rollback-web.yml`），`deploy check` 在它存在时一并校验。各仓接入（homebase 补回滚 caller、agent-mobile 换成生成物）仍为目标（P3）。
 
 部署**不进本包**，也不留在各仓脚本里，统一走 GitHub Actions：
 

@@ -25,7 +25,7 @@
 | `shim` | 生成 / 校验入口 shim（契约 §8） | `install [--root] [--force]`、`check [--root]` | `runShim` → `lib/shim.mjs` | 0 / 1 冲突或不一致 / 2 |
 | `hooks` | 安装 / 校验 pre-push 直推拦截钩子 | `install [--root] [--force] [--allow-main]`、`check [--root]` | `runHooks` → `lib/hooks.mjs` | 0 / 1 未装、不一致、拒绝覆盖 / 2 |
 | `check-all` | 逐包跑 test / check / typecheck 并汇总 | `--root`、`--packages a,b,c`、`--json` | `runCheckAllCommand` → `lib/check-all.mjs` | 0 / 1 有失败 / 2 / 3 找不到 pnpm |
-| `deploy` | 生成 / 校验部署 caller workflow 骨架（契约 §10） | `init --root <dir> [--write]`、`check --root <dir>` | `runDeploy` → `lib/deploy.mjs` | 0 / 1 不一致、缺标记或拒绝覆盖 / 2 |
+| `deploy` | 生成 / 校验 caller workflow 骨架（契约 §10） | `init --root <dir> [--write] [--rollback]`、`check --root <dir>` | `runDeploy` → `lib/deploy.mjs` | 0 / 1 不一致、缺标记或拒绝覆盖 / 2 |
 
 ### 输出约定（契约 §5）
 
@@ -64,7 +64,7 @@ dsh-pipeline merge --pr 13 --check-only                # 演练：只跑闸门 +
 dsh-pipeline merge --pr 14 --no-review --reason "改 CI 本身，用户当场同意"
 
 # 生成 / 校验消费仓的部署 caller 骨架（必须先装包，源码运行没有 build.json）
-dsh-pipeline deploy init --root <消费仓> [--write]
+dsh-pipeline deploy init --root <消费仓> [--write] [--rollback]
 dsh-pipeline deploy check --root <消费仓>
 ```
 
@@ -92,7 +92,7 @@ dsh-pipeline deploy check --root <消费仓>
 | `lib/lock.mjs` | `readLock`, `writeLock`, `checkLock`, `readInstalledBuild`, `formatExpect`, `LOCK_PATH`, `LockError` | 锁文件（§7.2） |
 | `lib/peer.mjs` | `collectRequirements`, `resolveDshVersion`, `checkPeer` | 插件 DSH 版本声明（§9） |
 | `lib/semver.mjs` | `parseVersion`, `compare`, `satisfies` | 版本范围匹配（§9） |
-| `lib/deploy.mjs` | `renderRegion`, `renderSkeleton`, `extractRegion`, `firstDifference`, `replaceRegion`, `resolveDeploy`, `DEPLOY_WORKFLOW_FILE`, `DEPLOY_WORKFLOW_REPO`, `REGION_BEGIN`, `REGION_END`, `DeployError` | 部署 caller 骨架 |
+| `lib/deploy.mjs` | `renderRegion`, `renderSkeleton`, `renderRollbackRegion`, `extractRegion`, `firstDifference`, `replaceRegion`, `resolveDeploy`, `DEPLOY_WORKFLOW_FILE`, `DEPLOY_ROLLBACK_FILE`, `DEPLOY_WORKFLOW_REPO`, `REGION_BEGIN`, `REGION_END`, `DeployError` | 部署 / 回滚 caller 骨架 |
 | `lib/profile-check.mjs` | `checkProfile`, `resolveDshHome`, `resolveProfileDir`, `OLD_PKG`, `NEW_PKGS` | profile 体检 |
 | `lib/build-info.mjs` | `readBuildInfo`, `describeBuild` | 构建标识 |
 

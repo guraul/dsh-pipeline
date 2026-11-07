@@ -4,7 +4,7 @@
 
 ## 职责
 
-各仓的部署 caller workflow **不是手写的**：由 `deploy init` 按该仓 `.dsh/pipeline.json` 的 `deploy` 段生成、由 `deploy check` 逐字节校验。真正的部署实现在本包仓的 `.github/workflows/deploy.yml` 与 `rollback.yml`（`on: workflow_call`），消费仓只留一个十几行的 caller。
+各仓的部署 caller workflow **不是手写的**：由 `deploy init` 按该仓 `.dsh/pipeline.json` 的 `deploy` 段生成、由 `deploy check` 逐字节校验。回滚 caller（`rollback-web.yml`）由 `deploy init --write --rollback` 一并生成，`deploy check` 在它存在时也逐字节校验——回滚与前进同构，只是 `uses` 指向 `rollback.yml`、触发方式换成 `workflow_dispatch`。真正的部署实现在本包仓的 `.github/workflows/deploy.yml` 与 `rollback.yml`（`on: workflow_call`），消费仓只留一个十几行的 caller。
 
 ## 关键文件
 
@@ -12,13 +12,13 @@
 |---|---|
 | `lib/deploy.mjs` | 标记文案、路径常量、`resolveDeploy`（补默认值）、`renderRegion` / `renderSkeleton`、`extractRegion`、`firstDifference`、`replaceRegion` |
 | `lib/config.mjs` | `deploy` 段的 schema 校验（`DEPLOY_FIELDS` / `DEPLOY_HEALTH_FIELDS` / `DEPLOY_ARTIFACTS` / `DEPLOY_HEALTH_CHECKS`） |
-| `bin/cli.mjs` | `runDeploy`（`init` / `check` 两个动作、`--write`、读 `build.json` 拿 gitSha） |
+| `bin/cli.mjs` | `runDeploy`（`init` / `check` 两个动作、`--write` / `--rollback`、读 `build.json` 拿 gitSha） |
 
 ## 产物与标记
 
 | 项 | 值 |
 |---|---|
-| 生成文件 | `<root>/.github/workflows/deploy-web.yml` |
+| 生成文件 | `<root>/.github/workflows/deploy-web.yml`；带 `--rollback`（或文件已存在）时另有 `<root>/.github/workflows/rollback-web.yml` |
 | 起始标记 | `# >>> dsh-pipeline 生成区（勿手改，改配置后重跑 deploy init）` |
 | 结束标记 | `# <<< dsh-pipeline 生成区结束（以下可追加本仓自己的后置 job）` |
 | 生成区内容 | `name` / `on`（push main + workflow_dispatch）/ `concurrency` + 单个 job 的 `uses` + `with` + `secrets: inherit` |
@@ -28,20 +28,23 @@
 ## 命令
 
 ```bash
-dsh-pipeline deploy init --root <dir> [--write]
+dsh-pipeline deploy init --root <dir> [--write] [--rollback]
 dsh-pipeline deploy check --root <dir>
 ```
 
 | 动作 | 行为 | 退出码 |
 |---|---|---|
-| `init`（不带 `--write`） | 只把骨架打到 stdout | 0 |
+| `init`（不带 `--write`） | 只把部署骨架打到 stdout | 0 |
+| `init --rollback`（不带 `--write`） | 用法错误：`--rollback` 只影响落盘 | 2 |
 | `init --write`，文件不存在 | 创建（`mkdir -p` 目录） | 0 |
-| `init --write`，已有生成区 | **只替换生成区**，标记之后的追加 job 原样保留 | 0 |
-| `init --write`，已有文件但缺标记（手写文件） | 拒绝覆盖 | 1 |
+| `init --write`，已有生成区 | **只替换生成区**，标记之后的追加 job 原样保留；`rollback-web.yml` 已是生成物时**一并刷新**（不用每次记着加 `--rollback`） | 0 |
+| `init --write`，部署 caller 缺标记（手写） | 拒绝覆盖 | 1 |
+| `init --write`，回滚 caller 是手写文件 | 跳过它并提示，部署 caller 照常刷新；显式 `--rollback` 才拒绝覆盖 | 0 / 1 |
 | `check`，生成区一致 | 打印一致 | 0 |
 | `check`，不一致 | 打印**第一处差异**（行号 + 期望 / 实际两行） | 1 |
 | `check`，缺标记 | 「不是生成的骨架」 | 1 |
-| `check`，文件不存在 | 提示先跑 `deploy init` | 1 |
+| `check`，部署 caller 不存在 | 提示先跑 `deploy init` | 1 |
+| `check`，回滚 caller 不存在 | 静默跳过（迁移期，不改变既有输出） | 0 |
 | 参数错误 / 配置错误 / `artifact=oci-image` | 明确报错 | 2 |
 
 **源码运行不能生成**：`uses` 必须 pin 到 `build.json` 的 gitSha，源码目录没有 `build.json` → 退 2 并提示「请在已安装包内运行」；不要用假 pin 掩盖这一点。
@@ -91,4 +94,4 @@ dsh-pipeline deploy check --root <dir>
 
 ## 相关测试
 
-`test/deploy.test.mjs`（383 行）、`test/config.test.mjs`（deploy 段校验）、`test/cli.test.mjs`（命令层）。
+`test/deploy.test.mjs`、`test/config.test.mjs`（deploy 段校验）、`test/cli.test.mjs`（命令层）。

@@ -19,6 +19,7 @@
 | 打包产物 | `dist/<name>-<ver>.tgz`、`dist/latest.tgz` | `scripts/pack.sh` | 消费仓 `file:` 依赖 | 否 |
 | 入口 shim | `<root>/scripts/pipeline/{pipeline,new-task,open-pr,merge-pr,review,status}.sh` | `shim install` | 人 / CI | **是** |
 | 部署 caller | `<root>/.github/workflows/deploy-web.yml`（生成区 + 标记之后本仓追加的 job） | `deploy init --write` | `deploy check`、GitHub Actions | **是** |
+| 回滚 caller | `<root>/.github/workflows/rollback-web.yml`（同上；`workflow_dispatch` 触发） | `deploy init --write --rollback`（文件已存在时 `--write` 也会刷新） | `deploy check`、GitHub Actions | **是** |
 | pre-push 钩子 | 主仓 `--git-common-dir` 下 `hooks/pre-push`（或 `core.hooksPath` 指向处） | `hooks install` | git | 否 |
 | worktree | `<worktreesDir>` 或 `<root>/.worktrees` 下的 `<号>-<slug>` | `task` | 开发 | 否 |
 
