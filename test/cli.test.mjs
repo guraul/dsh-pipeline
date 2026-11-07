@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { runCli } from '../bin/cli.mjs'
+import { runCli, countChangedLines } from '../bin/cli.mjs'
 import {
   PACKAGE_VERSION,
   SCHEMA_VERSION,
@@ -625,6 +625,75 @@ test('record: 命中 .env 高风险时 policy.hit=true、errorCode=E_POLICY，�
   assert.equal(saved.verdict, 'APPROVE', '高风险只标注错误码，不改判定')
 })
 
+test('countChangedLines: 测试文件行单独拆出，上限只看生产行', () => {
+  const diff = [
+    'diff --git a/packages/web/lib/x.ts b/packages/web/lib/x.ts',
+    '--- a/packages/web/lib/x.ts',
+    '+++ b/packages/web/lib/x.ts',
+    ...Array.from({ length: 10 }, (_, i) => `+prod-${i}`),
+    ...Array.from({ length: 2 }, (_, i) => `-old-${i}`),
+    'diff --git a/packages/web/lib/x.test.ts b/packages/web/lib/x.test.ts',
+    '--- a/packages/web/lib/x.test.ts',
+    '+++ b/packages/web/lib/x.test.ts',
+    ...Array.from({ length: 100 }, (_, i) => `+test-${i}`),
+  ].join('\n')
+
+  assert.deepEqual(countChangedLines(diff), { total: 112, production: 12, testLines: 100 })
+  assert.deepEqual(countChangedLines(undefined), { total: 0, production: 0, testLines: 0 })
+})
+
+test('countChangedLines: 深层 test/ 目录不豁免，__tests__ 与根级 tests/ 才豁免', () => {
+  for (const path of ['src/test/helper.ts', 'pkg/tests/x.ts']) {
+    const diff = [
+      `diff --git a/${path} b/${path}`,
+      `--- a/${path}`,
+      `+++ b/${path}`,
+      ...Array.from({ length: 50 }, (_, i) => `+line-${i}`),
+    ].join('\n')
+    assert.deepEqual(countChangedLines(diff), { total: 50, production: 50, testLines: 0 }, path)
+  }
+
+  const cases = [
+    ['__tests__/x.ts', 4],
+    ['tests/x.ts', 4],
+    ['a/b/__tests__/x.ts', 4],
+  ]
+  for (const [path, lines] of cases) {
+    const diff = [
+      `diff --git a/${path} b/${path}`,
+      `--- a/${path}`,
+      `+++ b/${path}`,
+      ...Array.from({ length: lines }, (_, i) => `+t-${i}`),
+    ].join('\n')
+    assert.deepEqual(countChangedLines(diff), { total: lines, production: 0, testLines: lines }, path)
+  }
+})
+
+test('countChangedLines: 以 +++ 开头的真实新增行被计数，不被当文件头吞掉', () => {
+  const diff = [
+    'diff --git a/lib/y.ts b/lib/y.ts',
+    '--- a/lib/y.ts',
+    '+++ b/lib/y.ts',
+    '+++foo',
+    '+bar',
+    '---baz',
+  ].join('\n')
+  assert.deepEqual(countChangedLines(diff), { total: 3, production: 3, testLines: 0 })
+})
+
+test('countChangedLines: .test.jsx / .spec.mts 等后缀同样豁免', () => {
+  for (const path of ['a/b.test.jsx', 'a/b.spec.mts', 'a/b.test.tsx', 'a/b.spec.cjs']) {
+    const diff = [
+      `diff --git a/${path} b/${path}`,
+      `--- a/${path}`,
+      `+++ b/${path}`,
+      '+t1',
+      '+t2',
+    ].join('\n')
+    assert.deepEqual(countChangedLines(diff), { total: 2, production: 0, testLines: 2 }, path)
+  }
+})
+
 test('record: 请求没带 files 时从 diff 头还原路径，高风险不漏判', () => {
   const root = tmp()
   const request = {
@@ -640,6 +709,33 @@ test('record: 请求没带 files 时从 diff 头还原路径，高风险不漏�
   const saved = readRecord(recordFile(reviewsDir(root), 7, SHA))
   assert.equal(saved.policy.hit, true)
   assert.equal(saved.errorCode, 'E_POLICY')
+})
+
+test('record: policy.changedLines 记录 total/production/testLines 拆分', () => {
+  const root = tmp()
+  const request = {
+    pr: 7,
+    head_sha: SHA,
+    nonce: NONCE,
+    diff: [
+      'diff --git a/lib/x.ts b/lib/x.ts',
+      '--- a/lib/x.ts',
+      '+++ b/lib/x.ts',
+      '+a',
+      '-b',
+      'diff --git a/lib/x.test.ts b/lib/x.test.ts',
+      '--- a/lib/x.test.ts',
+      '+++ b/lib/x.test.ts',
+      '+t1',
+      '+t2',
+      '+t3',
+    ].join('\n'),
+  }
+
+  const { code } = runRecordWith(root, request, { extra: ['--root', root] })
+  assert.equal(code, 0)
+  const saved = readRecord(recordFile(reviewsDir(root), 7, SHA))
+  assert.deepEqual(saved.policy.changedLines, { total: 5, production: 2, testLines: 3 })
 })
 
 test('record: 高风险追加规则来自 <root>/.dsh/pipeline.json，policyVersion 等于 package.json 版本', () => {

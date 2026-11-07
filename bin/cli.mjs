@@ -843,14 +843,40 @@ function changedFiles(request) {
   return Array.isArray(request.files) ? request.files : diffPaths(request.diff)
 }
 
-/** 变更行数（增删合计），忽略 diff 的 +++/--- 文件头。 */
-function countChangedLines(diff) {
-  let count = 0
+/** 目录豁免：任意层级的 `__tests__/`，或**仓库根**的 `test/` `tests/`（不豁免 `src/test/` 这类深层目录）。 */
+const TEST_DIR_RE = /(^|\/)__tests__\/|^tests?\//
+/** 文件名豁免：`*.test.*` / `*.spec.*`（覆盖 js/ts/jsx/tsx/mjs/cjs/mts/cts）。 */
+const TEST_FILE_SUFFIX_RE = /\.(test|spec)\.[cm]?[jt]sx?$/
+
+function isTestPath(path) {
+  return TEST_DIR_RE.test(path) || TEST_FILE_SUFFIX_RE.test(path)
+}
+
+/**
+ * 变更行数（增删合计），忽略 diff 的 `+++ b/…` / `--- a/…` 文件头。
+ * 按 `diff --git` 头分段识别测试文件，返回总量与生产/测试拆分——
+ * 行数上限只按生产行判定，测试写得厚不该触发人工放行。
+ * @returns {{ total: number, production: number, testLines: number }}
+ */
+export function countChangedLines(diff) {
+  let total = 0
+  let testLines = 0
+  let currentIsTest = false
   for (const line of String(diff ?? '').split('\n')) {
-    if (line.startsWith('+++') || line.startsWith('---')) continue
-    if (line.startsWith('+') || line.startsWith('-')) count += 1
+    if (line.startsWith('diff --git ')) {
+      // 形如 `diff --git a/path b/path`，取 b/ 后的路径
+      const m = /^diff --git a\/(.+) b\/(.+)$/.exec(line)
+      currentIsTest = m ? isTestPath(m[2]) : false
+      continue
+    }
+    // 只跳带空格的文件头（`+++ b/path`）；内容行 `+++foo` 是真实新增，要计数
+    if (/^(\+\+\+|---) /.test(line)) continue
+    if (line.startsWith('+') || line.startsWith('-')) {
+      total += 1
+      if (currentIsTest) testLines += 1
+    }
   }
-  return count
+  return { total, production: total - testLines, testLines }
 }
 
 function parseDuration(value) {
@@ -957,11 +983,14 @@ function runRecord(argv, deps, io) {
   let policy
   try {
     const { config } = loadConfig(root)
+    const lines = countChangedLines(request.diff)
     policy = mergePolicy({ highRiskAppend: config.highRisk }).hit(
       changedFiles(request),
-      countChangedLines(request.diff),
+      lines.production,
       { diff: request.diff },
     )
+    // 行数拆分随 policy 段落盘：gate 失败时能看出测试行被排除在上限之外。
+    policy = { ...policy, changedLines: { total: lines.total, production: lines.production, testLines: lines.testLines } }
   } catch (error) {
     // 策略算不出来就写不了可信记录：宁可失败，也不写一条 policy 缺失的记录。
     io.err(`record: 高风险判定失败: ${messageOf(error)}`)

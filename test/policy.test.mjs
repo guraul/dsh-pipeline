@@ -55,7 +55,8 @@ test('400 行边界：等于上限不命中，超过才命中', () => {
   assert.equal(hit([], MAX_CHANGED_LINES - 1).hit, false)
   const over = hit([], MAX_CHANGED_LINES + 1)
   assert.equal(over.hit, true)
-  assert.match(over.reasons[0], /超过 400 行上限/)
+  assert.match(over.reasons[0], /变更 401 行（不含测试文件），超过 400 行上限/)
+  assert.ok(over.reasons[0].includes('不含测试文件'), '超限文案要说明测试文件已排除')
 })
 
 test('package.json 只有依赖段变更才算高风险', () => {
