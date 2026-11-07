@@ -60,7 +60,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 关于 `-C/--root`：包侧只认 `--root <dir>`（`parseArgs` 拒绝非 `--` 形式的位置参数）。**由 shim 负责把 `-C <dir>` 翻译成 `--root <dir>`**，包本身不解析 `-C`。
 
-各子命令的 `--root` 缺省值**不统一**（现状）：`pr` 取当前任务 worktree；`record` / `review` 取当前目录；`merge` 取主工作区。`status` 不列入本名单——它缺省自行定位主工作区，与 `doctor` 一样无需显式传。统一为「主工作区」是目标（P2），见 §6。
+各子命令的 `--root` 缺省值（**现行**）：`pr` 取当前任务 worktree（提交必须落在被审分支上）；`record` / `review` / `selftest` / `shim` / `hooks` / `status` 缺省定位**主工作区**（同一实现 `resolveMainWorktreeRoot`，见 §6）；`merge` / `gate` **必填** `--root`。`doctor` / `check-all` 按当前目录。
 
 ### 3.2 包子命令全集
 
@@ -139,7 +139,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | 审核记录 | `<root>/.dsh-web/reviews/<pr>-<head_sha>.json` | 现行 |
 | 跳过审计 | `<root>/.dsh-web/reviews/skips/<ts>-<pr>.json` | 现行 |
 
-**现行**：`<root>` 的缺省口径对所有命令统一——显式 `--root` 优先；否则定位**主工作区**（`git rev-parse --git-common-dir` 的父目录，即 `git worktree list --porcelain` 首条）；git 定位不到（非仓库 / git 失败）退回当前目录。
+**现行**：产生上述产物的命令，`<root>` 缺省口径统一——显式 `--root` 优先；否则定位**主工作区**（`git rev-parse --git-common-dir` 的父目录，即 `git worktree list --porcelain` 首条）；git 定位不到（非仓库 / git 失败）退回当前目录。
 
 这条口径就是为 2026-11-04 那次事故设的：在 task worktree 里跑 `record` / `review`，记录会落进 worktree，`merge` 清理时连同 worktree 一起删掉，事后查不到「审过没有」。现在 `record` / `review prepare|publish` / `selftest` / `shim` / `hooks` / `status` 共用同一个 `resolveMainWorktreeRoot`。
 

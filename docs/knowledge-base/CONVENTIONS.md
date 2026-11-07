@@ -74,7 +74,7 @@
 ## 5. 易踩的坑
 
 1. **两种 root**：`pr` 要当前工作树，`task` / `selftest` / `status` / `hooks` 要主工作区。在 worktree 里按 cwd 推 worktree 容器会嵌套出 `<wt>/.worktrees/<x>`（脚本以 `--git-common-dir` 的父目录为准，不是 `--show-toplevel`）。
-2. **记录落进 worktree**：`record` / `review` 缺省不会上溯主工作区，记录会随 worktree 清理被删（2026-11-04 真实发生）。要保证写进主仓就走转发壳，或显式 `--root <主工作区>`。
+2. **记录落进 worktree**：已修（`record` / `review` 缺省上溯主工作区）。历史：2026-11-04 记录随 worktree 清理被删；现在若显式给了 `--root <worktree>` 仍会写进 worktree——那是调用方自己的选择。
 3. **`merge` 取的是 PR head，不是本机 HEAD**：合并通常从主工作区发起，本机 HEAD 是 main，拿它比记录永远对不上。
 4. **主工作区停在 PR 分支**：`merge --ff-only origin/main` 必失败；脚本会先 checkout（干净时）或跳过快进并给提示（脏时），不会静默失败。
 5. **主工作区不可 `worktree remove`**：git 报 `is a main working tree`；脚本识别后跳过移除、只删分支。

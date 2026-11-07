@@ -10,7 +10,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| `bin/cli.mjs` | 参数解析器、`HELP` 文本、13 个子命令的 `run*` 函数、`decideGate`、`runRecord`、`sendReview`、`resolveSelftestRoot`、`expandHome`、`runCli` |
+| `bin/cli.mjs` | 参数解析器、`HELP` 文本、13 个子命令的 `run*` 函数、`decideGate`、`runRecord`、`sendReview`、`resolveMainWorktreeRoot`、`expandHome`、`runCli` |
 
 ## 结构
 

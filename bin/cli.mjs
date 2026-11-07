@@ -270,6 +270,8 @@ review 用法:
                                [--root <dir>] [--model <m>] [--provider <p>] [--form <f>]
                                [--post-review] [--dry-run]
   dsh-pipeline review prompt --request <file> [--out <file>] [--role <名>]
+  --root <dir>       仓库根目录（缺省主工作区，git 定位不到时用当前目录）；
+                     prepare 的请求、publish 的记录都写 <root>/.tmp 与 <root>/.dsh-web
 
   prepare  用 gh 读 PR 的 head 提交、改动文件与 diff，生成请求 JSON（含 12 位 base32 nonce）
            到 <root>/.tmp/review/<pr>/request.json（--out 可改路径）；
@@ -972,7 +974,7 @@ function runRecord(argv, deps, io) {
   }
 }
 
-/** review 两个动作共用的根目录口径：--root > 注入的 cwd > 当前工作目录。 */
+/** review 三个动作共用的根目录口径：--root > 主工作区 > 当前目录（与 record / selftest 一致）。 */
 function resolveReviewRoot(value, deps) {
   // 与 selftest / status 同一口径：缺省落主工作区，显式 --root 才用调用方给的目录
   return resolveMainWorktreeRoot(value, deps)
@@ -1008,9 +1010,11 @@ function runReviewPrepare(argv, deps, io) {
   const root = resolveReviewRoot(options.root, deps)
 
   // 证据包先读、后发 gh：读不到是调用方的参数错误，要在打网络之前就失败，
-  // 更不能落盘一个缺证据的请求文件。相对路径按 --root 解析（与消费仓口径一致）。
+  // 更不能落盘一个缺证据的请求文件。相对路径按**调用处**解析——root 缺省是主工作区，
+  // 若按 root 解析，在 task worktree 里 prepare 会读到主分支的文件，把过期内容当证据。
+  const evidenceBase = nonEmpty(deps.cwd) ? deps.cwd : process.cwd()
   const readEvidence = (file, label) => {
-    const target = isAbsolute(file) ? file : join(root, file)
+    const target = isAbsolute(file) ? file : join(evidenceBase, file)
     try {
       const text = readFileSync(target, 'utf8')
       // 空内容与读不到同口径：没有证据却写成 content: ""，会让 reviewer 以为证据看过是空的

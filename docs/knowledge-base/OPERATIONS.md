@@ -170,7 +170,7 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | `doctor` 报漂移 | 各仓装的是不同次打包，或某仓装的是没有 `build.json` 的旧包 | 各仓 `rm -rf node_modules pnpm-lock.yaml && pnpm install`，再比对 `gitSha` |
 | `gh` 在受限沙盒里报「令牌无效」 | 宿主的文件沙盒拦住了系统钥匙串访问，不是令牌过期 | 用完整权限运行，或走一次审批提权；**不要**重新 `gh auth login`（详见 `~/.dsh/AGENTS.md` §5） |
 | `review publish --post-review` 退 3 但记录已写 | gh 调用失败（列/发 review） | 记录不回滚；修好 gh 后重跑同一命令即可（同 SHA 已发过会自动跳过） |
-| 在 worktree 里跑 `record` 后记录不见了 | 记录落进了 worktree 并被清理 | 显式传 `--root <主工作区>`，或走转发壳（转发壳固定把 root 指到主工作区） |
+| 在 worktree 里跑 `record` 后记录不见了 | 2026-11-04 的老问题：当时缺省按当前目录落盘 | 已修：缺省落主工作区；若显式传了 `--root <worktree>`，记录会跟着 worktree 一起被删 |
 
 ## 9. 本仓自身的交付流程
 
