@@ -121,6 +121,34 @@ test('shim check：入口目录不存在 → 退 1，提示先跑 shim install',
   assert.match(result.err, /不存在或不是目录，请先运行 shim install/)
 })
 
+test('shim check：目录里有私有文件 → 退 1，逐个点名（契约 §11）', (t) => {
+  const root = tmp()
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  assert.equal(install(root).code, 0)
+
+  const dir = join(root, 'scripts', 'pipeline')
+  writeFileSync(join(dir, 'my-private.sh'), '#!/bin/sh\n', 'utf8')
+  writeFileSync(join(dir, '.DS_Store'), '', 'utf8')
+
+  const result = run(['shim', 'check', '--root', root])
+  assert.equal(result.code, 1)
+  assert.equal(result.out, '')
+  assert.match(result.err, /不允许的私有文件: \.DS_Store/)
+  assert.match(result.err, /不允许的私有文件: my-private\.sh/)
+  assert.match(result.err, /只放生成物/)
+})
+
+test('selftest --shims：私有文件同样判失败，明细里点名', (t) => {
+  const root = tmp()
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  assert.equal(install(root).code, 0)
+  writeFileSync(join(root, 'scripts', 'pipeline', 'extra.sh'), '#!/bin/sh\n', 'utf8')
+
+  const result = run(['selftest', '--shims', '--root', root])
+  assert.equal(result.code, 1)
+  assert.match(result.err, /不允许的私有文件: extra\.sh/)
+})
+
 test('shim install：二次运行全部跳过，不重写文件', (t) => {
   const root = tmp()
   t.after(() => rmSync(root, { recursive: true, force: true }))

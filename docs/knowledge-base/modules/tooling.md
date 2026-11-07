@@ -60,7 +60,7 @@ dsh-pipeline lock check --root <仓>   # 与 selftest --lock 同一实现
 
 ```bash
 dsh-pipeline shim install [--root <dir>] [--force]   # 生成 6 个入口，0755
-dsh-pipeline shim check [--root <dir>]               # 渲染后逐字节比对
+dsh-pipeline shim check [--root <dir>]               # 渲染后逐字节比对 + 反向扫描私有文件
 ```
 
 | 入口文件 | 转发到 |

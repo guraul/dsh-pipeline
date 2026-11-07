@@ -92,7 +92,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 **配置字段（已进 schema）**：`worktreesDir` 由 `task` 消费——缺省读配置、`--worktrees-dir` 优先；`checks` 由 `check-all` 消费——`--packages` 优先，其次 `checks.packages`（按给定顺序），再否则自动发现并按 `checks.exclude` 过滤；`deploy` 由 `deploy init|check` 消费（字段见 §7.1，部署行为见 §10）；`review` 段的 `tier` / `postReview` / `identity` / `rounds` 全部进 schema 并被消费（见 §7.3）。
 
-**目标**：只剩三处输出/约束层的 P2 项——§5 的「状态行改成 `<阶段>: <状态>`」「错误行带错误码」（与退出码统一同批做），以及 §11 的「`shim check` 强制 `scripts/pipeline/` 下没有仓库私有文件」。其余（§3.2 / §4 / §6 / §7 / §9 / §10）已全部落地；容器部署（原 `oci-image` 占位）已明确不做，见 §10。
+**目标**：只剩 §5 的两处输出格式 P2——「状态行改成 `<阶段>: <状态>`」与「错误行带错误码」（与退出码统一同批做）。其余（§3.2 / §4 / §6 / §7 / §9 / §11 / §10）已全部落地；容器部署（原 `oci-image` 占位）已明确不做，见 §10。
 
 硬规则：目标条目在实现合并前**不得**被入口 shim 调用，也不得在文档里写成可用；§9 的门禁项现已全部落地，CI 可以直接引用。
 
@@ -400,7 +400,7 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | 新配置字段 | 先改包 schema → 改本文件 → 改配置 | 直接往 json 里加字段 |
 | 部署行为 | 改复用 workflow | 各仓各写一份 |
 
-`scripts/pipeline/` 下**不允许**出现仓库私有文件（P2 落地后由 `shim check` 强制）。
+`scripts/pipeline/` 下**不允许**出现仓库私有文件：`shim check` 与 `selftest --shims` 会反向扫描该目录，清单之外的任何条目（含隐藏文件）都判失败并逐个点名。
 
 ---
 

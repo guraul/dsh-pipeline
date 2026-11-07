@@ -63,7 +63,7 @@ import { mergePolicy } from '../lib/policy.mjs'
 import { runPr as runPrFlow } from '../lib/pr.mjs'
 import { resolveMainRoot } from '../lib/repo.mjs'
 import { PENDING_CHECKS, checkRepos, runChecks } from '../lib/selftest.mjs'
-import { SHIM_ENTRIES, checkShims, installShims } from '../lib/shim.mjs'
+import { SHIM_DIR, SHIM_ENTRIES, checkShims, installShims } from '../lib/shim.mjs'
 import {
   NONCE_PATTERN,
   analyzeVerdict,
@@ -1959,6 +1959,9 @@ function runShim(argv, deps, io) {
   }
   if (!result.ok) {
     for (const name of result.mismatches) io.err(`shim: 与模板不一致: ${name}`)
+    for (const name of result.extras) {
+      io.err(`shim: 不允许的私有文件: ${name}（${SHIM_DIR} 只放生成物，私有脚本请移出该目录）`)
+    }
     return 1
   }
   io.out(`shim: ${SHIM_ENTRIES.length} 个入口与模板一致`)
