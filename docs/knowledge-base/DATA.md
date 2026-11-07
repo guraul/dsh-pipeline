@@ -27,7 +27,7 @@
 | 命令 | 缺省 root | 查数据时的含义 |
 |---|---|---|
 | `gate` / `merge` | **必填 `--root`** | 传主工作区 |
-| `record` / `review *` | `--root` > `deps.cwd` > `pwd`（**不会自动上溯主工作区**） | 在 worktree 里查会看错目录 |
+| `record` / `review *` | 显式 `--root` > 主工作区 > 当前目录（与 status / selftest 同一口径） | 在 worktree 里跑也落主仓，不会被清理删掉 |
 | `status` / `selftest` / `shim` / `hooks` | 显式 `--root` > 主工作区 > 当前目录 | 查主仓那一份 |
 | `task` | 主工作区（显式 root 若是 linked worktree 顶层会折回主工作区） | — |
 | `deploy` | **必填 `--root`** | 生成 / 校验的是被指向那个仓的 caller |

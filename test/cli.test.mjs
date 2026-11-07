@@ -868,6 +868,24 @@ test('status: 在 linked worktree 里不传 --root，读的是主工作区的记
   assert.match(io.state.out, /最近一条: PR #9 第 1 轮 结论 REJECT/)
 })
 
+test('record: 在 linked worktree 里不传 --root，记录落主工作区（不随 worktree 被删）', () => {
+  const main = tmp()
+  runGit(main, ['init'])
+  runGit(main, ['-c', 'user.email=test@example.com', '-c', 'user.name=test', 'commit', '--allow-empty', '-m', 'init'])
+  const worktree = join(main, 'wt')
+  runGit(main, ['worktree', 'add', worktree])
+
+  const request = join(worktree, 'request.json')
+  const response = join(worktree, 'response.txt')
+  writeFileSync(request, JSON.stringify({ pr: 11, head_sha: SHA, nonce: NONCE, diff: '' }), 'utf8')
+  writeFileSync(response, reviewText('APPROVE', SHA), 'utf8')
+
+  const io = makeIO()
+  assert.equal(run(['record', '--request', request, '--response', response], io, { cwd: worktree }), 0, io.state.err)
+  assert.equal(existsSync(recordFile(reviewsDir(main), 11, SHA)), true, '记录应落在主工作区')
+  assert.equal(existsSync(recordFile(reviewsDir(worktree), 11, SHA)), false, '记录不应落在 worktree')
+})
+
 test('status: 显式 --root 优先于 cwd，空值退出 2', () => {
   const cwdRoot = tmp()
   const target = tmp()

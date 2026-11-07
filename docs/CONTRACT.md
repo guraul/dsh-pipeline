@@ -139,9 +139,9 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | 审核记录 | `<root>/.dsh-web/reviews/<pr>-<head_sha>.json` | 现行 |
 | 跳过审计 | `<root>/.dsh-web/reviews/skips/<ts>-<pr>.json` | 现行 |
 
-**现状**：`<root>` 取各命令自己的缺省（见 §3.1）——在 worktree 里跑 `record` / `review`，记录会落进 worktree，随 worktree 一起被删（2026-11-04 真实发生过）。
+**现行**：`<root>` 的缺省口径对所有命令统一——显式 `--root` 优先；否则定位**主工作区**（`git rev-parse --git-common-dir` 的父目录，即 `git worktree list --porcelain` 首条）；git 定位不到（非仓库 / git 失败）退回当前目录。
 
-**目标（P2）**：`<root>` 一律取**主工作区**（`git worktree list --porcelain` 首条、分支为 `main` 的那个）。在实现前，worktree 里跑这两个命令必须显式给 `--root <主工作区>`。
+这条口径就是为 2026-11-04 那次事故设的：在 task worktree 里跑 `record` / `review`，记录会落进 worktree，`merge` 清理时连同 worktree 一起删掉，事后查不到「审过没有」。现在 `record` / `review prepare|publish` / `selftest` / `shim` / `hooks` / `status` 共用同一个 `resolveMainWorktreeRoot`。
 
 **全部产物不入库**：`.gitignore` 覆盖 `.tmp/` 与 `.dsh-web/`。
 
