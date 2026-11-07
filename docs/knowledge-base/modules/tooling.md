@@ -1,6 +1,6 @@
 # 模块：一致性工具（selftest / shim / hooks / check-all / doctor / build-info）
 
-**最后更新**：2026-11-06 · 对应提交 `cf7544f`
+**最后更新**：2026-11-07 · 对应提交 `6c4ed32`
 
 这一组命令的共同点：**只读检查优先、能修才写、判据是"渲染后逐字节比对"而不是"看起来像"**。它们替代了各仓过去手写的 `build-check.sh` / `review-loop-check.sh` 之类脚本。
 
@@ -33,7 +33,7 @@ dsh-pipeline selftest [--shims] [--config] [--lock] [--peer] [--exit-codes] [--f
 | `--peer` | 各包的 DSH 版本声明覆盖当前版本（四个来源按优先级） | 已实现 |
 | `--exit-codes` | 起子进程真跑七条用例，断言契约 §4：APPROVE 记录过闸门→0；REJECT 记录、旧规则记录（`E_POLICY_VERSION`）→1；缺参/未知参数/未知子命令→2；入口找不到共享包→3（并断言输出关键字）；cwd 钉临时目录 | 已实现（唯一会 spawn 的检查项） |
 
-- `--repos` 与 `--shims` / `--config` / `--fast` **互斥**（两者的 `--json` 形态不同）；
+- `--repos` 与 `--shims` / `--config` / `--lock` / `--peer` / `--exit-codes` / `--fast` **互斥**（两者的 `--json` 形态不同）；
 - `--repos` 的路径：绝对路径直接用、相对路径按 `--root`（缺省当前目录）、`~/` 展开；
 - `--repos` 的纳入条件：目录存在 + 有 `bin/cli.mjs` + `build.json` 可读；其余**跳过并列出**（目录不存在 / 不是目录 / 未装包）；
 - 可比对的仓**不足 2 个** → `baseline = null`、`ok = true`（没有第二方就没有"不一致"可言）；

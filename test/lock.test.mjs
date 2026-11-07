@@ -108,6 +108,10 @@ test('readLock：JSON 非法 / 多余字段 / 格式错 → 抛 LockError', (t) 
 
   writeLockFile(root, '{"expect":"5a6d133"}')
   assert.throws(() => readLock(root), /expect 必须是/)
+
+  // `$` 在 JS 里放过末尾换行，这里必须显式拒绝
+  writeLockFile(root, `{"expect":"${EXPECT}\\n"}`)
+  assert.throws(() => readLock(root), /expect 必须是/)
 })
 
 test('writeLock：落盘内容固定（2 空格缩进 + 尾换行），并自动建 .dsh/', (t) => {

@@ -1,11 +1,11 @@
 /**
- * selftest：契约 §9 一致性门禁（已实现 --shims / --config / --exit-codes / --repos，--fast 等价于 --shims+--config）。
+ * selftest：契约 §9 一致性门禁（已实现 --shims / --config / --lock / --peer / --exit-codes / --repos，--fast 等价于 --shims+--config）。
  *
  * 覆盖：合法配置 → 0、未知字段 → 1 且 stderr 带字段名、没有配置文件 → 0（跳过）、
  * --shims 安装后通过 / 目录缺失 → 1、--json 结构、
  * --fast 与 --shims --config 等价、缺省 root 解析、
  * --repos 的多仓比对（同构建 → 0、不一致 → 1 且 ::error:: 列出、缺 tools / 缺 build.json 跳过、
- * 不足 2 个仓 → 0、相对路径按 --root 解析、与 --shims/--config/--fast 互斥、用法错误 → 2、--json 结构）。
+ * 不足 2 个仓 → 0、相对路径按 --root 解析、与其它检查项互斥、用法错误 → 2、--json 结构）。
  * 只有 --exit-codes 会起子进程（退出码只能真跑才知道），其余用例只调 runCli（注入输出流）、不发外部命令。
  */
 import test from 'node:test'
@@ -400,16 +400,19 @@ test('selftest --repos：相对路径按 --root 解析，缺省按当前目录',
   assert.equal(byCwd.out, expected)
 })
 
-test('selftest --repos：与 --shims / --config / --fast 互斥 → 2', (t) => {
+test('selftest --repos：与其它检查项互斥 → 2', (t) => {
   const base = tmp()
   t.after(() => rmSync(base, { recursive: true, force: true }))
   makeRepo(base, 'a')
   makeRepo(base, 'b')
 
-  for (const flag of ['--shims', '--config', '--fast']) {
+  for (const flag of ['--shims', '--config', '--lock', '--peer', '--exit-codes', '--fast']) {
     const result = run(['selftest', '--repos', 'a,b', flag, '--root', base])
     assert.equal(result.code, 2, `${flag} 应退 2`)
-    assert.match(result.err, /--repos 不能与 --shims \/ --config \/ --fast 同时使用/)
+    assert.match(
+      result.err,
+      /--repos 不能与 --shims \/ --config \/ --lock \/ --peer \/ --exit-codes \/ --fast 同时使用/,
+    )
     assert.equal(result.out, '')
   }
 })

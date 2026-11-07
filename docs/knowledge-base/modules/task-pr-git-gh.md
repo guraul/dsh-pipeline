@@ -60,7 +60,7 @@ dsh-pipeline pr [--issue <号>] [--root <dir>]
 | 函数 | 取值方式 | 谁用 |
 |---|---|---|
 | `resolveRoot({root, cwd, git})` | 显式 root 优先，否则 `git rev-parse --show-toplevel` | `pr` |
-| `resolveMainRoot({root, cwd, git})` | 显式 root（若是 linked worktree 顶层则折回主工作区），否则 `--git-common-dir` 的父目录 | `task`；`record`/`review`/`selftest`/`status`/`hooks` 经 `bin/cli.mjs` 的 `resolveMainWorktreeRoot` |
+| `resolveMainRoot({root, cwd, git})` | 显式 root（若是 linked worktree 顶层则折回主工作区），否则 `--git-common-dir` 的父目录 | `task`；`record`/`review`/`selftest`/`shim`/`status`/`hooks` 经 `bin/cli.mjs` 的 `resolveMainWorktreeRoot` |
 | `resolveRepo({root, git})` | 配置 `repo` 优先，否则从 `origin` 远端地址反推；两条都拿不到**明确失败**（绝不猜一个仓库去开 PR） | `task` / `pr` |
 
 - `repoFromRemote` 覆盖 `git@github.com:o/n.git`、`https://github.com/o/n.git`、`ssh://git@github.com/o/n` 三种写法；
