@@ -56,7 +56,7 @@
 | `ESCALATE` | `COMMENT` |
 
 - body = 判定行 + 最多 10 条 findings 摘要 + `记录: <相对路径>` + 幂等标记 `<!-- dsh-pipeline:review <sha> -->`；
-- 列已有 review 用 `gh api --paginate -F per_page=100 --jq '.[] | {commit_id, body}'`（输出 NDJSON），**必须分页**：GitHub 默认每页 30 条，漏页就会对同一 SHA 重复发；
+- 列已有 review 用 `gh api -X GET --paginate -F per_page=100 --jq '.[] | {commit_id, body}'`（输出 NDJSON），**必须分页**：GitHub 默认每页 30 条，漏页就会对同一 SHA 重复发；`-X GET` 不能省——`gh api` 见到 `-F` 而没有显式方法时会把请求切成 POST，读列表会变成创建 review；
 - 列表读不出来时按环境错误停手（宁可失败，也不重复发）。
 
 ## `lib/record.mjs`

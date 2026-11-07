@@ -104,5 +104,5 @@ dsh-pipeline deploy check --root <消费仓>
 | 读 checks | `gh pr checks <n> --json …` | `merge` 的 `ci` 步 |
 | squash 合并 | `gh pr merge <n> --squash` | `merge` 的 `merge` 步 |
 | 删远端分支 | 不在本包允许清单里，交给仓库设置 auto-delete-branch | — |
-| 发 review | `gh api --paginate repos/<repo>/pulls/<n>/reviews`（幂等检查）、`gh api repos/<repo>/pulls/<n>/reviews -X POST -f event=… -f body=…` | `review publish --post-review` |
+| 发 review | `gh api -X GET --paginate repos/<repo>/pulls/<n>/reviews`（幂等检查，显式 GET 否则会被 `-F` 翻成 POST）、`gh api repos/<repo>/pulls/<n>/reviews -X POST -f event=… -f body=…` | `review publish --post-review` |
 | 发评论 | `gh pr comment`（封装在 `lib/gh.mjs`，当前 CLI 未调用） | — |
