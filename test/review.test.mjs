@@ -240,6 +240,10 @@ test('buildPrompt：tools 档同样带 4–8 条（档位只改 0.1）', () => {
   assert.ok(prompt.includes('**最多 3 条**'))
   assert.ok(prompt.includes('若判定是 APPROVE'))
   assert.ok(prompt.includes('另有 N 条同类未展开'))
+  // 第 5 条：去向写在 message 里，不新增 JSON 字段（多一个键 writeRecord 会抛 E_RECORD）
+  assert.ok(prompt.includes('不要新增 JSON 字段'))
+  // 第 6 条：不重复的依据是「材料里已列出」，不依赖 buildPrompt 拿不到的轮次数据
+  assert.ok(prompt.includes('材料里已经列出的既有建议不要重复提'))
 })
 
 test('reviewAction 映射三种判定', () => {
