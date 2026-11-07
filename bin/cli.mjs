@@ -1266,10 +1266,10 @@ function runReviewPublish(argv, deps, io) {
     round = explicitRound.value
   } else if (request.round === undefined) {
     round = 1
-  } else if (Number.isInteger(request.round) && request.round >= 1 && request.round <= MAX_ROUND) {
+  } else if (Number.isInteger(request.round) && request.round >= 1 && request.round <= maxRounds) {
     round = request.round
   } else {
-    return argError(io, sub, `请求中的 round 必须是 1..${MAX_ROUND} 的整数: ${String(request.round)}`)
+    return argError(io, sub, `请求中的 round 必须是 1..${maxRounds} 的整数: ${String(request.round)}`)
   }
 
   // --dry-run：只预览将要发送的 event 与 body，不写盘、不发任何请求。
@@ -1375,7 +1375,8 @@ function previewPostReview({ root, pr, request, responseFile, io }) {
  *
  * 顺序固定：读回记录（拿 verdict / findings）→ 校验配置里的 repo → 列已有 review（幂等）→ POST。
  * 任何一步的 gh 失败都是环境错误：退 3、记录不回滚，并明确告知「记录已写，review 未发出」；
- * 没有 repo 是用法 / 配置错误：退 2。GH_CONFIG_DIR 等身份环境变量只透传给 gh，这里不处理。
+ * 没有 repo 是用法 / 配置错误：退 2。身份按配置处理：review.identity.ghConfigDir 设成 GH_CONFIG_DIR
+ * （结束后还原），review.identity.account 用 gh api user 校验。
  */
 function sendReview({ root, pr, headSha, io, runner }) {
   const file = recordFile(reviewsDir(root), pr, headSha)
@@ -1423,7 +1424,8 @@ function sendReviewWithIdentity({ identity, repo, pr, headSha, io, runner, root,
       io.err('review publish: 记录已写，review 未发出（无法确认 gh 身份）')
       return 3
     }
-    if (who.data !== identity.account) {
+    // GitHub 登录名大小写不敏感：统一小写比较，避免配置写成 Guraul-Review 时误判
+    if (who.data.toLowerCase() !== identity.account.trim().toLowerCase()) {
       io.err(
         `review publish: 当前 gh 身份是 ${who.data}，配置要求 ${identity.account}（记录已写入，review 未发出）`,
       )

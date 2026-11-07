@@ -131,3 +131,10 @@ writeRecord(dir, record, { name? })
 ## 相关测试
 
 `test/review.test.mjs`、`test/review-cmd.test.mjs`、`test/record.test.mjs`、`test/record-name.test.mjs`、`test/roles.test.mjs`、`test/post-review.test.mjs`、`test/contract-format.test.mjs`。
+
+## 配置里的审核身份与轮次（`review.identity` / `review.rounds`）
+
+- `review.postReview=true`：`review publish` 默认发送，等价于每次都带 `--post-review`；`--dry-run` 仍优先。
+- `review.identity.ghConfigDir`：发送前设为 `GH_CONFIG_DIR`（`~` 展开），命令结束在 `finally` 里还原。
+- `review.identity.account`：发送前用 `gh api user --jq .login` 校验，**大小写不敏感**；不一致退 2、不发 review（记录已落盘）。
+- `review.rounds`（1..3，缺省 3）：约束 `record` / `review prepare` / `review publish` 的 `--round`、请求里的 `round`，以及 `gate` 与 `merge` 的轮次判定。只能收紧——记录层的 `MAX_ROUND` 就是 3。

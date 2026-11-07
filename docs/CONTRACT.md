@@ -183,7 +183,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
       "ghConfigDir": "~/.config/gh-reviewer", // 可选；展开 ~ 后作为 GH_CONFIG_DIR 传给 gh
       "account": "guraul-review"      // 可选；发请求前用 gh api user 校验登录名，不一致退 2
     },
-    "rounds": 3                       // 可选；1..10 的整数，缺省 3；--round 与 gate 的轮次上限都按它
+    "rounds": 3                       // 可选；1..3 的整数，缺省 3；只能把上限往下收（记录层最大就是 3）
   }
 }
 ```
@@ -266,7 +266,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 - **如实标注**：`tools` 档在 codebuddy 下**不是硬只读**——该产品没有「只读 + 工具」档位，审核方仍可能写入。兜底靠任务书写明边界 + 事后 `git status` + 闸门的 SHA 比对；记录与汇报里**不得**写成「只读审核」。
 - 选档看材料能否自证，不按改动大小拍脑袋：纯配置 / 纯文档且 diff 自包含用 `inline`；行为改动、跨文件改动，或 PR 里出现「我跑过 / 我验证过」这类需要复核的断言用 `tools`。
 - **身份**：`review.identity.ghConfigDir` 在发 review 前设为 `GH_CONFIG_DIR`（`~` 会展开），命令结束后还原；`review.identity.account` 非空时先用 `gh api user --jq .login` 校验，不一致退 2 且不发送（记录已落盘）。
-- **轮次上限**：`review.rounds`（1..10，缺省 3）同时约束 `record` / `review prepare` / `review publish` 的 `--round` 与 `gate` 的轮次判定；超限即「人在环」。
+- **轮次上限**：`review.rounds`（1..3，缺省 3）同时约束 `record` / `review prepare` / `review publish` 的 `--round`、`review publish` 请求里的 `round`，以及 `gate` 与 `merge` 的轮次判定；超限即「人在环」。**只能收紧不能放宽**——记录层（`lib/record.mjs` 的 `MAX_ROUND`）最大就是 3，写不进去的轮次不该被配置放行。
 
 #### 时限与体量
 
@@ -437,4 +437,4 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | 2026-11-07 | §7.3 补齐提示词第 8 条的规范细节（issue #93）：超过 3 条时保留前 3 条正文、其余合并为「另有 N 条同类未展开」摘要且**摘要不计入**上限；仅第 4 条属真问题时升 `major` 豁免，第 5 条起并入摘要 |
 | 2026-11-07 | §9 实现 `selftest --peer`：四来源按优先级，版本取 `--dsh-version` 或仓内装包；门禁项全部落地 |
 | 2026-11-07 | §6 的 root 统一落地：`record` / `review prepare\|publish` 与 `selftest` / `shim` / `hooks` / `status` 共用 `resolveMainWorktreeRoot`（显式 `--root` > 主工作区 > 当前目录），审核记录不再随 worktree 被删；上面 v1.2 那条里「§6 的 root 统一」已不再是目标 |
-| 2026-11-07 | §7.1 的 `review` 目标字段全部落地：`postReview`（配置层默认发送）、`identity.ghConfigDir` / `identity.account`（发送身份与账号校验）、`rounds`（1..10，缺省 3，同时约束 `--round` 与 `gate`）；§3.3 目标清单只剩 `oci-image` |
+| 2026-11-07 | §7.1 的 `review` 目标字段全部落地：`postReview`（配置层默认发送）、`identity.ghConfigDir` / `identity.account`（发送身份与账号校验）、`rounds`（1..3，缺省 3，同时约束 `--round`、请求里的 `round`、`gate` 与 `merge`）；§3.3 目标清单只剩 `oci-image` |

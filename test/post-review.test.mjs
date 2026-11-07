@@ -247,6 +247,15 @@ test('配置 review.identity.account 与当前身份不一致 → 退 2 且不�
   assert.ok(existsSync(recordPath(fixture)), '记录仍要落盘')
 })
 
+test('配置 review.identity.account 大小写不敏感：Guraul-Review 与 guraul-review 视为同一身份', (t) => {
+  const fixture = cleanup(t, makeFixture())
+  writeConfigReview(fixture.root, { identity: { account: 'Guraul-Review' } })
+
+  const result = runPublish(fixture, ['--post-review'], { STUB_USER_LOGIN: 'guraul-review' })
+  assert.equal(result.status, 0, result.stderr)
+  assert.ok(ghCalls(fixture).some((line) => line.includes('POST')), '大小写不同不该阻断发送')
+})
+
 test('配置 review.rounds=2：--round 3 退 2（轮次上限按配置）', (t) => {
   const fixture = cleanup(t, makeFixture())
   writeConfigReview(fixture.root, { rounds: 2 })

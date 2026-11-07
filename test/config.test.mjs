@@ -160,11 +160,11 @@ test('review.postReview / identity / rounds：形态校验', () => {
       assert.throws(() => validateConfig({ review: { identity: { [key]: value } } }), code('E_CONFIG'), `${key}=${String(value)}`)
     }
   }
-  // rounds：1..10 的整数
-  for (const value of [1, 2, 10]) {
+  // rounds：只能把默认上限往下收（1..MAX_ROUND，记录层写不进更大的轮次）
+  for (const value of [1, 2, 3]) {
     assert.equal(validateConfig({ review: { rounds: value } }).review.rounds, value)
   }
-  for (const value of [0, 11, 1.5, '3', null]) {
+  for (const value of [0, 4, 11, 1.5, '3', null]) {
     assert.throws(() => validateConfig({ review: { rounds: value } }), code('E_CONFIG'), String(value))
   }
   // 未知字段仍然拒绝

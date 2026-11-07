@@ -48,6 +48,25 @@ function approvedRoot(overrides = {}) {
   return { root, file }
 }
 
+test('闸门按配置 review.rounds 判轮次：rounds=2 时 round 3 的记录被拒', async () => {
+  const { root, file } = approvedRoot({ round: 3 })
+  withRepo(root, 'owner/repo')
+  writeFileSync(
+    join(root, '.dsh', 'pipeline.json'),
+    JSON.stringify({ repo: 'owner/repo', review: { rounds: 2 } }),
+    'utf8',
+  )
+
+  const result = await runMerge(
+    { pr: PR, root, recordPath: file, headSha: SHA, now: () => NOW },
+    { gh: fakeGh() },
+  )
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 'E_RECORD')
+  assert.match(result.error, /round 必须是 1\.\.2 的整数/)
+  assert.equal(result.step, 'gate', '应停在闸门步骤')
+})
+
 function ok(data = '') {
   return { ok: true, code: 0, data, error: null }
 }
