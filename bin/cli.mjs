@@ -841,11 +841,17 @@ function changedFiles(request) {
   return Array.isArray(request.files) ? request.files : diffPaths(request.diff)
 }
 
-/** 测试文件：`__tests__/`、`tests/`、`test/` 目录下，或 `.test.` / `.spec.` 结尾的源码。 */
-const TEST_FILE_RE = /(^|\/)(__tests__|tests?)\/|\.(test|spec)\.(ts|tsx|js|mjs|cjs)$/
+/** 目录豁免：任意层级的 `__tests__/`，或**仓库根**的 `test/` `tests/`（不豁免 `src/test/` 这类深层目录）。 */
+const TEST_DIR_RE = /(^|\/)__tests__\/|^tests?\//
+/** 文件名豁免：`*.test.*` / `*.spec.*`（覆盖 js/ts/jsx/tsx/mjs/cjs/mts/cts）。 */
+const TEST_FILE_SUFFIX_RE = /\.(test|spec)\.[cm]?[jt]sx?$/
+
+function isTestPath(path) {
+  return TEST_DIR_RE.test(path) || TEST_FILE_SUFFIX_RE.test(path)
+}
 
 /**
- * 变更行数（增删合计），忽略 diff 的 +++/--- 文件头。
+ * 变更行数（增删合计），忽略 diff 的 `+++ b/…` / `--- a/…` 文件头。
  * 按 `diff --git` 头分段识别测试文件，返回总量与生产/测试拆分——
  * 行数上限只按生产行判定，测试写得厚不该触发人工放行。
  * @returns {{ total: number, production: number, testLines: number }}
@@ -858,10 +864,11 @@ export function countChangedLines(diff) {
     if (line.startsWith('diff --git ')) {
       // 形如 `diff --git a/path b/path`，取 b/ 后的路径
       const m = /^diff --git a\/(.+) b\/(.+)$/.exec(line)
-      currentIsTest = m ? TEST_FILE_RE.test(m[2]) : false
+      currentIsTest = m ? isTestPath(m[2]) : false
       continue
     }
-    if (line.startsWith('+++') || line.startsWith('---')) continue
+    // 只跳带空格的文件头（`+++ b/path`）；内容行 `+++foo` 是真实新增，要计数
+    if (/^(\+\+\+|---) /.test(line)) continue
     if (line.startsWith('+') || line.startsWith('-')) {
       total += 1
       if (currentIsTest) testLines += 1
