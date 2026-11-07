@@ -287,6 +287,8 @@ review 用法:
            facts（取不到写「未取到」，不让 prepare 失败；与 --facts 同时存在时拼接而非覆盖）；
            --include <路径,路径,...> 逐个读文件写进请求的 includes 数组（每项 {path, content}，
            path 保持调用方给的原样）；任一路径读不到或取值为空即退出 2，不写请求文件。
+           --facts / --include 的相对路径按**调用处目录**解析（不是 --root），在 worktree 里
+           prepare 时读的是被审分支的文件。
   publish  读 --response 并落盘 <root>/.dsh-web/reviews/<pr>-<sha>.json，复用 record 的落盘逻辑；
            --request 缺省为 <root>/.tmp/review/<pr>/request.json；
            --round 与请求里的 round 不一致时报错退出 2，没给则沿用请求里的 round。

@@ -539,7 +539,7 @@ test('record: --root 决定落盘位置，不污染 cwd', () => {
   assert.equal(readdirSync(cwd).includes('.dsh-web'), false, 'cwd 不该被写入运行态')
 })
 
-test('record: 缺省根目录仍是 cwd（--root 可省略）', () => {
+test('record: 非 git 目录里缺省根目录退回 cwd（--root 可省略）', () => {
   const cwd = tmp()
   const request = { pr: 7, head_sha: SHA, nonce: NONCE, diff: 'diff --git a/x b/x\n+1' }
 
