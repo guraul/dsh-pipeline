@@ -2,7 +2,7 @@
  * selftest：契约 §9 一致性门禁（已实现 --shims / --config / --exit-codes / --repos，--fast 等价于 --shims+--config）。
  *
  * 覆盖：合法配置 → 0、未知字段 → 1 且 stderr 带字段名、没有配置文件 → 0（跳过）、
- * --shims 安装后通过 / 目录缺失 → 1、已识别但未实现的检查项 → 2、--json 结构、
+ * --shims 安装后通过 / 目录缺失 → 1、--json 结构、
  * --fast 与 --shims --config 等价、缺省 root 解析、
  * --repos 的多仓比对（同构建 → 0、不一致 → 1 且 ::error:: 列出、缺 tools / 缺 build.json 跳过、
  * 不足 2 个仓 → 0、相对路径按 --root 解析、与 --shims/--config/--fast 互斥、用法错误 → 2、--json 结构）。
@@ -107,16 +107,14 @@ test('selftest --config：没有配置文件 → 0，提示跳过', (t) => {
   assert.equal(result.err, '')
 })
 
-test('selftest：--peer 仍是已识别但未实现的检查项 → 2，报「尚未实现」', (t) => {
+test('selftest：--peer 已实现——仓里没有版本声明时跳过（0）', (t) => {
   const root = tmp()
   t.after(() => rmSync(root, { recursive: true, force: true }))
   writeConfig(root, VALID)
 
-  // --exit-codes / --lock 已实现；只剩 --peer 是「已识别未实现」（退 2，不是「未知选项」）
   const result = run(['selftest', '--peer', '--root', root])
-  assert.equal(result.code, 2)
-  assert.equal(result.err, 'selftest: 尚未实现: --peer\n')
-  assert.equal(result.out, '')
+  assert.equal(result.code, 0, result.err)
+  assert.match(result.out, /未发现声明 DSH 版本的包（跳过）/)
 })
 
 test('selftest --exit-codes：真跑四类场景，退出码口径符合 → 0', (t) => {

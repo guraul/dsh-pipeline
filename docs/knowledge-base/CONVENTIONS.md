@@ -36,7 +36,7 @@
 
 | # | 问题 | 状态 | 说明 |
 |---|---|---|---|
-| 1 | 契约把已实现能力标成「目标」 | **已修（本 PR，契约 v1.2）** | §3.2 / §3.3 / §9 / §10 改为现行；仍未实现项已收敛为 `selftest --peer`、`review.*`、`--legacy-exit-codes`、§6 的 root 统一与 §10 的各仓接入 / 回滚调用（`--exit-codes`、`--lock`、`pipeline.lock.json` 均已实现） |
+| 1 | 契约把已实现能力标成「目标」 | **已修（本 PR，契约 v1.2）** | §3.2 / §3.3 / §9 / §10 改为现行；仍未实现项已收敛为 `review.*`、`--legacy-exit-codes`、§6 的 root 统一与 §10 的各仓接入 / 回滚调用（`--exit-codes`、`--lock`、`--peer`、`pipeline.lock.json` 均已实现） |
 | 2 | README 的「已实现」清单不全 | **已修（本 PR）** | 补到 14 个子命令（含 `deploy init` / `check`）；顶层 `prepare` 占位已删除 |
 | 3 | README 的「本仓高风险只列了 `.github/**`」易被误读 | **已修（本 PR）** | 改为「配置只**追加**了 `.github/**`，而 `lib/policy.mjs` 的默认清单恒生效」——改 `AGENTS.md`、`.gitignore` 等同样属高风险 |
 | 4 | `deploy.yml` 只适配 Expo 类仓 | **已修（#67）** | 新增 `quality_cmd` / `build_cmd` / `assemble` 三个 input，均有默认值（老 caller 零改动）；缺省构建命令仍是 Expo Web 导出，非 Expo 仓要显式传 |

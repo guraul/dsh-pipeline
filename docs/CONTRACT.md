@@ -77,7 +77,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | `merge` | 闸门通过后 squash 合并 + 清理 worktree/分支 + 快进 main；`--review-record` 是 `--record` 的兼容别名（旧写法，后续将弃用；两者取值不同则报错） | 现行 |
 | `status` | 审核记录概况，含仓库概览（root/branch/head/worktrees；git 取不到时该段只提示，不影响退出码） | 现行 |
 | `doctor` | 检查仓库装的共享包是否同一构建；`--profile <dir>` 可选：体检 profile 包声明、插件软链有效性、`dsh --dump-config` 可见性（dsh 不可用时跳过）、审核记录目录可写，另含原 review-loop-check.sh 没有的 `cordis.patch.yml` 非空与目录/DSH_HOME 报告两项 | 现行 |
-| `selftest` | 一致性自检（见 §9）：`--shims` / `--config` / `--lock` / `--exit-codes` / `--fast` / `--repos` 可用；`--peer` 仍为目标（已识别，传入报「尚未实现」退 2） | 现行（一项子检查仍为目标） |
+| `selftest` | 一致性自检（见 §9）：`--shims` / `--config` / `--lock` / `--peer` / `--exit-codes` / `--fast` / `--repos` 全部可用 | 现行 |
 | `lock write\|check` | 写入 / 核对 `.dsh/pipeline.lock.json`（见 §7.2）；`write` 从装包 `build.json` 取标识，`check` 与 `selftest --lock` 同一实现 | 现行 |
 | `check-all` | 按配置逐包跑声明的检查并汇总 | 现行 |
 | `shim install\|check` | 生成 / 校验入口 shim | 现行 |
@@ -88,13 +88,13 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 ### 3.3 实现状态（v1.2 校正，2026-11-06）
 
-**已实现**：`task` / `pr` / `review prepare|prompt|publish`（含 `--post-review`）/ `record` / `gate` / `merge` / `status` / `doctor`（含 `--profile`）/ `selftest`（`--shims` / `--config` / `--lock` / `--exit-codes` / `--fast` / `--repos`）/ `lock write|check` / `shim install|check` / `hooks install|check` / `check-all` / `deploy init|check`（`artifact` 支持 `static-dir` 与 `node-standalone`）。
+**已实现**：`task` / `pr` / `review prepare|prompt|publish`（含 `--post-review`）/ `record` / `gate` / `merge` / `status` / `doctor`（含 `--profile`）/ `selftest`（`--shims` / `--config` / `--lock` / `--peer` / `--exit-codes` / `--fast` / `--repos`）/ `lock write|check` / `shim install|check` / `hooks install|check` / `check-all` / `deploy init|check`（`artifact` 支持 `static-dir` 与 `node-standalone`）。
 
 **配置字段（已进 schema）**：`worktreesDir` 由 `task` 消费——缺省读配置、`--worktrees-dir` 优先；`checks` 由 `check-all` 消费——`--packages` 优先，其次 `checks.packages`（按给定顺序），再否则自动发现并按 `checks.exclude` 过滤；`deploy` 由 `deploy init|check` 消费（字段见 §7.1，部署行为见 §10）；`review.tier` 由 `review prepare` / `review prompt` 消费（见 §7.3），`review` 的其余字段仍为目标（P2）。
 
-**目标**：`selftest --peer`（§9；已识别，传入报「尚未实现」退 2）、`review` 的其余字段（§7.1）、`--legacy-exit-codes`（§4）、§6 的 root 统一，以及 §10 的「各仓接入 caller workflow 与回滚调用」。
+**目标**：`review` 的其余字段（§7.1）、`--legacy-exit-codes`（§4）、§6 的 root 统一，以及 §10 的「各仓接入 caller workflow 与回滚调用」。
 
-硬规则：目标条目在实现合并前**不得**被入口 shim 调用，也不得在文档里写成可用；§9 的门禁项同理——`selftest --peer` 落地前，CI 不得引用它。
+硬规则：目标条目在实现合并前**不得**被入口 shim 调用，也不得在文档里写成可用；§9 的门禁项现已全部落地，CI 可以直接引用。
 
 ---
 
@@ -326,16 +326,16 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 ---
 
-## 9. 一致性门禁（`selftest`，**现行**；`--peer` 一项子检查仍为目标）
+## 9. 一致性门禁（`selftest`，**现行**）
 
-**已实现**：`--shims` / `--config` / `--lock` / `--exit-codes` / `--fast` / `--repos`（pre-push 用 `--fast`）。**未实现**：`--peer`——已在选项表里，传入即报「尚未实现」并退 2，不静默忽略、也不掉进「未知选项」。
+**已实现**：`--shims` / `--config` / `--lock` / `--peer` / `--exit-codes` / `--fast` / `--repos`（pre-push 用 `--fast`）。没有未实现的检查项。
 
 | 检查 | 内容 | 失败 |
 |---|---|---|
 | `--shims` | 6 个入口 == 按当前版本渲染后的模板 | 退出 1 |
 | `--config` | `.dsh/pipeline.json` 能被 schema 接受，无未声明字段 | 退出 1 |
 | `--lock` | 安装的构建 == `pipeline.lock.json` 的 `expect`（读锁 → 读装包 `build.json` → 比对；锁不存在 / 未装包跳过，旧版本包或不一致失败，见 §7.2） | 退出 1 |
-| `--peer` | 各插件声明的 peer 范围覆盖当前 DSH 版本（静态比较，不下载；**未实现**：已识别、传入报「尚未实现」退 2） | 退出 1 |
+| `--peer` | 各包的 DSH 版本声明覆盖当前版本（静态比较）：按优先级取 `engines.dsh` → `dsh.engines.dsh` → `dsh.compatibility.dsh` → `@deepseek-ai/dsh*` peer；版本用 `--dsh-version` 或仓内装包；无声明跳过、不知道版本退 2 | 退出 1 |
 | `--exit-codes` | 退出码口径自检：起子进程真跑七条用例——APPROVE 记录过闸门→0；REJECT 记录过闸门、按旧规则审的记录（`E_POLICY_VERSION`）→1；缺必填参数/未知参数/未知子命令→2；入口找不到共享包→3（并断言输出里出现「找不到共享包」）；cwd 钉在临时目录、只有环境错误那条注入 `DSH_PIPELINE_HOME`；任一不符即失败并点名用例 | 退出 1 |
 | `--repos` | 多个仓装的共享包是不是同一构建（读各自 `tools/node_modules/dsh-pipeline/build.json` 的 `gitSha`/`builtAt`，比对 `gitSha`；目录不存在 / 未装包的仓跳过并列出，可比对的仓不足 2 个则跳过退 0；`--json` 给 `{ok,baseline,repos,skipped}`） | 退出 1 |
 | `--fast` | 只跑 `--shims --config`（pre-push 用，<2 秒） | 退出 1 |
@@ -423,3 +423,4 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | 2026-11-06 | §7.2 转现行并写清「谁写、谁读、四种状态」；新增 `lock write|check`（`lib/lock.mjs`），§9 的 `--lock` 落地，未实现项收敛为 `--peer` 一项 |
 | 2026-11-06 | §7.3 审核噪声治理（issue #86）：「判断问题」升级为「必答问题」并写清 ESCALATE 判据（只对必答问题负责）；建议每轮 ≤3 条且必须写去向；APPROVE 后不再提本 PR 的建议。依据 Google eng-practices（Nit 可忽略）与 CodeRabbit（门禁与评论分离、过滤低价值项） |
 | 2026-11-07 | §7.3 补齐提示词第 8 条的规范细节（issue #93）：超过 3 条时保留前 3 条正文、其余合并为「另有 N 条同类未展开」摘要且**摘要不计入**上限；仅第 4 条属真问题时升 `major` 豁免，第 5 条起并入摘要 |
+| 2026-11-07 | §9 实现 `selftest --peer`：四来源按优先级，版本取 `--dsh-version` 或仓内装包；门禁项全部落地 |

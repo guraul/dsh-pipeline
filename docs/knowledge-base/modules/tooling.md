@@ -8,7 +8,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| `lib/selftest.mjs` | `--shims` / `--config` / `--lock` / `--exit-codes`（+ `--repos`）检查实现；`--peer` 只识别不实现 |
+| `lib/selftest.mjs` | `--shims` / `--config` / `--lock` / `--peer` / `--exit-codes`（+ `--repos`）检查实现 |
 | `lib/shim.mjs` | 模板渲染（`{{VERSION}}` / `{{CMD}}`）、6 入口定义、`install` 写入判定、`check` 逐字节比对 |
 | `templates/shim.sh` | shim 的唯一模板 |
 | `lib/hooks.mjs` | pre-push 钩子正文（含标记行）、目标路径推算、`install` / `check` |
@@ -20,7 +20,7 @@
 ## `selftest`
 
 ```bash
-dsh-pipeline selftest [--shims] [--config] [--lock] [--exit-codes] [--fast | --repos a,b,c] [--json] [--root <dir>]
+dsh-pipeline selftest [--shims] [--config] [--lock] [--peer] [--exit-codes] [--fast | --repos a,b,c] [--json] [--root <dir>] [--dsh-version <v>]
 ```
 
 | 检查项 | 内容 | 状态 |
@@ -30,7 +30,7 @@ dsh-pipeline selftest [--shims] [--config] [--lock] [--exit-codes] [--fast | --r
 | `--lock` | 装包的 `build.json` == `.dsh/pipeline.lock.json` 的 `expect`；锁不存在 / 未装包跳过，旧版本包或不一致失败（详见下节 `lock`） | 已实现 |
 | `--fast` | 等价 `--shims --config`（pre-push 用，契约 §9） | 已实现 |
 | `--repos a,b,c` | 多仓装的共享包是否同一构建（读各自 `tools/node_modules/dsh-pipeline/build.json` 的 `gitSha`） | 已实现 |
-| `--peer` | 插件 peer 范围覆盖当前 DSH 版本 | **未实现**：传入即报「尚未实现」退 2 |
+| `--peer` | 各包的 DSH 版本声明覆盖当前版本（四个来源按优先级） | 已实现 |
 | `--exit-codes` | 起子进程真跑七条用例，断言契约 §4：APPROVE 记录过闸门→0；REJECT 记录、旧规则记录（`E_POLICY_VERSION`）→1；缺参/未知参数/未知子命令→2；入口找不到共享包→3（并断言输出关键字）；cwd 钉临时目录 | 已实现（唯一会 spawn 的检查项） |
 
 - `--repos` 与 `--shims` / `--config` / `--fast` **互斥**（两者的 `--json` 形态不同）；
@@ -161,7 +161,7 @@ dsh-pipeline doctor [--repo a,b] [--json] [--expect <sha>] [--profile <dir>]
 3. **`--repos` 不足 2 个必须退 0**：CI 里没有兄弟仓，判失败会让 CI 必红。
 4. **`check-all` 缺依赖必须算跳过**：否则没装依赖的仓会永远红。
 5. **`profile-check` 不要打印文件内容**，也不要为了"更精确"去解析 profile JSON 全文。
-6. **新检查项先加契约**（§9 表格），再实现；`--peer` 目前只能报「尚未实现」退 2。
+6. **新检查项先加契约**（§9 表格），再实现；目前没有未实现的检查项，`PENDING_CHECKS` 为空。
 
 ## 相关测试
 

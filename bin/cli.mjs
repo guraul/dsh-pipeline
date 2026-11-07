@@ -90,6 +90,8 @@ import { runTask as runTaskFlow } from '../lib/task.mjs'
 import { describeBuild, readBuildInfo } from '../lib/build-info.mjs'
 import { describeRow, diagnose } from '../lib/doctor.mjs'
 import { LOCK_PATH, checkLock, formatExpect, readInstalledBuild, writeLock } from '../lib/lock.mjs'
+import { checkPeer, collectRequirements, resolveDshVersion } from '../lib/peer.mjs'
+import { parseVersion } from '../lib/semver.mjs'
 import { checkProfile } from '../lib/profile-check.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -145,7 +147,7 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
                      dsh --dump-config 可见性（dsh 不可用时跳过不算失败）、cordis.patch.yml、
                      审核记录目录可写；逐项 ✓/✗，任一 ✗ 退出 1。不给该 flag 则只比构建，
                      行为与现状一致
-  selftest   一致性自检（契约 §9；已实现 --shims / --config / --lock / --exit-codes / --repos，--peer 未实现）
+  selftest   一致性自检（契约 §9；--shims / --config / --lock / --peer / --exit-codes / --repos 均已实现）
   shim       生成 / 校验入口 shim（契约 §8）
   hooks      安装 / 校验 pre-push 直推拦截钩子
   check-all  逐包跑 test / check / typecheck 并汇总（缺 node_modules 跳过不算失败）
@@ -156,7 +158,7 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
   review     生成审核请求（prepare）、审核提示词（prompt）并把判定落成记录（publish）
 
 selftest 用法:
-  dsh-pipeline selftest [--shims] [--config] [--lock] [--exit-codes] [--fast | --repos <a,b,c>] [--json] [--root <dir>]
+  dsh-pipeline selftest [--shims] [--config] [--lock] [--peer] [--exit-codes] [--fast | --repos <a,b,c>] [--json] [--root <dir>]
   --shims            6 个入口 == 按当前包版本渲染后的模板（<root>/scripts/pipeline 不存在即失败）
   --config           校验 <root>/.dsh/pipeline.json：能被 schema 接受、没有未声明字段
   --lock             核对装包与 .dsh/pipeline.lock.json 的 expect（契约 §7.2）：一致→0；
@@ -173,9 +175,11 @@ selftest 用法:
                      带 --repos 时改为 {"ok":…,"baseline":"…","repos":[{"path","sha","builtAt","ok"}],"skipped":[{"path","reason"}]}
                      （退出码与人读模式一致）
   --root <dir>       仓库根目录（缺省主工作区；git 定位不到时退回当前目录）；--repos 用它解析相对路径
-  --peer             已识别但尚未实现（peer 范围比对）：
-                     传入即报「尚未实现」并退出 2，不静默忽略
-  退出码: 0 通过（没有配置文件也退 0）/ 1 检查不通过 / 2 用法错误或检查项未实现
+  --peer             检查各包声明的 DSH 版本范围是否覆盖当前版本：声明来自 engines.dsh →
+                     dsh.engines.dsh → dsh.compatibility.dsh → @deepseek-ai/dsh* 的 peer 依赖；
+                     无声明→跳过(0)；全部覆盖→0；任一不覆盖→1；不知道当前版本→2
+  --dsh-version <v>  仅 --peer：当前 DSH 版本（缺省读 <root>/node_modules 或 <root>/tools/node_modules 下的 @deepseek-ai/dsh）
+  退出码: 0 通过（没有配置文件也退 0）/ 1 检查不通过 / 2 用法错误
 
 shim 用法:
   dsh-pipeline shim install [--root <dir>] [--force]
@@ -600,8 +604,8 @@ const REVIEW_PUBLISH_VALUE_FLAGS = new Set([
 const REVIEW_PUBLISH_BOOL_FLAGS = new Set(['post-review', 'dry-run'])
 const REVIEW_PROMPT_VALUE_FLAGS = new Set(['request', 'out', 'role'])
 const REVIEW_PROMPT_BOOL_FLAGS = new Set()
-const SELFTEST_VALUE_FLAGS = new Set(['root', 'repos'])
-// --peer 只是「被识别」：传了要报尚未实现退 2，不能落进未知选项；--lock 已实现
+const SELFTEST_VALUE_FLAGS = new Set(['root', 'repos', 'dsh-version'])
+// 所有检查项都已实现；PENDING_CHECKS 目前为空，保留这段是为了下一个未实现项仍有统一出口
 const SELFTEST_BOOL_FLAGS = new Set([
   'config',
   'fast',
@@ -1664,7 +1668,7 @@ function runLock(argv, deps, io) {
  * selftest：契约 §9 的一致性门禁。
  * --shims / --config / --lock / --exit-codes 已实现（--fast 等价于 --shims --config）；--repos 是独立的多仓比对模式，
  * 与其它检查项互斥（--json 形态不同，合起来没有单一会话能同时表达两种结构）；
- * --peer 只识别不执行，明确报错退 2。检查逻辑在 lib/selftest.mjs，--shims 的比对复用 lib/shim.mjs。
+ * 没有未实现的检查项。检查逻辑在 lib/selftest.mjs，--shims 的比对复用 lib/shim.mjs。
  * 退出码：0 通过（含「无配置文件跳过」「--repos 可比对的仓不足 2 个」）/ 1 检查不通过 / 2 用法错误或检查项未实现。
  */
 function runSelftest(argv, deps, io) {
@@ -1682,7 +1686,7 @@ function runSelftest(argv, deps, io) {
   // --repos 是独立模式（自己的输出形态与退出码语义），不掺进检查项那一组
   if (options.repos !== undefined) {
     if (!nonEmpty(options.repos)) return argError(io, 'selftest', '--repos 必须是非空的逗号分隔路径')
-    if (options.shims === true || options.config === true || options.fast === true) {
+    if (options.shims === true || options.config === true || options.fast === true || options.lock === true || options.peer === true || options['exit-codes'] === true) {
       return argError(io, 'selftest', '--repos 不能与 --shims / --config / --fast 同时使用')
     }
     return runReposCheck(String(options.repos), options, deps, io)
@@ -1696,19 +1700,51 @@ function runSelftest(argv, deps, io) {
           ...(options.shims === true ? ['shims'] : []),
           ...(options.config === true ? ['config'] : []),
           ...(options.lock === true ? ['lock'] : []),
+          ...(options.peer === true ? ['peer'] : []),
           ...(options['exit-codes'] === true ? ['exit-codes'] : []),
         ]
   if (checks.length === 0) {
     return argError(
       io,
       'selftest',
-      '未指定检查项（当前可用 --shims / --config / --lock / --exit-codes / --fast / --repos）',
+      '未指定检查项（当前可用 --shims / --config / --lock / --peer / --exit-codes / --fast / --repos）',
     )
   }
 
   const root = resolveSelftestRoot(options.root, deps)
+
+  // --peer 要先知道「当前 DSH 版本」：显式参数优先，其次读仓里装的 @deepseek-ai/dsh
+  let dshVersion
+  if (checks.includes('peer')) {
+    let rootStat = null
+    try {
+      rootStat = statSync(root)
+    } catch {
+      rootStat = null
+    }
+    if (rootStat === null || !rootStat.isDirectory()) {
+      return argError(io, 'selftest', `--root 不是目录: ${root}`)
+    }
+    const explicit = options['dsh-version']
+    if (explicit !== undefined) {
+      if (!nonEmpty(explicit) || parseVersion(String(explicit)) === null) {
+        return argError(io, 'selftest', '--dsh-version 必须是合法版本号（如 0.2.2-rc.1）')
+      }
+      dshVersion = String(explicit)
+    } else {
+      dshVersion = resolveDshVersion(root)
+      if (dshVersion === null && collectRequirements(root).requirements.length > 0) {
+        return argError(
+          io,
+          'selftest',
+          '无法确定当前 DSH 版本：传 --dsh-version，或在仓里装 @deepseek-ai/dsh',
+        )
+      }
+    }
+  }
+
   // --exit-codes 会起子进程，runner 从这里注入（测试用假 runner 断言发了什么命令）
-  const result = runChecks(root, checks, { runner: deps.runner })
+  const result = runChecks(root, checks, { runner: deps.runner, dshVersion })
 
   // 失败原文始终走 stderr：--json 只改 stdout 的形态，不改退出码也不吞错误
   for (const check of result.checks) {
