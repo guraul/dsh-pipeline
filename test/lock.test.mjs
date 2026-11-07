@@ -258,7 +258,7 @@ test('lock check：与 selftest --lock 结论一致（0 / 1）', (t) => {
   const viaSelftest = run(['selftest', '--lock', '--root', root])
   assert.equal(viaLock.code, 1)
   assert.equal(viaSelftest.code, 1)
-  assert.match(viaSelftest.err, /selftest: 锁里是 deadbee .*，装的是 5a6d133 /)
+  assert.match(viaSelftest.err, /dsh-pipeline: selftest: E_STATE: 锁里是 deadbee .*，装的是 5a6d133 /)
 })
 
 test('lock：用法错误统一退 2（缺动作 / 未知动作 / 缺 --root）', () => {

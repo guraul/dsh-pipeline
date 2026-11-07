@@ -245,6 +245,6 @@ test('check-all：配置 checks 形状非法 → 读取配置失败退 2（E_CON
   const r = run(fx, [])
   assert.equal(r.status, 2)
   assert.equal(r.stdout, '')
-  assert.match(r.stderr, /check-all: 读取配置失败/)
+  assert.match(r.stderr, /dsh-pipeline: check-all: E_CONFIG: 读取配置失败/)
   assert.match(r.stderr, /checks\.packages/)
 })

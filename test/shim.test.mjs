@@ -108,7 +108,7 @@ test('shim check：篡改一个字节 → 退 1，stderr 列出该文件', (t) =
   const result = run(['shim', 'check', '--root', root])
   assert.equal(result.code, 1)
   assert.equal(result.out, '')
-  assert.equal(result.err, 'shim: 与模板不一致: status.sh\n')
+  assert.equal(result.err, 'dsh-pipeline: shim: E_STATE: 与模板不一致: status.sh\n')
 })
 
 test('shim check：入口目录不存在 → 退 1，提示先跑 shim install', (t) => {
@@ -204,7 +204,7 @@ test('shim install：内容不同无 --force 退 1，有 --force 覆盖', (t) =>
   const blocked = install(root)
   assert.equal(blocked.code, 1)
   assert.equal(blocked.out, '')
-  assert.equal(blocked.err, 'shim: 已存在且内容不同: review.sh（确认后加 --force 覆盖）\n')
+  assert.equal(blocked.err, 'dsh-pipeline: shim: E_STATE: 已存在且内容不同: review.sh（确认后加 --force 覆盖）\n')
   assert.equal(readFileSync(file, 'utf8'), '# 手改过的内容\n', '拒绝时不许动磁盘')
 
   const forced = install(root, ['--force'])

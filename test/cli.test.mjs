@@ -106,6 +106,24 @@ function reviewText(verdict, sha, { findings = [], evidence = [] } = {}) {
   ].join('\n')
 }
 
+test('契约 §5：错误行统一为 dsh-pipeline: <子命令>: <码>: <说明>，码只在 6 个之内', () => {
+  const cases = [
+    ['gate', '--pr', '1'],
+    ['no-such-command'],
+    ['shim', 'check', '--root', '/nonexistent-root-for-test'],
+  ]
+  for (const argv of cases) {
+    const io = makeIO()
+    run(argv, io)
+    const line = io.state.err.split('\n').find((item) => item.length > 0) ?? ''
+    assert.match(
+      line,
+      /^dsh-pipeline: [a-z-]+( [a-z-]+)?: E_(USAGE|CONFIG|RECORD|PARSE|ENV|STATE): /,
+      argv.join(' '),
+    )
+  }
+})
+
 test('--help 与 --version 行为保持不变', () => {
   const help = makeIO()
   assert.equal(run(['--help'], help), 0)
@@ -160,7 +178,7 @@ test('gate: head 不一致时拒绝，stderr 带原因，退出码 1', () => {
   assert.equal(run(['gate', '--pr', '7', '--root', root, '--record', file], io, { runner }), 1)
   assert.equal(calls.length, 1)
   assert.deepEqual(calls[0].args, ['-C', root, 'rev-parse', 'HEAD'])
-  assert.match(io.state.err, /^审核闸门: /m)
+  assert.match(io.state.err, /^dsh-pipeline: gate: E_STATE: /m)
   assert.match(io.state.err, /判定已作废/)
   assert.equal(io.state.out, '')
 })
@@ -172,7 +190,7 @@ test('gate: 过期记录拒绝，退出码 1', () => {
   const io = makeIO()
 
   assert.equal(run(['gate', '--pr', '7', '--root', root, '--record', file, '--head-sha', SHA], io), 1)
-  assert.match(io.state.err, /审核闸门: /)
+  assert.match(io.state.err, /dsh-pipeline: gate: E_/)
   assert.match(io.state.err, /已过期/)
 })
 
@@ -190,7 +208,7 @@ test('gate: 缺记录且未跳过时 fail-closed，退出码 1', () => {
   const io = makeIO()
 
   assert.equal(run(['gate', '--pr', '7', '--root', root], io), 1)
-  assert.match(io.state.err, /审核闸门: /)
+  assert.match(io.state.err, /dsh-pipeline: gate: E_/)
   assert.match(io.state.err, /失败关闭/)
   assert.equal(io.state.out, '')
 })
@@ -281,7 +299,7 @@ test('merge: 闸门拒绝时不调用 gh，退出码 1', () => {
     1,
   )
   assert.equal(calls.length, 0)
-  assert.match(io.state.err, /审核闸门: /)
+  assert.match(io.state.err, /dsh-pipeline: merge: E_/)
 })
 
 test('merge: 记录通过但未配置 repo 时退出码 2', () => {
@@ -479,7 +497,7 @@ test('record: 判定 sha 与请求不一致时落 ESCALATE/E_SHA_MISMATCH，退�
     }),
     1,
   )
-  assert.match(io.state.err, /E_SHA_MISMATCH/)
+  assert.match(io.state.err, /dsh-pipeline: record: E_STATE:/)
 
   const saved = readRecord(recordFile(reviewsDir(root), 7, SHA))
   assert.equal(saved.verdict, 'ESCALATE')
