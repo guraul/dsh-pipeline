@@ -774,16 +774,43 @@ test('record: --provider / --form 落盘，缺省为 unknown / cli', () => {
   assert.equal(fallback.form, 'cli')
 })
 
+test('record: REJECT 缺省退 1、带 --legacy-exit-codes 退 0，两种都落盘', () => {
+  for (const [flag, expected] of [[null, 1], ['--legacy-exit-codes', 0]]) {
+    const root = tmp()
+    const inputs = writeInputs(root, RECORD_REQUEST, plainReviewText('REJECT'))
+    const io = makeIO()
+    const argv = ['record', '--request', inputs.requestFile, '--response', inputs.responseFile, '--root', root]
+    if (flag !== null) argv.push(flag)
+
+    assert.equal(run(argv, io, { cwd: root }), expected, `${String(flag)}: ${io.state.err}`)
+    assert.equal(readRecord(recordFile(reviewsDir(root), 7, SHA)).verdict, 'REJECT', '两种口径都要落盘')
+  }
+})
+
+test('review publish: REJECT 缺省退 1、带 --legacy-exit-codes 退 0', () => {
+  for (const [flag, expected] of [[null, 1], ['--legacy-exit-codes', 0]]) {
+    const root = tmp()
+    const inputs = writeInputs(root, RECORD_REQUEST, plainReviewText('REJECT'))
+    const io = makeIO()
+    const argv = ['review', 'publish', '--pr', '7', '--request', inputs.requestFile, '--response', inputs.responseFile, '--root', root]
+    if (flag !== null) argv.push(flag)
+
+    assert.equal(run(argv, io, { cwd: root }), expected, `${String(flag)}: ${io.state.err}`)
+    assert.equal(readRecord(recordFile(reviewsDir(root), 7, SHA)).verdict, 'REJECT')
+  }
+})
+
 test('record: --json 输出可被 JSON.parse，含 verdict，且不打印「已写入审核记录」', () => {
   const root = tmp()
   const inputs = writeInputs(root, RECORD_REQUEST, plainReviewText('REJECT'))
   const io = makeIO()
 
+  // REJECT 在新口径下退 1（记录照常落盘）；--legacy-exit-codes 才退 0
   assert.equal(
     run(['record', '--request', inputs.requestFile, '--response', inputs.responseFile, '--root', root, '--json'], io, {
       cwd: root,
     }),
-    0,
+    1,
     io.state.err,
   )
   assert.doesNotMatch(io.state.out, /已写入审核记录/)

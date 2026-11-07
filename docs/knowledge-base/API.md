@@ -14,7 +14,7 @@
 | `pr` | 推送当前任务分支并创建 PR | `--issue`、`--root` | `runPr` → `lib/pr.mjs` `runPr` | 0 / 2 |
 | `review prepare` | 读 PR 的 head / 改动文件 / diff，写审核请求 | `--pr`(必填)、`--issue`、`--root`、`--model`、`--round`、`--out`、`--facts`、`--include` | `runReviewPrepare` | 0 / 2 |
 | `review prompt` | 由请求 JSON 渲染审核提示词（不发外部命令） | `--request`(必填，无缺省)、`--out`、`--role` | `runReviewPrompt` → `lib/review.mjs` `buildPrompt` | 0 / 2 |
-| `review publish` | 把判定落成记录；可选发 GitHub review | `--pr`、`--response`(必填)、`--request`、`--round`、`--root`、`--model`、`--provider`、`--form`、`--post-review`、`--dry-run` | `runReviewPublish` →（复用）`runRecord` + `sendReview` | 0 / 1 ESCALATE / 2 参数与配置 / 3 发 review 失败 |
+| `review publish` | 把判定落成记录；可选发 GitHub review | `--pr`、`--response`(必填)、`--request`、`--round`、`--root`、`--model`、`--provider`、`--form`、`--post-review`、`--dry-run`、`--legacy-exit-codes` | `runReviewPublish` →（复用）`runRecord` + `sendReview` | 0 APPROVE（或带 `--legacy-exit-codes` 的 REJECT）/ 1 REJECT 或 ESCALATE / 2 参数与配置 / 3 发 review 失败 |
 | `record` | 只落盘判定记录（供外部流程使用） | `--request`、`--response`(必填)、`--findings`、`--round`、`--root`、`--model`、`--provider`、`--form`、`--duration-ms`、`--name`、`--json` | `runRecord` | 0（含 REJECT）/ 1 ESCALATE 已落盘 / 2 |
 | `gate` | 审核闸门检查 | `--pr`、`--root`(均必填)、`--record`、`--head-sha`、`--no-review`、`--reason` | `runGate` → `decideGate` → `lib/gate.mjs` | 0 / 1 闸门拒绝 / 2 |
 | `merge` | 闸门通过后 squash 合并并清理现场 | 同 `gate`，另加 `--check-only`、`--checks-file`、`--force` | `runMerge` → `lib/merge.mjs` `runMerge` | 0 / 1 / 2 |
@@ -42,8 +42,8 @@
 
 | 码 | 含义 | 现行出现范围 |
 |---|---|---|
-| 0 | 成功 | 全部；注意 `record` / `review publish` 解析出 `REJECT` 也退 0（判定本身是一次成功落盘） |
-| 1 | 业务拒绝 | `gate`、`merge`（闸门拒绝 / CI 未过）、`record` 与 `review publish` 的 `ESCALATE`、`doctor` 漂移、`selftest` 不通过、`shim`/`hooks` 不一致或冲突、`check-all` 有失败 |
+| 0 | 成功 | 全部；`record` / `review publish` 的 `REJECT` 只有带 `--legacy-exit-codes` 才退 0 |
+| 1 | 业务拒绝 | `gate`、`merge`（闸门拒绝 / CI 未过）、`record` 与 `review publish` 的 `REJECT` / `ESCALATE`、`doctor` 漂移、`selftest` 不通过、`shim`/`hooks` 不一致或冲突、`check-all` 有失败 |
 | 2 | 用法或环境错误 | 全部子命令的参数错误；`gate` 取不到 head；`task` 的 fetch / worktree 失败；`review prepare` 读 PR 失败 |
 | 3 | 环境错误 | `check-all` 找不到 pnpm；`review publish --post-review` 的 gh 调用失败（记录不回滚） |
 
