@@ -39,7 +39,7 @@ import {
   replaceRegion,
 } from '../lib/deploy.mjs'
 import { evaluateGate } from '../lib/gate.mjs'
-import { issueView, prChecks, prDiff, prMerge, prView } from '../lib/gh.mjs'
+import { currentUser, issueView, prChecks, prDiff, prMerge, prView } from '../lib/gh.mjs'
 import { checkHook, installHook } from '../lib/hooks.mjs'
 import {
   branchShow,
@@ -306,7 +306,9 @@ review 用法:
            --post-review 落盘成功后再把判定发成 GitHub review（幂等：同 SHA + 同标记只发一次），
            event 按判定映射 APPROVE→APPROVE、REJECT→REQUEST_CHANGES、ESCALATE→COMMENT，
            repo 取 .dsh/pipeline.json 的 repo（缺 repo 退 2）；发失败退 3，记录不回滚；
-           身份（GH_CONFIG_DIR 等）由 gh 自己读环境变量，本命令只透传、不处理。
+           身份：配置 review.identity.ghConfigDir 会作为 GH_CONFIG_DIR 传给 gh（~ 展开、结束后还原）；
+           review.identity.account 非空时先用 gh api user 校验登录名，不一致退 2、不发送。
+           配置 review.postReview=true 等价于每次都带 --post-review；--dry-run 仍优先。
            --dry-run 不写盘、不发请求，只打印将要发送的 event 与 body 前 200 字；
            --legacy-exit-codes 判定 REJECT 时退回旧口径退出 0（缺省退 1）；
            带 --post-review 时退出码反映「review 是否发出」，不反映判定；记录没写成时不发送。
@@ -334,7 +336,7 @@ record 选项:
   --request <file>   审核请求 JSON（插件信封 {request,stats} 或扁平请求均可）
   --response <file>  reviewer 响应文本
   --findings <file>  响应里没有 json 代码块时的兜底（{\"findings\":[...],\"evidence\":[...]}）
-  --round <n>        审核轮次（1..${MAX_ROUND}，默认 1）
+  --round <n>        审核轮次（1..review.rounds，缺省上限 ${MAX_ROUND}；默认 1）
   --root <dir>       仓库根目录（缺省主工作区，git 定位不到时用当前目录），记录写入 <root>/.dsh-web/reviews
   --model <名>       产生判定的模型（缺省取请求里的 model）
   --name <文件名>    自定义落盘文件名（默认 <pr>-<sha>.json；分片审核用它直接写分片名，
@@ -418,16 +420,29 @@ function requireRoot(value) {
   return { value }
 }
 
-function parseRound(value) {
+function parseRound(value, maxRounds = MAX_ROUND) {
   if (value === undefined) return { value: 1 }
   if (!/^[1-9][0-9]*$/.test(value)) {
-    return { error: `--round 必须是 1..${MAX_ROUND} 的整数: ${value}` }
+    return { error: `--round 必须是 1..${maxRounds} 的整数: ${value}` }
   }
   const round = Number(value)
-  if (round < 1 || round > MAX_ROUND) {
-    return { error: `--round 必须是 1..${MAX_ROUND} 的整数: ${value}` }
+  if (round < 1 || round > maxRounds) {
+    return { error: `--round 必须是 1..${maxRounds} 的整数: ${value}` }
   }
   return { value: round }
+}
+
+/**
+ * 审核轮次上限：取配置 `review.rounds`（缺省 MAX_ROUND）。
+ * 配置读不到时退回缺省——轮次上限不该因为一个坏配置把命令整体拦死。
+ */
+function reviewMaxRounds(root) {
+  try {
+    const rounds = loadConfig(root).config.review.rounds
+    return Number.isInteger(rounds) ? rounds : MAX_ROUND
+  } catch {
+    return MAX_ROUND
+  }
 }
 
 /** gate / merge 共用同一份参数校验；merge 多三个开关（check-only / checks-file / force）。 */
@@ -566,6 +581,7 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
     record: candidate,
     headSha: sha,
     currentPolicyVersion: pkg.version,
+    maxRounds: reviewMaxRounds(root),
   })
   if (!verdict.ok) {
     return {
@@ -851,7 +867,7 @@ function runRecord(argv, deps, io) {
   if (options.findings !== undefined && !nonEmpty(options.findings)) {
     return argError(io, 'record', '--findings 必须是非空文件路径')
   }
-  const round = parseRound(options.round)
+  const round = parseRound(options.round, reviewMaxRounds(resolveMainWorktreeRoot(options.root, deps)))
   if (round.error) return argError(io, 'record', round.error)
   const duration = parseDuration(options['duration-ms'])
   if (duration.error) return argError(io, 'record', duration.error)
@@ -1012,7 +1028,7 @@ function runReviewPrepare(argv, deps, io) {
 
   const pr = parsePr(options.pr)
   if (pr.error) return argError(io, sub, pr.error)
-  const round = parseRound(options.round)
+  const round = parseRound(options.round, reviewMaxRounds(resolveReviewRoot(options.root, deps)))
   if (round.error) return argError(io, sub, round.error)
   // --issue 可选但给了就必须是正整数：空值 / 0 / abc 当场拒绝，不静默退回自动探测
   if (options.issue !== undefined && !/^[1-9][0-9]*$/.test(options.issue)) {
@@ -1216,10 +1232,10 @@ function runReviewPublish(argv, deps, io) {
   if (options.form !== undefined && !nonEmpty(options.form)) {
     return argError(io, sub, '--form 必须是非空字符串')
   }
-  const explicitRound = options.round === undefined ? null : parseRound(options.round)
-  if (explicitRound !== null && explicitRound.error) return argError(io, sub, explicitRound.error)
-
   const root = resolveReviewRoot(options.root, deps)
+  const maxRounds = reviewMaxRounds(root)
+  const explicitRound = options.round === undefined ? null : parseRound(options.round, maxRounds)
+  if (explicitRound !== null && explicitRound.error) return argError(io, sub, explicitRound.error)
   const requestFile =
     options.request !== undefined
       ? options.request
@@ -1261,10 +1277,21 @@ function runReviewPublish(argv, deps, io) {
     return previewPostReview({ root, pr: pr.value, request, responseFile: options.response, io })
   }
 
+  // 配置 review.postReview=true 等价于每次都带 --post-review（契约 §7.1）；显式开关优先，二者取或
+  let postReview = options['post-review'] === true
+  if (!postReview) {
+    try {
+      postReview = loadConfig(root).config.review.postReview === true
+    } catch {
+      // 配置读不到时按「不发送」处理：发送是外部副作用，不该在配置异常时悄悄发生
+      postReview = false
+    }
+  }
+
   // 判定是否可用与退出码解耦：REJECT 现在退 1，但它是一次有效判定，--post-review 仍要发。
   // 只在需要发送时解析（普通 publish 的读取顺序与开销保持不变）。
   let usable = false
-  if (options['post-review'] === true) {
+  if (postReview) {
     const responseText = readTextFile(options.response, '响应文件')
     if (responseText.error) return argError(io, sub, responseText.error)
     const analysis = analyzeVerdict(responseText.text, { nonce: request.nonce, diff: request.diff })
@@ -1290,7 +1317,7 @@ function runReviewPublish(argv, deps, io) {
   if (options['legacy-exit-codes'] === true) forward.push('--legacy-exit-codes')
 
   const code = runRecord(forward, deps, io)
-  if (options['post-review'] !== true) return code
+  if (!postReview) return code
   // 判定不可用：解析出来的结论不可信，没有可发的 event，审计留盘即可——
   // 不能把 E_PARSE 的兜底 ESCALATE 当成 reviewer 的真实意见发出去。
   // 记录没写成（退 2）同样不发：没有记录就没有可追溯的判定。
@@ -1360,16 +1387,48 @@ function sendReview({ root, pr, headSha, io, runner }) {
     return 2
   }
 
-  let repo
+  let config
   try {
-    repo = loadConfig(root).config.repo
+    config = loadConfig(root).config
   } catch (error) {
     io.err(`review publish: 读取配置失败: ${messageOf(error)}（记录已写入，review 未发出）`)
     return 2
   }
+  const repo = config.repo
   if (!nonEmpty(repo)) {
     io.err('review publish: 配置 .dsh/pipeline.json 缺少 repo，无法发送 review（记录已写入，review 未发出）')
     return 2
+  }
+
+  // 身份：ghConfigDir 决定用哪个 gh 配置目录（GH_CONFIG_DIR），account 决定必须是谁
+  const identity = config.review.identity
+  const previousConfigDir = process.env.GH_CONFIG_DIR
+  if (identity !== null && nonEmpty(identity.ghConfigDir)) {
+    process.env.GH_CONFIG_DIR = expandHome(identity.ghConfigDir)
+  }
+  try {
+    return sendReviewWithIdentity({ identity, repo, pr, headSha, io, runner, root, file, record })
+  } finally {
+    if (previousConfigDir === undefined) delete process.env.GH_CONFIG_DIR
+    else process.env.GH_CONFIG_DIR = previousConfigDir
+  }
+}
+
+/** sendReview 的身份校验与发送主体（GH_CONFIG_DIR 由调用方在进入前设好、退出后还原）。 */
+function sendReviewWithIdentity({ identity, repo, pr, headSha, io, runner, root, file, record }) {
+  if (identity !== null && nonEmpty(identity.account)) {
+    const who = currentUser({ runner })
+    if (!who.ok) {
+      io.err(who.error)
+      io.err('review publish: 记录已写，review 未发出（无法确认 gh 身份）')
+      return 3
+    }
+    if (who.data !== identity.account) {
+      io.err(
+        `review publish: 当前 gh 身份是 ${who.data}，配置要求 ${identity.account}（记录已写入，review 未发出）`,
+      )
+      return 2
+    }
   }
 
   const marker = reviewMarker(headSha)

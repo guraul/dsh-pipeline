@@ -121,9 +121,17 @@ test('checks 里只允许 packages / exclude，且各自必须是非空字符串
 })
 
 test('review.tier 缺省 tools，只接受 inline | tools', () => {
-  assert.deepEqual(loadConfig(tmp()).config.review, { tier: 'tools' })
+  assert.deepEqual(loadConfig(tmp()).config.review, {
+    tier: 'tools',
+    postReview: false,
+    identity: null,
+    rounds: 3,
+  })
   assert.deepEqual(loadConfig(tmpAfterWriting({ review: { tier: 'inline' } })).config.review, {
     tier: 'inline',
+    postReview: false,
+    identity: null,
+    rounds: 3,
   })
   // 空对象合法：tier 缺省，由默认值补成 tools
   assert.deepEqual(validateConfig({ review: {} }).review, {})
@@ -133,8 +141,34 @@ test('review.tier 缺省 tools，只接受 inline | tools', () => {
   for (const tier of ['readonly', 'TOOLS', '', 1, null]) {
     assert.throws(() => validateConfig({ review: { tier } }), code('E_CONFIG'), String(tier))
   }
-  // review.* 的其余字段仍属目标：现在写进来就是未知字段
-  assert.throws(() => validateConfig({ review: { tier: 'inline', postReview: true } }), code('E_CONFIG'))
+})
+
+test('review.postReview / identity / rounds：形态校验', () => {
+  // postReview 必须是布尔
+  assert.equal(validateConfig({ review: { postReview: true } }).review.postReview, true)
+  for (const value of ['true', 1, null]) {
+    assert.throws(() => validateConfig({ review: { postReview: value } }), code('E_CONFIG'), String(value))
+  }
+  // identity：对象、只认 ghConfigDir / account、都非空字符串
+  assert.deepEqual(validateConfig({ review: { identity: { account: 'a' } } }).review.identity, { account: 'a' })
+  for (const value of ['x', 1, []]) {
+    assert.throws(() => validateConfig({ review: { identity: value } }), code('E_CONFIG'), String(value))
+  }
+  assert.throws(() => validateConfig({ review: { identity: { token: 'x' } } }), code('E_CONFIG'))
+  for (const key of ['ghConfigDir', 'account']) {
+    for (const value of ['', '  ', 1, null]) {
+      assert.throws(() => validateConfig({ review: { identity: { [key]: value } } }), code('E_CONFIG'), `${key}=${String(value)}`)
+    }
+  }
+  // rounds：1..10 的整数
+  for (const value of [1, 2, 10]) {
+    assert.equal(validateConfig({ review: { rounds: value } }).review.rounds, value)
+  }
+  for (const value of [0, 11, 1.5, '3', null]) {
+    assert.throws(() => validateConfig({ review: { rounds: value } }), code('E_CONFIG'), String(value))
+  }
+  // 未知字段仍然拒绝
+  assert.throws(() => validateConfig({ review: { tier: 'inline', unknown: 1 } }), code('E_CONFIG'))
 })
 
 test('配置文件不是合法 JSON 时报 E_CONFIG', () => {
