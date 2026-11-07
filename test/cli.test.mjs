@@ -677,8 +677,23 @@ test('countChangedLines: 以 +++ 开头的真实新增行被计数，不被当�
     '+++foo',
     '+bar',
     '---baz',
+    // 反例：内容行 `+++ foo`（新增了一行 `++ foo`）、`--- bar`（删除了 `-- bar`）
+    '+++ foo',
+    '--- bar',
   ].join('\n')
-  assert.deepEqual(countChangedLines(diff), { total: 3, production: 3, testLines: 0 })
+  assert.deepEqual(countChangedLines(diff), { total: 5, production: 5, testLines: 0 })
+})
+
+test('countChangedLines: 新文件的 --- /dev/null 头仍被跳过', () => {
+  const diff = [
+    'diff --git a/lib/new.ts b/lib/new.ts',
+    'new file mode 100644',
+    '--- /dev/null',
+    '+++ b/lib/new.ts',
+    '+a',
+    '+b',
+  ].join('\n')
+  assert.deepEqual(countChangedLines(diff), { total: 2, production: 2, testLines: 0 })
 })
 
 test('countChangedLines: .test.jsx / .spec.mts 等后缀同样豁免', () => {

@@ -100,7 +100,9 @@ argv
 
 ### 3.5 构建标识（`build.json`，打包时生成、打包后删除）
 
-`{ gitSha, builtAt, dirty }`。源码目录里没有它（在 `.gitignore` 里），`readBuildInfo()` 返回 `null` 并说明是「源码」，不当作错误。
+`{ gitSha, builtAt, dirty, sourcePath, sourceHash }`。源码目录里没有它（在 `.gitignore` 里），`readBuildInfo()` 返回 `null` 并说明是「源码」，不当作错误。
+
+`sourcePath`（`pwd -P` 绝对路径）与 `sourceHash`（`scripts/source-hash.mjs` 对 `lib/**`、`bin/**`、`templates/**`、`package.json` 的「路径 + 内容」按字典序做的 sha256，不含 mtime）供 `lib/dist-freshness.mjs` 的 `verifyDistFreshness()` 在 CLI 启动时比对：源码改了却没重新 pack → 退 1，逃逸开关 `DSH_PIPELINE_ALLOW_STALE=1`。无 `build.json` / 源码 checkout 不在 / 旧版打包缺字段 → 跳过。
 
 ## 4. 数据存储位置与格式
 

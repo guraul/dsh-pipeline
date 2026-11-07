@@ -113,6 +113,8 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 **例外：`--post-review`** 的退出码反映「review 是否发出」（成功 0 / 配置错误 2 / gh 失败 3），不反映判定——`REJECT` 的 review 照常发出，判定看记录。**记录没写成（退 2）时不发送**：没有记录就没有可追溯的判定。
 
+**例外：dist 新鲜度校验（`lib/dist-freshness.mjs`，2026-11-07 起）**：CLI 启动时比对装包 `build.json.sourceHash` 与源码重算值，不一致（源码改了却没重新 `pnpm pack`）→ stderr 打印原因并**退 1**；设 `DSH_PIPELINE_ALLOW_STALE=1` 临时放行。没有 `build.json`（源码运行）、源码 checkout 已删除、旧版打包缺字段 → 静默跳过，不影响任何命令。
+
 硬规则：
 
 1. 入口 shim **不得**改写退出码，只透传；

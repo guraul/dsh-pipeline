@@ -95,6 +95,7 @@ dsh-pipeline deploy check --root <消费仓>
 | `lib/deploy.mjs` | `renderRegion`, `renderSkeleton`, `renderRollbackRegion`, `extractRegion`, `firstDifference`, `replaceRegion`, `resolveDeploy`, `DEPLOY_WORKFLOW_FILE`, `DEPLOY_ROLLBACK_FILE`, `DEPLOY_WORKFLOW_REPO`, `REGION_BEGIN`, `REGION_END`, `DeployError` | 部署 / 回滚 caller 骨架 |
 | `lib/profile-check.mjs` | `checkProfile`, `resolveDshHome`, `resolveProfileDir`, `OLD_PKG`, `NEW_PKGS` | profile 体检 |
 | `lib/build-info.mjs` | `readBuildInfo`, `describeBuild` | 构建标识 |
+| `lib/dist-freshness.mjs` | `sourceHash`, `verifyDistFreshness` | 源码指纹与 `dist/pkg` 新鲜度校验（忘 pack即退 1，`DSH_PIPELINE_ALLOW_STALE=1` 放行；CLI 包装见 `scripts/source-hash.mjs`） |
 
 **所有 `lib/gh.mjs` / `lib/git.mjs` / `lib/check-all.mjs` 的调用点都接受 `runner`**：测试用假 runner 断言"实际发出的命令"，不触网、不动真实仓库。新增外部调用时必须沿用这个形状。
 

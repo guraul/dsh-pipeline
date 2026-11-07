@@ -38,6 +38,7 @@ import {
   renderRollbackRegion,
   replaceRegion,
 } from '../lib/deploy.mjs'
+import { verifyDistFreshness } from '../lib/dist-freshness.mjs'
 import { evaluateGate } from '../lib/gate.mjs'
 import { currentUser, issueView, prChecks, prDiff, prMerge, prView } from '../lib/gh.mjs'
 import { checkHook, installHook } from '../lib/hooks.mjs'
@@ -869,8 +870,9 @@ export function countChangedLines(diff) {
       currentIsTest = m ? isTestPath(m[2]) : false
       continue
     }
-    // 只跳带空格的文件头（`+++ b/path`）；内容行 `+++foo` 是真实新增，要计数
-    if (/^(\+\+\+|---) /.test(line)) continue
+    // 只跳锚定的文件头（`+++ b/…`、`--- a/…`、`/dev/null` 两侧）；
+    // 内容行 `+++ foo`（新增了一行 `++ foo`）、`--- bar`（删除了 `-- bar`）是真实增删，要计数
+    if (/^(\+\+\+ b\/|--- a\/|\+\+\+ \/dev\/null|--- \/dev\/null)/.test(line)) continue
     if (line.startsWith('+') || line.startsWith('-')) {
       total += 1
       if (currentIsTest) testLines += 1
@@ -2588,5 +2590,13 @@ function invokedDirectly() {
 }
 
 if (invokedDirectly()) {
+  // 启动即校验 dist 新鲜度：消费方 link 的是 dist/pkg，源码改了却忘 pack 会静默跑旧代码。
+  const freshness = verifyDistFreshness()
+  if (!freshness.ok && process.env.DSH_PIPELINE_ALLOW_STALE !== '1') {
+    process.stderr.write(
+      `${freshness.reason}\n要么 \`pnpm pack\` 重新打包，要么设 DSH_PIPELINE_ALLOW_STALE=1 临时放行。\n`,
+    )
+    process.exit(1)
+  }
   process.exit(runCli(process.argv.slice(2)))
 }
