@@ -1555,7 +1555,7 @@ function runReviewPrompt(argv, deps, io) {
   } catch (error) {
     return argError(io, sub, `写入提示词失败: ${messageOf(error)}`)
   }
-  io.out(`已写入 ${options.out}`)
+  io.out(`审核: 已写入 ${options.out}`)
   return 0
 }
 

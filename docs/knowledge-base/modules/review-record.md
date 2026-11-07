@@ -109,7 +109,7 @@ writeRecord(dir, record, { name? })
 读兜底 --findings？ → 仅当响应里根本没有 ```json 块时才用
 算 policy（loadConfig + mergePolicy.hit(files, changedLines, {diff})）→ 算不出来退 2
 组记录（含 form/provider/model/durationMs/nonce/request{issue,diffChars}）→ writeRecord
---json 时输出记录本体，否则打印「已写入审核记录: <路径>」
+--json 时输出记录本体，否则打印「审核: 已写入审核记录: <路径>」
 判定不可用 → 退 1（已落盘）；否则 0；写盘失败 2
 ```
 

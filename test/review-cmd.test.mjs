@@ -856,7 +856,7 @@ test('review prompt：--out 写文件并打印「已写入 <路径>」', () => {
 
   const code = run(['review', 'prompt', '--request', file, '--out', out], io, { cwd: root })
   assert.equal(code, 0, io.state.err)
-  assert.equal(io.state.out.trim(), `已写入 ${out}`)
+  assert.equal(io.state.out.trim(), `审核: 已写入 ${out}`)
   assert.equal(io.state.err, '')
 
   const written = readFileSync(out, 'utf8')
