@@ -297,7 +297,9 @@ review 用法:
            event 按判定映射 APPROVE→APPROVE、REJECT→REQUEST_CHANGES、ESCALATE→COMMENT，
            repo 取 .dsh/pipeline.json 的 repo（缺 repo 退 2）；发失败退 3，记录不回滚；
            身份（GH_CONFIG_DIR 等）由 gh 自己读环境变量，本命令只透传、不处理。
-           --dry-run 不写盘、不发请求，只打印将要发送的 event 与 body 前 200 字。
+           --dry-run 不写盘、不发请求，只打印将要发送的 event 与 body 前 200 字；
+           --legacy-exit-codes 判定 REJECT 时退回旧口径退出 0（缺省退 1）；
+           带 --post-review 时退出码反映「review 是否发出」，不反映判定；记录没写成时不发送。
   prompt   读 --request 指定的请求 JSON，用 buildPrompt 组出审核提示词（不发任何外部命令）；
            审核档位取 .dsh/pipeline.json 的 review.tier（inline | tools，缺省 tools，见契约 §7.3）；
            --request 必填、没有缺省回退（拿错请求文件的代价是把错提示词发给 reviewer）；
@@ -328,6 +330,7 @@ record 选项:
   --name <文件名>    自定义落盘文件名（默认 <pr>-<sha>.json；分片审核用它直接写分片名，
                      避免「先写规范名再删除」的窗口）
   --provider <名>    产出判定的提供方（缺省 unknown）
+  --legacy-exit-codes  判定 REJECT 时退回旧口径退出 0（缺省退 1；记录两种口径都照常落盘）
   --form <名>        记录的形态标记（缺省 cli）
   --duration-ms <n>  本次审核耗时（毫秒，可选）
   --json             把写出的记录完整对象打到 stdout（不再打印「已写入审核记录」）
@@ -586,7 +589,7 @@ const RECORD_VALUE_FLAGS = new Set([
   'duration-ms',
   'name',
 ])
-const RECORD_BOOL_FLAGS = new Set(['json'])
+const RECORD_BOOL_FLAGS = new Set(['json', 'legacy-exit-codes'])
 const STATUS_VALUE_FLAGS = new Set(['root'])
 const STATUS_BOOL_FLAGS = new Set(['json'])
 const TASK_VALUE_FLAGS = new Set(['root', 'slug', 'worktrees-dir'])
@@ -605,7 +608,7 @@ const REVIEW_PUBLISH_VALUE_FLAGS = new Set([
   'provider',
   'form',
 ])
-const REVIEW_PUBLISH_BOOL_FLAGS = new Set(['post-review', 'dry-run'])
+const REVIEW_PUBLISH_BOOL_FLAGS = new Set(['post-review', 'dry-run', 'legacy-exit-codes'])
 const REVIEW_PROMPT_VALUE_FLAGS = new Set(['request', 'out', 'role'])
 const REVIEW_PROMPT_BOOL_FLAGS = new Set()
 const SELFTEST_VALUE_FLAGS = new Set(['root', 'repos', 'dsh-version'])
@@ -969,6 +972,9 @@ function runRecord(argv, deps, io) {
       io.err(`record: ${escalation.errorCode}: ${escalation.reason}；已按 ESCALATE 落盘`)
       return 1
     }
+    // 契约 §4 的新口径：判定 REJECT 也退 1（记录照常落盘）；
+    // --legacy-exit-codes 保留迁移前的「REJECT 退 0」，给还没改脚本的调用方用。
+    if (analysis.verdict === 'REJECT' && options['legacy-exit-codes'] !== true) return 1
     return 0
   } catch (error) {
     io.err(`record: 写入失败: ${messageOf(error)}`)
@@ -1243,6 +1249,16 @@ function runReviewPublish(argv, deps, io) {
     return previewPostReview({ root, pr: pr.value, request, responseFile: options.response, io })
   }
 
+  // 判定是否可用与退出码解耦：REJECT 现在退 1，但它是一次有效判定，--post-review 仍要发。
+  // 只在需要发送时解析（普通 publish 的读取顺序与开销保持不变）。
+  let usable = false
+  if (options['post-review'] === true) {
+    const responseText = readTextFile(options.response, '响应文件')
+    if (responseText.error) return argError(io, sub, responseText.error)
+    const analysis = analyzeVerdict(responseText.text, { nonce: request.nonce, diff: request.diff })
+    usable = analysis.ok && analysis.sha === request.head_sha
+  }
+
   const forward = [
     '--request',
     requestFile,
@@ -1259,12 +1275,14 @@ function runReviewPublish(argv, deps, io) {
   if (nonEmpty(provider)) forward.push('--provider', provider)
   const form = nonEmpty(options.form) ? options.form : request.form
   if (nonEmpty(form)) forward.push('--form', form)
+  if (options['legacy-exit-codes'] === true) forward.push('--legacy-exit-codes')
 
   const code = runRecord(forward, deps, io)
   if (options['post-review'] !== true) return code
-  // 记录写了但判定不可用（退 1）：解析出来的结论不可信，没有可发的 event，
-  // 审计留盘即可——不能把 E_PARSE 的兜底 ESCALATE 当成 reviewer 的真实意见发出去。
-  if (code !== 0) return code
+  // 判定不可用：解析出来的结论不可信，没有可发的 event，审计留盘即可——
+  // 不能把 E_PARSE 的兜底 ESCALATE 当成 reviewer 的真实意见发出去。
+  // 记录没写成（退 2）同样不发：没有记录就没有可追溯的判定。
+  if (!usable || code === 2) return code
   return sendReview({ root, pr: pr.value, headSha: request.head_sha, io, runner: deps.runner })
 }
 
