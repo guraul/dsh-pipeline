@@ -577,11 +577,23 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
     sha = current.data
   }
 
+  // 轮次上限取配置；配置非法时 fail-closed（与 merge 路径一致），不静默回退默认值
+  let maxRounds
+  try {
+    maxRounds = loadConfig(root).config.review.rounds
+  } catch (error) {
+    return {
+      code: 2,
+      skipped: false,
+      lines: [{ stream: 'err', text: `审核闸门: 读取配置失败: ${messageOf(error)}` }],
+    }
+  }
+
   const verdict = evaluateGate({
     record: candidate,
     headSha: sha,
     currentPolicyVersion: pkg.version,
-    maxRounds: reviewMaxRounds(root),
+    maxRounds,
   })
   if (!verdict.ok) {
     return {

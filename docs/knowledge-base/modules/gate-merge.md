@@ -17,7 +17,7 @@
 
 ## 闸门（`evaluateGate`）
 
-入参：`{ record, headSha, currentPolicyVersion, now, ttlMs }`。`record` 可以是对象或 JSON 文本；解析失败按「不可解析」处理，不猜。
+入参：`{ record, headSha, currentPolicyVersion, now, ttlMs, maxRounds }`。`maxRounds` 缺省 `MAX_ROUND`（3），由调用方按配置 `review.rounds` 传入。`record` 可以是对象或 JSON 文本；解析失败按「不可解析」处理，不猜。
 
 判定顺序（顺序即语义，前面的不成立时后面没有意义）：
 
@@ -25,7 +25,7 @@
 |---|---|---|---|
 | 1 | 是对象 | `E_RECORD` | 缺失或无法解析 |
 | 2 | `schemaVersion === 1` | `E_SCHEMA`（缺失算 `E_RECORD`） | 结构版本 |
-| 3 | `round ∈ 1..3` | `E_RECORD` | 轮次上限 3 |
+| 3 | `round ∈ 1..maxRounds` | `E_RECORD` | 轮次上限取配置 `review.rounds`（1..3，缺省 3） |
 | 4 | `verdict === 'APPROVE'` | `E_VERDICT` | 带上记录里的 `errorCode`（可能是 `E_PARSE` / `E_POLICY`）、绝不猜测或补全 |
 | 5 | `head_sha === headSha` | `E_SHA_MISMATCH` | 判定绑定的提交 |
 | 6 | `createdAt` 可解析且 `now - createdAt <= ttl` | `E_RECORD` / `E_EXPIRED` | TTL 默认 24h |

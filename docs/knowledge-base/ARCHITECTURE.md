@@ -66,7 +66,7 @@ argv
 |---|---|---|
 | `pr` | 正整数 | PR 编号 |
 | `head_sha` | 40 位小写十六进制 | PR 的 head 提交 |
-| `round` | 1..3 | 审核轮次 |
+| `round` | 1..`review.rounds`（缺省 3） | 审核轮次 |
 | `nonce` | 12 位 base32（`A-Z2-7`） | 一次性标记，判定行必须带它 |
 | `model` / `provider` / `form` | 字符串 | prepare 只占位（空），由 publish 的同名参数决定 |
 | `files` | 字符串数组 | 从 diff 解析出的改动文件 |
@@ -134,7 +134,7 @@ argv
 ```text
 记录可解析？        → E_RECORD
 schemaVersion 匹配？→ E_SCHEMA（缺失算 E_RECORD）
-round ∈ 1..3？      → E_RECORD
+round ∈ 1..maxRounds？ → E_RECORD
 verdict === APPROVE？→ E_VERDICT（带上记录里的 errorCode）
 head_sha === 目标？ → E_SHA_MISMATCH（判定作废）
 createdAt 可解析且在 TTL（默认 24h）内？ → E_RECORD / E_EXPIRED
