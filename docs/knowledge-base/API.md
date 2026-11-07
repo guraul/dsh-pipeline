@@ -83,7 +83,7 @@ dsh-pipeline deploy check --root <消费仓>
 | `lib/pr.mjs` | `runPr`, `prBody`, `issueFromBranch`, `TASK_BRANCH_PATTERN`, `PR_BASE` | 开 PR |
 | `lib/repo.mjs` | `resolveRoot`, `resolveMainRoot`, `resolveRepo`, `repoFromRemote`, `mainRootFromCommonDir` | 两种 root 语义 + owner/name |
 | `lib/git.mjs` | `worktreeList`, `worktreeAdd`, `worktreeRemove`, `currentBranch`, `headSha`, `toplevel`, `gitCommonDir`, `remoteUrl`, `statusPorcelain`, `checkout`, `fetch`, `mergeFF`, `push`, `deleteBranch`, `configGet`, `configSet` | git 具名操作 |
-| `lib/gh.mjs` | `prView`, `prChecks`, `prDiff`, `prMerge`, `prComment`, `prReview`, `prList`, `issueView`, `prViewByBranch`, `prCreate`, `MERGE_STRATEGY` | gh 具名操作 |
+| `lib/gh.mjs` | `prView`, `prChecks`, `prDiff`, `prMerge`, `prComment`, `prReview`, `prList`, `issueView`, `prViewByBranch`, `prCreate`, `currentUser`, `MERGE_STRATEGY` | gh 具名操作（`currentUser` 供 `review.identity.account` 校验） |
 | `lib/shim.mjs` | `renderShim`, `installShims`, `checkShims`, `SHIM_ENTRIES`, `SHIM_DIR` | 入口生成与比对 |
 | `lib/hooks.mjs` | `renderHook`, `installHook`, `checkHook`, `HOOK_MARKER` | pre-push 钩子 |
 | `lib/selftest.mjs` | `runChecks`, `checkConfig`, `checkShimsEntry`, `checkRepos`, `DONE_CHECKS`, `PENDING_CHECKS` | 一致性门禁 |

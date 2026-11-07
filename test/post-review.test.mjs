@@ -37,6 +37,12 @@ for a in "$@"; do
   if [ -z "$line" ]; then line="$a"; else line="$line	$a"; fi
 done
 printf '%s\\n' "$line" >> "$STUB_GH_LOG"
+if [ -n "$STUB_ENV_LOG" ]; then printf '%s\\n' "\${GH_CONFIG_DIR:-}" >> "$STUB_ENV_LOG"; fi
+
+if [ "$1" = "api" ] && [ "$2" = "user" ]; then
+  printf '%s\\n' "\${STUB_USER_LOGIN:-stub-user}"
+  exit 0
+fi
 
 is_post=0
 prev=''
@@ -125,12 +131,15 @@ function makeFixture({ repo = 'o/r', verdict = 'APPROVE', findings = [] } = {}) 
   writeFileSync(ghFile, STUB_GH, 'utf8')
   chmodSync(ghFile, 0o755)
 
+  const envFile = join(base, 'env.log')
+  writeFileSync(envFile, '', 'utf8')
   const env = {
     ...process.env,
     PATH: `${binDir}${delimiter}${process.env.PATH}`,
     STUB_GH_LOG: logFile,
+    STUB_ENV_LOG: envFile,
   }
-  return { base, root, cwd, logFile, response, env }
+  return { base, root, cwd, logFile, envFile, response, env }
 }
 
 function runPublish(fixture, extraArgs = [], envOverrides = {}) {
@@ -158,6 +167,10 @@ function runPublish(fixture, extraArgs = [], envOverrides = {}) {
   }
 }
 
+function ghEnvLog(fixture) {
+  return readFileSync(fixture.envFile, 'utf8').split('\n').filter((line) => line.length > 0)
+}
+
 function ghCalls(fixture) {
   return readFileSync(fixture.logFile, 'utf8')
     .split('\n')
@@ -166,6 +179,15 @@ function ghCalls(fixture) {
 
 function recordPath(fixture) {
   return join(fixture.root, '.dsh-web', 'reviews', `${PR}-${SHA}.json`)
+}
+
+
+/** 把 review 段合并进 fixture 的配置（保留 repo / highRisk 等原有字段）。 */
+function writeConfigReview(root, review) {
+  const file = join(root, '.dsh', 'pipeline.json')
+  const config = JSON.parse(readFileSync(file, 'utf8'))
+  config.review = { ...(config.review ?? {}), ...review }
+  writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
 }
 
 function cleanup(t, fixture) {
@@ -185,6 +207,62 @@ test('不带 --post-review：只落盘，gh 一次都不调', (t) => {
   assert.match(result.stdout, /已写入审核记录: /)
   assert.ok(existsSync(recordPath(fixture)), '记录必须落盘')
   assert.deepEqual(ghCalls(fixture), [], '没带 --post-review 时不许发出任何 gh 调用')
+})
+
+test('配置 review.postReview=true：不带 --post-review 也发送；--dry-run 仍只预览', (t) => {
+  const fixture = cleanup(t, makeFixture())
+  writeConfigReview(fixture.root, { postReview: true })
+
+  const dry = runPublish(fixture, ['--dry-run'])
+  assert.equal(dry.status, 0, dry.stderr)
+  assert.deepEqual(ghCalls(fixture), [], 'dry-run 不许发任何 gh 请求')
+
+  const posted = runPublish(fixture)
+  assert.equal(posted.status, 0, posted.stderr)
+  assert.ok(ghCalls(fixture).some((line) => line.includes('POST')), '配置开启后应真的发出 review')
+})
+
+test('配置 review.identity.ghConfigDir：调用 gh 时带上展开后的 GH_CONFIG_DIR', (t) => {
+  const fixture = cleanup(t, makeFixture())
+  writeConfigReview(fixture.root, { identity: { ghConfigDir: '~/gh-reviewer' } })
+
+  const result = runPublish(fixture, ['--post-review'])
+  assert.equal(result.status, 0, result.stderr)
+  const dirs = ghEnvLog(fixture)
+  assert.ok(dirs.length > 0, '应当有 gh 调用')
+  assert.ok(
+    dirs.every((dir) => dir === `${process.env.HOME}/gh-reviewer`),
+    `GH_CONFIG_DIR 应被展开为 ~/gh-reviewer，实际: ${JSON.stringify(dirs)}`,
+  )
+})
+
+test('配置 review.identity.account 与当前身份不一致 → 退 2 且不发 review', (t) => {
+  const fixture = cleanup(t, makeFixture())
+  writeConfigReview(fixture.root, { identity: { account: 'someone-else' } })
+
+  const result = runPublish(fixture, ['--post-review'], { STUB_USER_LOGIN: 'guraul-review' })
+  assert.equal(result.status, 2)
+  assert.match(result.stderr, /当前 gh 身份是 guraul-review，配置要求 someone-else/)
+  assert.ok(!ghCalls(fixture).some((line) => line.includes('POST')), '身份不符时不许发 review')
+  assert.ok(existsSync(recordPath(fixture)), '记录仍要落盘')
+})
+
+test('配置 review.identity.account 大小写不敏感：Guraul-Review 与 guraul-review 视为同一身份', (t) => {
+  const fixture = cleanup(t, makeFixture())
+  writeConfigReview(fixture.root, { identity: { account: 'Guraul-Review' } })
+
+  const result = runPublish(fixture, ['--post-review'], { STUB_USER_LOGIN: 'guraul-review' })
+  assert.equal(result.status, 0, result.stderr)
+  assert.ok(ghCalls(fixture).some((line) => line.includes('POST')), '大小写不同不该阻断发送')
+})
+
+test('配置 review.rounds=2：--round 3 退 2（轮次上限按配置）', (t) => {
+  const fixture = cleanup(t, makeFixture())
+  writeConfigReview(fixture.root, { rounds: 2 })
+
+  const result = runPublish(fixture, ['--round', '3'])
+  assert.equal(result.status, 2)
+  assert.match(result.stderr, /--round 必须是 1\.\.2 的整数/)
 })
 
 test('记录没写成（退 2）：不发 review，退出码保持 2', (t) => {
