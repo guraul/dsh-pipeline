@@ -4,7 +4,7 @@
 
 ## 职责
 
-各仓的部署 caller workflow **不是手写的**：由 `deploy init` 按该仓 `.dsh/pipeline.json` 的 `deploy` 段生成、由 `deploy check` 逐字节校验。真正的部署实现在本包仓的 `.github/workflows/deploy.yml` 与 `rollback.yml`（`on: workflow_call`），消费仓只留一个十几行的 caller。
+各仓的部署 caller workflow **不是手写的**：由 `deploy init` 按该仓 `.dsh/pipeline.json` 的 `deploy` 段生成、由 `deploy check` 逐字节校验。回滚 caller（`rollback-web.yml`）由 `deploy init --write --rollback` 一并生成，`deploy check` 在它存在时也逐字节校验——回滚与前进同构，只是 `uses` 指向 `rollback.yml`、触发方式换成 `workflow_dispatch`。真正的部署实现在本包仓的 `.github/workflows/deploy.yml` 与 `rollback.yml`（`on: workflow_call`），消费仓只留一个十几行的 caller。
 
 ## 关键文件
 

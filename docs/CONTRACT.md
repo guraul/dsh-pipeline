@@ -356,7 +356,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 2. **原子切换**：切换必须一步完成——新 release 就绪后一次性把 `dist` 软链指过去再重启；切换失败时线上仍指向上一个可用 release，不存在「切了一半」的中间态。
 3. **回滚与前进同构**：回滚不走特殊路径——把目标换成旧 release id，其余步骤（切软链、重启、验活、按 `keepReleases` 清理）与前进完全相同；因此两者同样幂等、同样可重复执行，回滚也不重新构建、不重新上传。
 
-**本轮已落地**：`deploy` 配置字段（§7.1）与 `deploy init | check`（§3.2）——caller workflow 骨架由包生成、生成区逐字节校验；复用 workflow 的构建步骤已参数化，`artifact=node-standalone` 可生成可用骨架。各仓接入与回滚调用仍为目标（P3）。
+**本轮已落地**：`deploy` 配置字段（§7.1）与 `deploy init | check`（§3.2）——部署 caller 骨架由包生成、生成区逐字节校验；复用 workflow 的构建步骤已参数化，`artifact=node-standalone` 可生成可用骨架；`deploy init --write --rollback` 连带生成回滚 caller（`rollback-web.yml`），`deploy check` 在它存在时一并校验。各仓接入（homebase 补回滚 caller、agent-mobile 换成生成物）仍为目标（P3）。
 
 部署**不进本包**，也不留在各仓脚本里，统一走 GitHub Actions：
 

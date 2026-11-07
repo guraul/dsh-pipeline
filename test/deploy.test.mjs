@@ -20,7 +20,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { runCli } from '../bin/cli.mjs'
-import { DEPLOY_WORKFLOW_FILE, REGION_BEGIN, REGION_END } from '../lib/deploy.mjs'
+import { DEPLOY_ROLLBACK_FILE, DEPLOY_WORKFLOW_FILE, REGION_BEGIN, REGION_END } from '../lib/deploy.mjs'
 
 const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const GIT_SHA = '0123456789abcdef0123456789abcdef01234567'
@@ -322,6 +322,44 @@ test('deploy check：标记之后追加 job → 仍退 0（追加内容不参与
   const result = check(root)
   assert.equal(result.code, 0)
   assert.equal(result.out, 'deploy check: 生成区与配置一致\n')
+})
+
+test('deploy init --write --rollback：两份 caller 都落盘，rollback 用 workflow_dispatch + rollback.yml', (t) => {
+  const root = tmp()
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  writeConfig(root, BASE_DEPLOY)
+
+  const result = init(root, ['--write', '--rollback'])
+  assert.equal(result.code, 0, result.err)
+  assert.ok(existsSync(workflowPath(root)), '部署 caller 必须落盘')
+  const rollbackFile = join(root, DEPLOY_ROLLBACK_FILE)
+  assert.ok(existsSync(rollbackFile), '回滚 caller 必须落盘')
+
+  const content = readFileSync(rollbackFile, 'utf8')
+  assert.ok(content.includes(`uses: guraul/dsh-pipeline/.github/workflows/rollback.yml@${GIT_SHA}\n`))
+  assert.ok(content.includes('on:\n  workflow_dispatch:\n'), '回滚只能手动触发')
+  assert.ok(content.includes('      release: ${{ inputs.release }}\n'))
+  assert.ok(content.includes('      dry_run: ${{ inputs.dry_run }}\n'))
+  assert.ok(content.includes('      remote_dir: '), '要传 remote_dir')
+  assert.ok(!content.includes('quality_cmd'), '回滚不重新构建，不该有构建 input')
+})
+
+test('deploy check：两份都在 → 两个生成区一致；改坏回滚那份 → 退 1 并点名', (t) => {
+  const root = tmp()
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  writeConfig(root, BASE_DEPLOY)
+  assert.equal(init(root, ['--write', '--rollback']).code, 0)
+
+  const ok = check(root)
+  assert.equal(ok.code, 0, ok.err)
+  assert.equal(ok.out, 'deploy check: 两个生成区都与配置一致\n')
+
+  const rollbackFile = join(root, DEPLOY_ROLLBACK_FILE)
+  const broken = readFileSync(rollbackFile, 'utf8').replace('      remote_dir:', '      remote_dir_x:')
+  writeFileSync(rollbackFile, broken, 'utf8')
+  const bad = check(root)
+  assert.equal(bad.code, 1)
+  assert.match(bad.err, /rollback-web\.yml 的生成区与配置不一致/)
 })
 
 test('deploy init --write：改配置重跑只换生成区，保留标记之后追加的 job', (t) => {

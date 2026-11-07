@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url'
 import { discoverPackages, runCheckAll as runCheckAllFlow } from '../lib/check-all.mjs'
 import { loadConfig } from '../lib/config.mjs'
 import {
+  DEPLOY_ROLLBACK_FILE,
   DEPLOY_WORKFLOW_FILE,
   DeployError,
   REGION_BEGIN,
@@ -33,6 +34,7 @@ import {
   extractRegion,
   firstDifference,
   renderRegion,
+  renderRollbackRegion,
   replaceRegion,
 } from '../lib/deploy.mjs'
 import { evaluateGate } from '../lib/gate.mjs'
@@ -221,7 +223,7 @@ check-all 用法:
   退出码: 0 全部通过（含全跳过）/ 1 有失败 / 2 用法错误 / 3 找不到 pnpm
 
 deploy 用法:
-  dsh-pipeline deploy init --root <dir> [--write]
+  dsh-pipeline deploy init --root <dir> [--write] [--rollback]
   按 <root>/.dsh/pipeline.json 的 deploy 段生成 <root>/.github/workflows/deploy-web.yml 骨架：
   生成区 = name / on / concurrency + 单个 job 的 uses + with + secrets，首尾用注释标记包裹；
   uses pin 当前安装包 build.json 的 gitSha（源码运行没有 build.json → 退 2）。
@@ -231,8 +233,10 @@ deploy 用法:
   不带 --write 只把骨架打印到 stdout；--write 时：文件不存在则创建，
   已有生成区则只替换生成区、保留标记之后本仓追加的后置 job，
   已存在但缺标记（手写文件）则拒绝覆盖并退 1。
+  --rollback 与 --write 同用：连带生成 / 更新 .github/workflows/rollback-web.yml
+  （workflow_dispatch 触发，uses 指向 rollback.yml 同一 gitSha；回滚与前进同构）。
   dsh-pipeline deploy check --root <dir>
-  取出生成区与按配置渲染的期望值逐字节比对：一致退 0；
+  取出生成区与按配置渲染的期望值逐字节比对：一致退 0（rollback-web.yml 存在时一并校验）；
   不一致打印第一处差异（行号 + 期望 / 实际两行）退 1；
   缺标记报「不是生成的骨架」退 1；文件不存在提示先跑 deploy init（退 1）。
   --root <dir>       仓库根目录（必填）
@@ -638,7 +642,7 @@ const LOCK_BOOL_FLAGS = new Set()
 const CHECK_ALL_VALUE_FLAGS = new Set(['root', 'packages'])
 const CHECK_ALL_BOOL_FLAGS = new Set(['json'])
 const DEPLOY_VALUE_FLAGS = new Set(['root'])
-const DEPLOY_INIT_BOOL_FLAGS = new Set(['write'])
+const DEPLOY_INIT_BOOL_FLAGS = new Set(['write', 'rollback'])
 const DEPLOY_CHECK_BOOL_FLAGS = new Set()
 
 function emit(io, lines) {
@@ -2082,60 +2086,89 @@ function runDeploy(argv, deps, io) {
   }
   const skeleton = `${REGION_BEGIN}\n${region}\n${REGION_END}`
 
+  let rollbackRegion
+  try {
+    rollbackRegion = renderRollbackRegion(config.deploy, buildInfo.gitSha)
+  } catch (error) {
+    if (error instanceof DeployError) {
+      io.err(`deploy ${action}: ${error.message}`)
+      return error.code
+    }
+    throw error
+  }
+  const rollbackSkeleton = `${REGION_BEGIN}\n${rollbackRegion}\n${REGION_END}`
+  // 两个 caller 走同一套「写 / 校验」流程，只是文件与期望内容不同
+  const targets = [
+    { file: DEPLOY_WORKFLOW_FILE, region, skeleton },
+    { file: DEPLOY_ROLLBACK_FILE, region: rollbackRegion, skeleton: rollbackSkeleton },
+  ]
+
   if (action === 'init') {
     if (options.write !== true) {
       io.out(skeleton)
       return 0
     }
-    const file = join(options.root, DEPLOY_WORKFLOW_FILE)
-    let existing = null
-    try {
-      existing = readFileSync(file, 'utf8')
-    } catch (error) {
-      if (error?.code !== 'ENOENT') return argError(io, 'deploy', `读取 ${DEPLOY_WORKFLOW_FILE} 失败: ${messageOf(error)}`)
+    const writeTargets = options.rollback === true ? targets : targets.slice(0, 1)
+    for (const target of writeTargets) {
+      const file = join(options.root, target.file)
+      let existing = null
+      try {
+        existing = readFileSync(file, 'utf8')
+      } catch (error) {
+        if (error?.code !== 'ENOENT') return argError(io, 'deploy', `读取 ${target.file} 失败: ${messageOf(error)}`)
+      }
+      if (existing === null) {
+        mkdirSync(dirname(file), { recursive: true })
+        writeFileSync(file, `${target.skeleton}\n`, 'utf8')
+        io.out(`deploy init: 已写入 ${target.file}`)
+        continue
+      }
+      // 已有文件只替换生成区，标记之后的追加内容原样保留；缺标记 = 手写文件，拒绝覆盖
+      const merged = replaceRegion(existing, target.skeleton)
+      if (merged === null) {
+        io.err(`deploy init: ${target.file} 已存在且不是生成的骨架（缺标记），拒绝覆盖`)
+        return 1
+      }
+      writeFileSync(file, merged, 'utf8')
+      io.out(`deploy init: 已更新 ${target.file} 的生成区（标记之后的追加内容保留）`)
     }
-    if (existing === null) {
-      mkdirSync(dirname(file), { recursive: true })
-      writeFileSync(file, `${skeleton}\n`, 'utf8')
-      io.out(`deploy init: 已写入 ${DEPLOY_WORKFLOW_FILE}`)
-      return 0
-    }
-    // 已有文件只替换生成区，标记之后的追加内容原样保留；缺标记 = 手写文件，拒绝覆盖
-    const merged = replaceRegion(existing, skeleton)
-    if (merged === null) {
-      io.err(`deploy init: ${DEPLOY_WORKFLOW_FILE} 已存在且不是生成的骨架（缺标记），拒绝覆盖`)
-      return 1
-    }
-    writeFileSync(file, merged, 'utf8')
-    io.out(`deploy init: 已更新 ${DEPLOY_WORKFLOW_FILE} 的生成区（标记之后的追加内容保留）`)
     return 0
   }
 
-  const file = join(options.root, DEPLOY_WORKFLOW_FILE)
-  let content
-  try {
-    content = readFileSync(file, 'utf8')
-  } catch (error) {
-    if (error?.code === 'ENOENT') {
-      io.err(`deploy check: ${DEPLOY_WORKFLOW_FILE} 不存在，请先运行 deploy init`)
+  let checked = 0
+  for (const target of targets) {
+    const file = join(options.root, target.file)
+    let content
+    try {
+      content = readFileSync(file, 'utf8')
+    } catch (error) {
+      if (error?.code === 'ENOENT') {
+        // 部署 caller 是必须的；回滚 caller 允许尚未接入（迁移期），只在输出里提示
+        if (target.file === DEPLOY_WORKFLOW_FILE) {
+          io.err(`deploy check: ${target.file} 不存在，请先运行 deploy init`)
+          return 1
+        }
+        // 回滚 caller 允许尚未接入（迁移期）：静默跳过，不改变既有输出契约
+        continue
+      }
+      return argError(io, 'deploy', `读取 ${target.file} 失败: ${messageOf(error)}`)
+    }
+
+    const extracted = extractRegion(content)
+    if (!extracted.ok) {
+      io.err(`deploy check: ${target.file} 不是生成的骨架（缺生成区标记），无法比对`)
       return 1
     }
-    return argError(io, 'deploy', `读取 ${DEPLOY_WORKFLOW_FILE} 失败: ${messageOf(error)}`)
+    checked += 1
+    const diff = firstDifference(target.region, extracted.region)
+    if (diff !== null) {
+      io.err(`deploy check: ${target.file} 的生成区与配置不一致（第一处差异在第 ${diff.line} 行）`)
+      io.err(`  期望: ${diff.expected}`)
+      io.err(`  实际: ${diff.actual}`)
+      return 1
+    }
   }
-
-  const extracted = extractRegion(content)
-  if (!extracted.ok) {
-    io.err(`deploy check: ${DEPLOY_WORKFLOW_FILE} 不是生成的骨架（缺生成区标记），无法比对`)
-    return 1
-  }
-  const diff = firstDifference(region, extracted.region)
-  if (diff !== null) {
-    io.err(`deploy check: 生成区与配置不一致（第一处差异在第 ${diff.line} 行）`)
-    io.err(`  期望: ${diff.expected}`)
-    io.err(`  实际: ${diff.actual}`)
-    return 1
-  }
-  io.out('deploy check: 生成区与配置一致')
+  io.out(checked > 1 ? 'deploy check: 两个生成区都与配置一致' : 'deploy check: 生成区与配置一致')
   return 0
 }
 
