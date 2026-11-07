@@ -28,7 +28,7 @@ const RECORD_REL = `.dsh-web/reviews/${PR}-${SHA}.json`
 
 /**
  * stub gh：每行记一次调用（参数内换行转成空格，argv 用制表符分隔）；
- * 带 -X 的是 POST（按 STUB_POST_EXIT 决定成败），否则是列已有 review（按 STUB_REVIEWS_JSON 应答）。
+ * 只有 `-X POST` 是 POST（按 STUB_POST_EXIT 决定成败），其余（含 `-X GET`）是列已有 review（按 STUB_REVIEWS_JSON 应答）。
  */
 const STUB_GH = `#!/bin/sh
 line=''
@@ -39,8 +39,10 @@ done
 printf '%s\\n' "$line" >> "$STUB_GH_LOG"
 
 is_post=0
+prev=''
 for a in "$@"; do
-  if [ "$a" = "-X" ]; then is_post=1; fi
+  if [ "$prev" = "-X" ] && [ "$a" = "POST" ]; then is_post=1; fi
+  prev="$a"
 done
 
 if [ "$is_post" = "1" ]; then
@@ -171,8 +173,9 @@ function cleanup(t, fixture) {
   return fixture
 }
 
-// 分页调用：gh api --paginate -F per_page=100 --jq '.[] | {...}' repos/<repo>/pulls/<pr>/reviews
-const LIST_CALL = `api\t--paginate\t-F\tper_page=100\t--jq\t.[] | {commit_id: .commit_id, body: .body}\trepos/o/r/pulls/${PR}/reviews`
+// 分页调用：gh api -X GET --paginate -F per_page=100 --jq '.[] | {...}' repos/<repo>/pulls/<pr>/reviews
+// -X GET 不能省：gh api 见到 -F 却没有显式方法时会把请求切成 POST（读列表变成创建 review）。
+const LIST_CALL = `api\t-X\tGET\t--paginate\t-F\tper_page=100\t--jq\t.[] | {commit_id: .commit_id, body: .body}\trepos/o/r/pulls/${PR}/reviews`
 
 test('不带 --post-review：只落盘，gh 一次都不调', (t) => {
   const fixture = cleanup(t, makeFixture())
@@ -208,6 +211,17 @@ test('event 映射：APPROVE / REJECT / ESCALATE 各发成对应 event', (t) => 
     const record = JSON.parse(readFileSync(recordPath(fixture), 'utf8'))
     assert.equal(record.verdict, verdict)
   }
+})
+
+test('列已有 review 必须显式 -X GET：gh 遇 -F 无 -X 会把方法切成 POST', (t) => {
+  const fixture = cleanup(t, makeFixture())
+  const result = runPublish(fixture, ['--post-review'])
+
+  assert.equal(result.status, 0, result.stderr)
+  const [listCall] = ghCalls(fixture)
+  const argv = listCall.split('\t')
+  assert.equal(argv[0], 'api')
+  assert.deepEqual(argv.slice(1, 3), ['-X', 'GET'], `列表调用缺显式 GET（会被 gh 翻成 POST）：\n${listCall}`)
 })
 
 test('已有同 SHA 且含标记的 review：跳过发送，不发 POST，退 0', (t) => {
