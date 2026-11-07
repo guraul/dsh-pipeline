@@ -1,6 +1,6 @@
 # 接口清单
 
-**最后更新**：2026-11-06 · 对应提交 `cf7544f`
+**最后更新**：2026-11-07 · 对应提交 `943d92a`
 
 本包没有 HTTP 接口。对外接口分两类：**CLI 子命令**（人 / 脚本 / 消费仓 shim 调用）与 **lib 导出**（测试与被后续子命令复用）。规则来源是 `docs/CONTRACT.md` §3–§5。
 
@@ -25,7 +25,7 @@
 | `shim` | 生成 / 校验入口 shim（契约 §8） | `install [--root] [--force]`、`check [--root]` | `runShim` → `lib/shim.mjs` | 0 / 1 冲突或不一致 / 2 |
 | `hooks` | 安装 / 校验 pre-push 直推拦截钩子 | `install [--root] [--force] [--allow-main]`、`check [--root]` | `runHooks` → `lib/hooks.mjs` | 0 / 1 未装、不一致、拒绝覆盖 / 2 |
 | `check-all` | 逐包跑 test / check / typecheck 并汇总 | `--root`、`--packages a,b,c`、`--json` | `runCheckAllCommand` → `lib/check-all.mjs` | 0 / 1 有失败 / 2 / 3 找不到 pnpm |
-| `deploy` | 生成 / 校验 caller workflow 骨架（契约 §10） | `init --root <dir> [--write] [--rollback]`、`check --root <dir>` | `runDeploy` → `lib/deploy.mjs` | 0 / 1 不一致、缺标记或拒绝覆盖 / 2 |
+| `deploy` | 生成 / 校验 caller workflow 骨架（契约 §10） | `init --root <dir> [--write] [--rollback]`、`check --root <dir>` | `runDeploy` → `lib/deploy.mjs` | 0（含回滚 caller 缺失 / 手写跳过）/ 1 不一致、部署 caller 缺标记或拒绝覆盖 / 2 |
 
 ### 输出约定（契约 §5）
 

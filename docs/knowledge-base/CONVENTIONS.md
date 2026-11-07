@@ -1,6 +1,6 @@
 # 约定与陷阱
 
-**最后更新**：2026-11-06 · 对应提交 `cf7544f`
+**最后更新**：2026-11-07 · 对应提交 `943d92a`
 
 ## 1. 代码风格与命名
 
@@ -36,7 +36,7 @@
 
 | # | 问题 | 状态 | 说明 |
 |---|---|---|---|
-| 1 | 契约把已实现能力标成「目标」 | **已修（本 PR，契约 v1.2）** | §3.2 / §3.3 / §9 / §10 改为现行；仍未实现项已收敛为 `review.*`、`--legacy-exit-codes` 与 §10 的各仓接入 / 回滚调用（`--exit-codes`、`--lock`、`--peer`、`pipeline.lock.json`、§6 的 root 统一均已实现） |
+| 1 | 契约把已实现能力标成「目标」 | **已修（本 PR，契约 v1.2）** | §3.2 / §3.3 / §9 / §10 改为现行；仍未实现项只剩 `review.*` 与 `oci-image`（`--exit-codes`、`--lock`、`--peer`、`pipeline.lock.json`、§6 的 root 统一、§10 各仓接入与回滚调用均已实现） |
 | 2 | README 的「已实现」清单不全 | **已修（本 PR）** | 补到 14 个子命令（含 `deploy init` / `check`）；顶层 `prepare` 占位已删除 |
 | 3 | README 的「本仓高风险只列了 `.github/**`」易被误读 | **已修（本 PR）** | 改为「配置只**追加**了 `.github/**`，而 `lib/policy.mjs` 的默认清单恒生效」——改 `AGENTS.md`、`.gitignore` 等同样属高风险 |
 | 4 | `deploy.yml` 只适配 Expo 类仓 | **已修（#67）** | 新增 `quality_cmd` / `build_cmd` / `assemble` 三个 input，均有默认值（老 caller 零改动）；缺省构建命令仍是 Expo Web 导出，非 Expo 仓要显式传 |
@@ -46,7 +46,7 @@
 | 8 | `pipeline.lock.json` 未实现 | **已修（issue #86 / PR #87）** | 新增 `lock write|check` 与 `selftest --lock`：锁由 `lock write` 生成、逐字节校验装包与锁；消费仓接入 CI 仍待做（本仓 `ci.yml` 只跑测试） |
 | 9 | CI 覆盖不到配置 / shim / 跨仓漂移 | 现存 | `ci.yml` 只跑 `node --test`；2026-11-04 的配置多字段事故 CI 测不出来，靠本地 `selftest --config` 与 `doctor` |
 | 10 | `.dsh/pipeline.json` 的 `ci` 字段是死字段 | 现存 | README 明确「没有消费方」；CI 判定走 `gh pr checks` |
-| 11 | §10 各仓接入未完成 | 现存 | caller 骨架能生成校验，但只有 `agent-mobile` 真正接入；`rollback.yml` 的「消费仓以 `workflow_dispatch` 调起」也还没有样板 |
+| 11 | §10 各仓接入未完成 | **已修** | 三个仓都已接入：`homebase` 补回滚 caller（#176）、`agent-mobile` 换成生成物并统一 pin（#237）、`self-dsh-plugins` 只做 CI；回滚 caller 由 `deploy init --write --rollback` 生成 |
 | 12 | `artifact=oci-image` 只进 schema | 现存 | `deploy init` 生成时报「尚未实现」退 2（不会产出跑不通的 caller），实现前不要放行 |
 
 ## 4. 修改红线（动了会破坏什么）
@@ -87,7 +87,7 @@
 12. **`--post-review` 失败不回滚记录**：记录已落盘、review 未发出（退 3）；修好 gh 重跑即可，同 SHA 已发过会自动跳过。
 13. **`check-all` 缺 `node_modules` 算跳过不算失败**：CI 里拿它当门禁时要确认依赖已装，否则全绿但什么都没跑。
 14. **`doctor` 的"旧包无 build.json"算漂移**：能区分"没装"和"装了但没标识"，后者必然不是同一个构建。
-15. **`deploy init` 重跑只替换生成区**：标记之后的追加 job 原样保留；但文件里没有成对标记（手写文件）时**拒绝覆盖**并退 1——这时要先决定是删掉手写文件还是补标记。
+15. **`deploy init` 重跑只替换生成区**：标记之后的追加 job 原样保留；文件里没有成对标记（手写文件）时，**部署 caller** 拒绝覆盖并退 1——这时要先决定是删掉手写文件还是补标记；**回滚 caller** 是手写文件时跳过并提示、退 0（显式 `--rollback` 才拒绝覆盖），因为它是可选的。
 16. **源码运行不能 `deploy init`**：`uses` 必须 pin 安装包 `build.json` 的 `gitSha`，源码目录没有它 → 退 2。别用假 pin 绕（会让 caller 指到不存在的版本）。
 17. **`resolveDeploy` 的 `null` 是「不写这一行」**：可选项没配就不写进 caller，交给 `deploy.yml` 的默认值；写成空串会把默认值顶掉。
 

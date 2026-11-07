@@ -236,12 +236,16 @@ deploy 用法:
   已存在但缺标记（手写文件）则拒绝覆盖并退 1。
   --rollback 与 --write 同用：连带生成 / 更新 .github/workflows/rollback-web.yml
   （workflow_dispatch 触发，uses 指向 rollback.yml 同一 gitSha；回滚与前进同构）。
+  rollback-web.yml 已是生成物时，只跑 --write 也会一并刷新（不用每次记着加 --rollback）；
+  它是手写文件时跳过并提示、退 0（显式 --rollback 才拒绝覆盖退 1）。
   dsh-pipeline deploy check --root <dir>
-  取出生成区与按配置渲染的期望值逐字节比对：一致退 0（rollback-web.yml 存在时一并校验）；
+  取出生成区与按配置渲染的期望值逐字节比对：一致退 0（rollback-web.yml 是生成物时一并校验）；
   不一致打印第一处差异（行号 + 期望 / 实际两行）退 1；
-  缺标记报「不是生成的骨架」退 1；文件不存在提示先跑 deploy init（退 1）。
+  部署 caller 缺标记报「不是生成的骨架」退 1；回滚 caller 缺失或手写则跳过（手写给 stderr 提示）；
+  部署 caller 不存在提示先跑 deploy init（退 1）。
   --root <dir>       仓库根目录（必填）
-  退出码: 0 一致 / 1 不一致、缺标记或拒绝覆盖 / 2 用法、配置错误或 artifact 尚未实现
+  退出码: 0 一致（含回滚 caller 缺失 / 手写跳过）/ 1 不一致、部署 caller 缺标记或拒绝覆盖 /
+          2 用法、配置错误或 artifact 尚未实现
 
 lock 用法:
   dsh-pipeline lock write --root <dir>   把当前装包的 build.json 写进 <dir>/.dsh/pipeline.lock.json
@@ -2126,7 +2130,7 @@ function runDeploy(argv, deps, io) {
       writeTargets = targets
     } else if (rollbackExisting !== null) {
       // 手写的回滚 caller：只在显式 --rollback 时才拒绝覆盖；这里跳过它，保证部署 caller 照常刷新
-      io.err(`deploy init: ${DEPLOY_ROLLBACK_FILE} 已存在但不是生成的骨架（手写文件），已跳过；要接管请先删除它再跑 --rollback`)
+      io.err(`deploy init: ${DEPLOY_ROLLBACK_FILE} 已存在但不是生成的骨架（手写文件），已跳过；要接管请先删除它再跑 deploy init --write --rollback`)
     }
     // 先全部读一遍并校验「已有文件必须是生成的骨架」，再统一写：避免写了一半才失败
     const planned = []
@@ -2180,6 +2184,11 @@ function runDeploy(argv, deps, io) {
 
     const extracted = extractRegion(content)
     if (!extracted.ok) {
+      // 与 init 同口径：手写的回滚 caller 只是「尚未接管」，跳过并提示；部署 caller 缺标记才算错
+      if (target.file === DEPLOY_ROLLBACK_FILE) {
+        io.err(`deploy check: ${target.file} 是手写文件（缺生成区标记），已跳过；要接管请删除它再跑 deploy init --write --rollback`)
+        continue
+      }
       io.err(`deploy check: ${target.file} 不是生成的骨架（缺生成区标记），无法比对`)
       return 1
     }

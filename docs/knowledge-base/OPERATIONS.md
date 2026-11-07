@@ -34,7 +34,7 @@ node bin/cli.mjs --version
 | 项 | 值 |
 |---|---|
 | 命令 | `pnpm test` = `node --test`（`node:test` + `node:assert/strict`） |
-| 规模 | 25 个 `test/*.test.mjs`，**363 条用例**（2026-11-06 实测全绿，`duration_ms` 约 20s） |
+| 规模 | `test/*.test.mjs` 若干（条数随 PR 变化，不写死；要对比就与 `main` 同跑一次） |
 | 夹具 | `test/fixtures/plugin-record.json`（**真实运行产出**，防字段漂移，不要手改） |
 | 特点 | 大量用例注入假 `runner` 断言"实际发出的命令"；`test/contract.test.mjs` 用真实子进程 + 假 gh/git 验证「闸门不通过时一条 gh 命令都不发」；`test/gitignore.test.mjs` 用真实 `git check-ignore` |
 

@@ -82,7 +82,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | `check-all` | 按配置逐包跑声明的检查并汇总 | 现行 |
 | `shim install\|check` | 生成 / 校验入口 shim | 现行 |
 | `hooks install\|check` | 安装 / 校验 pre-push 直推拦截钩子 | 现行 |
-| `deploy init\|check` | 生成 / 校验 caller workflow 骨架：`deploy-web.yml`（生成区 = `name` / `on` / `concurrency` + 单 job 的 `uses`+`with`+`secrets`，`with:` 含按 artifact 推导的 `mode` 与 `assemble`）；`--write --rollback` 连带生成 / 更新 `rollback-web.yml`（`workflow_dispatch` + `rollback.yml` 同一 pin，见 §10）。**回滚文件已是生成物时，只跑 `--write` 也会刷新它**（不用每次记着加 `--rollback`）；它是手写文件时跳过并提示（显式 `--rollback` 才拒绝覆盖）。`check` 逐字节比对：部署 caller 必须存在且一致，回滚 caller 存在才校验、不存在静默跳过；标记之后允许各仓追加自己的后置 job | **现行** |
+| `deploy init\|check` | 生成 / 校验 caller workflow 骨架：`deploy-web.yml`（生成区 = `name` / `on` / `concurrency` + 单 job 的 `uses`+`with`+`secrets`，`with:` 含按 artifact 推导的 `mode` 与 `assemble`）；`--write --rollback` 连带生成 / 更新 `rollback-web.yml`（`workflow_dispatch` + `rollback.yml` 同一 pin，见 §10）。**回滚文件已是生成物时，只跑 `--write` 也会刷新它**（不用每次记着加 `--rollback`）；它是手写文件时跳过并提示（显式 `--rollback` 才拒绝覆盖）。`check` 逐字节比对：部署 caller 必须存在且一致（缺标记退 1），回滚 caller 是生成物才校验——**不存在或手写（缺标记）都跳过并退 0**（手写时 stderr 提示「要接管请删除它再跑 `deploy init --write --rollback`」），因此 CI 不能强制回滚 caller 被接管；标记之后允许各仓追加自己的后置 job | **现行** |
 
 新增子命令属于**契约变更**，必须同时更新本文件与 §3.3。
 
@@ -92,7 +92,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 **配置字段（已进 schema）**：`worktreesDir` 由 `task` 消费——缺省读配置、`--worktrees-dir` 优先；`checks` 由 `check-all` 消费——`--packages` 优先，其次 `checks.packages`（按给定顺序），再否则自动发现并按 `checks.exclude` 过滤；`deploy` 由 `deploy init|check` 消费（字段见 §7.1，部署行为见 §10）；`review.tier` 由 `review prepare` / `review prompt` 消费（见 §7.3），`review` 的其余字段仍为目标（P2）。
 
-**目标**：`review` 的其余字段（§7.1）、`--legacy-exit-codes`（§4），以及 §10 的「各仓接入 caller workflow 与回滚调用」。
+**目标**：`review` 的其余字段（§7.1）与 `oci-image` 产物（§10）。
 
 硬规则：目标条目在实现合并前**不得**被入口 shim 调用，也不得在文档里写成可用；§9 的门禁项现已全部落地，CI 可以直接引用。
 
@@ -348,7 +348,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 ---
 
-## 10. 部署契约（**现行**：复用 workflow 与 `deploy init|check` 已落地；各仓接入与回滚调用仍为目标）
+## 10. 部署契约（**现行**：复用 workflow、`deploy init|check`、回滚 caller 与三个消费仓的接入均已落地）
 
 **三条铁律（规范性）**——先于本节任何现状 / 目标描述，对所有仓的部署无条件生效：
 
@@ -356,7 +356,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 2. **原子切换**：切换必须一步完成——新 release 就绪后一次性把 `dist` 软链指过去再重启；切换失败时线上仍指向上一个可用 release，不存在「切了一半」的中间态。
 3. **回滚与前进同构**：回滚不走特殊路径——把目标换成旧 release id，其余步骤（切软链、重启、验活、按 `keepReleases` 清理）与前进完全相同；因此两者同样幂等、同样可重复执行，回滚也不重新构建、不重新上传。
 
-**本轮已落地**：`deploy` 配置字段（§7.1）与 `deploy init | check`（§3.2）——部署 caller 骨架由包生成、生成区逐字节校验；复用 workflow 的构建步骤已参数化，`artifact=node-standalone` 可生成可用骨架；`deploy init --write --rollback` 连带生成回滚 caller（`rollback-web.yml`），`deploy check` 在它存在时一并校验。各仓接入（homebase 补回滚 caller、agent-mobile 换成生成物）仍为目标（P3）。
+**已落地**：`deploy` 配置字段（§7.1）与 `deploy init | check`（§3.2）——部署 caller 骨架由包生成、生成区逐字节校验；复用 workflow 的构建步骤已参数化，`artifact=node-standalone` 可生成可用骨架；`deploy init --write --rollback` 连带生成回滚 caller（`rollback-web.yml`），`deploy check` 在它已是生成物时一并校验（缺失或手写跳过、退 0）。**三个消费仓均已接入**：`homebase` 补了回滚 caller（#176），`agent-mobile` 把手写的两个 caller 换成生成物并把 pin 统一到装包构建（#237），`self-dsh-plugins` 只做 CI。各仓不再手写部署步骤。
 
 部署**不进本包**，也不留在各仓脚本里，统一走 GitHub Actions：
 

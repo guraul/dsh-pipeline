@@ -1,6 +1,6 @@
 # dsh-pipeline 知识库索引
 
-**最后更新**：2026-11-06 · 对应提交 `cf7544f`
+**最后更新**：2026-11-07 · 对应提交 `943d92a`
 
 ## 使用说明
 
@@ -41,7 +41,7 @@
 |---|---|---|---|
 | 运行时 | Node.js | `engines.node >=20`；CI 用 24 | 纯 ESM，`"type": "module"` |
 | 依赖 | 无（零运行时依赖、零 devDependency） | — | glob / 校验 / 参数解析全部手写 |
-| 测试 | `node:test` + `node:assert/strict` | 随 Node | `pnpm test` = `node --test`，25 个测试文件 / 363 条用例 |
+| 测试 | `node:test` + `node:assert/strict` | 随 Node | `pnpm test` = `node --test`（条数随 PR 变化，不写死） |
 | 包管理 | pnpm | CI 钉 `12.6.0`（`pnpm-lock.yaml` 只有 2 行，无依赖） | 只允许 pnpm |
 | CI | GitHub Actions | `actions/checkout@v4`、`pnpm/action-setup@v4`、`actions/setup-node@v4` | `node --test`，不打包、不上传产物 |
 | 部署 | GitHub Actions 复用 workflow | `deploy.yml` / `rollback.yml`（`on: workflow_call`） | rsync + `releases/<id>` + `dist` 软链 + 重启 + 验活 |
@@ -76,7 +76,7 @@ dsh-pipeline/
 │   └── knowledge-base/      # 本知识库
 ├── .dsh/pipeline.json       # 本仓配置：repo / ci / highRisk
 ├── .github/workflows/       # ci.yml（测试）、deploy.yml、rollback.yml（复用）
-├── test/                    # 24 个 *.test.mjs + fixtures/plugin-record.json
+├── test/                    # *.test.mjs + fixtures/plugin-record.json
 ├── .tmp/ .dsh-web/          # 本机产物（gitignore，不入库）
 ├── .worktrees/              # task 缺省 worktree 容器（空目录）
 ├── dist/                    # 打包产物（gitignore）
