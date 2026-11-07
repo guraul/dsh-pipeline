@@ -163,14 +163,14 @@ selftest 用法:
   --config           校验 <root>/.dsh/pipeline.json：能被 schema 接受、没有未声明字段
   --lock             核对装包与 .dsh/pipeline.lock.json 的 expect（契约 §7.2）：一致→0；
                      锁不存在 / 未装包→跳过（0）；装了旧版本包（无 build.json）或与锁不一致→1
-  --exit-codes       退出码口径自检（契约 §4）：起子进程真跑六条用例——成功 0 / 业务拒绝 1 /
+  --exit-codes       退出码口径自检（契约 §4）：起子进程真跑七条用例——成功 0 / 业务拒绝 1 /
                      用法错误 2（缺参、未知参数、未知子命令）/ 环境错误 3（入口找不到共享包）；
                      任一不符退出 1，detail 指出哪条不符
   --fast             等价于 --shims --config（契约 §9 的 pre-push 用法；不含 --repos / --exit-codes）
   --repos <a,b,c>    比对多个仓装的共享包是不是同一构建（读各自 build.json 的 gitSha/builtAt）。
                      绝对路径直接用、相对路径按 --root（缺省当前目录）解析、前导 ~/ 展开成家目录；
                      目录不存在或未装包的仓跳过并列出，可比对的仓不足 2 个则跳过退出 0；
-                     与 --shims / --config / --fast 互斥
+                     与 --shims / --config / --lock / --peer / --exit-codes / --fast 互斥
   --json             输出 {"ok":true|false,"root":"…","checks":[{"name":"…","ok":…,"detail":"…"}]}；
                      带 --repos 时改为 {"ok":…,"baseline":"…","repos":[{"path","sha","builtAt","ok"}],"skipped":[{"path","reason"}]}
                      （退出码与人读模式一致）
@@ -609,6 +609,8 @@ const REVIEW_PUBLISH_VALUE_FLAGS = new Set([
   'form',
 ])
 const REVIEW_PUBLISH_BOOL_FLAGS = new Set(['post-review', 'dry-run', 'legacy-exit-codes'])
+/** `record` 的「没写成」退出码：写盘失败或前置校验失败（契约 §4 的 2）。 */
+const RECORD_NOT_WRITTEN = 2
 const REVIEW_PROMPT_VALUE_FLAGS = new Set(['request', 'out', 'role'])
 const REVIEW_PROMPT_BOOL_FLAGS = new Set()
 const SELFTEST_VALUE_FLAGS = new Set(['root', 'repos', 'dsh-version'])
@@ -1282,7 +1284,7 @@ function runReviewPublish(argv, deps, io) {
   // 判定不可用：解析出来的结论不可信，没有可发的 event，审计留盘即可——
   // 不能把 E_PARSE 的兜底 ESCALATE 当成 reviewer 的真实意见发出去。
   // 记录没写成（退 2）同样不发：没有记录就没有可追溯的判定。
-  if (!usable || code === 2) return code
+  if (!usable || code === RECORD_NOT_WRITTEN) return code
   return sendReview({ root, pr: pr.value, headSha: request.head_sha, io, runner: deps.runner })
 }
 
@@ -1291,8 +1293,9 @@ function runReviewPublish(argv, deps, io) {
  * 只打印将要发送的 event 与 body 前 200 字。
  *
  * 判定不可用时按 ESCALATE 预览，但**不会**真的发 COMMENT：正式路径在
- * `runReviewPublish` 里遇到 `code !== 0`（E_PARSE / E_SHA_MISMATCH 的兜底 ESCALATE）
- * 会直接返回、只留审计记录——预览把这点说清楚，别让人以为真跑会发一条 COMMENT。
+ * `runReviewPublish` 里遇到 `!usable || code === 2`（E_PARSE / E_SHA_MISMATCH 的兜底 ESCALATE，
+ * 或记录没写成）会直接返回、只留审计记录——预览把这点说清楚，别让人以为真跑会发一条 COMMENT。
+ * 注意 `REJECT` 是 code 1 但记录已写、review 照发，不在「不发」之列。
  */
 function previewPostReview({ root, pr, request, responseFile, io }) {
   // 与 runRecord 同一套前置校验：缺字段在预览阶段就退 2，别让用户等到真跑才发现。
@@ -1710,7 +1713,7 @@ function runSelftest(argv, deps, io) {
   if (options.repos !== undefined) {
     if (!nonEmpty(options.repos)) return argError(io, 'selftest', '--repos 必须是非空的逗号分隔路径')
     if (options.shims === true || options.config === true || options.fast === true || options.lock === true || options.peer === true || options['exit-codes'] === true) {
-      return argError(io, 'selftest', '--repos 不能与 --shims / --config / --fast 同时使用')
+      return argError(io, 'selftest', '--repos 不能与 --shims / --config / --lock / --peer / --exit-codes / --fast 同时使用')
     }
     return runReposCheck(String(options.repos), options, deps, io)
   }

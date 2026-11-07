@@ -43,7 +43,7 @@ argv
  └─ runCli(argv, deps)
      ├─ -h/--help（无参数也打印）→ 0
      ├─ -v/--version → `<版本> (<构建描述>)`，构建描述来自 build.json（源码运行时说明是源码）
-     ├─ 不在 IMPLEMENTED（13 个）→ 在 SUBCOMMANDS 里报「未实现」退 2，否则报未知子命令 + 帮助退 2
+     ├─ 不在 IMPLEMENTED（14 个）→ 在 SUBCOMMANDS 里报「未实现」退 2，否则报未知子命令 + 帮助退 2
      └─ 分派到 run*() → 各自 parseArgs → 校验 → 调 lib → 输出 → 返回码
 ```
 

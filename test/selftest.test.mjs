@@ -400,16 +400,19 @@ test('selftest --repos：相对路径按 --root 解析，缺省按当前目录',
   assert.equal(byCwd.out, expected)
 })
 
-test('selftest --repos：与 --shims / --config / --fast 互斥 → 2', (t) => {
+test('selftest --repos：与其它检查项互斥 → 2', (t) => {
   const base = tmp()
   t.after(() => rmSync(base, { recursive: true, force: true }))
   makeRepo(base, 'a')
   makeRepo(base, 'b')
 
-  for (const flag of ['--shims', '--config', '--fast']) {
+  for (const flag of ['--shims', '--config', '--lock', '--peer', '--exit-codes', '--fast']) {
     const result = run(['selftest', '--repos', 'a,b', flag, '--root', base])
     assert.equal(result.code, 2, `${flag} 应退 2`)
-    assert.match(result.err, /--repos 不能与 --shims \/ --config \/ --fast 同时使用/)
+    assert.match(
+      result.err,
+      /--repos 不能与 --shims \/ --config \/ --lock \/ --peer \/ --exit-codes \/ --fast 同时使用/,
+    )
     assert.equal(result.out, '')
   }
 })

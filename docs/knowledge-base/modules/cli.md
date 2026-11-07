@@ -10,12 +10,12 @@
 
 | 文件 | 职责 |
 |---|---|
-| `bin/cli.mjs` | 参数解析器、`HELP` 文本、13 个子命令的 `run*` 函数、`decideGate`、`runRecord`、`sendReview`、`resolveMainWorktreeRoot`、`expandHome`、`runCli` |
+| `bin/cli.mjs` | 参数解析器、`HELP` 文本、14 个子命令的 `run*` 函数、`decideGate`、`runRecord`、`sendReview`、`resolveMainWorktreeRoot`、`expandHome`、`runCli` |
 
 ## 结构
 
 ```text
-常量区：IMPLEMENTED（13 个）· SUBCOMMANDS（13 个，两集合一致；顶层 prepare 占位已删除）· HELP（唯一文案来源）
+常量区：IMPLEMENTED（14 个）· SUBCOMMANDS（14 个，两集合一致；顶层 prepare 占位已删除）· HELP（唯一文案来源）
         GATE_*/MERGE_*/RECORD_*/REVIEW_*/SELFTEST_*/SHIM_*/HOOKS_*/CHECK_ALL_* 参数表（Set）
 工具函数：messageOf · isPlainObject · nonEmpty · parseArgs · parsePr · requireRoot · parseRound
           parseDuration · parseGateArgs · argError · emit · requestOf · changedFiles · countChangedLines
