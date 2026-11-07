@@ -344,6 +344,55 @@ test('deploy init --write --rollback：两份 caller 都落盘，rollback 用 wo
   assert.ok(!content.includes('quality_cmd'), '回滚不重新构建，不该有构建 input')
 })
 
+test('deploy init --rollback 缺 --write → 退 2（它只影响落盘，不静默丢弃）', (t) => {
+  const root = tmp()
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  writeConfig(root, BASE_DEPLOY)
+
+  const result = init(root, ['--rollback'])
+  assert.equal(result.code, 2)
+  assert.match(result.err, /--rollback 必须与 --write 同用/)
+  assert.ok(!existsSync(workflowPath(root)), '参数错误不该落盘')
+})
+
+test('deploy init --write：已生成的回滚 caller 会被自动刷新 pin，标记后的追加 job 保留', (t) => {
+  const root = tmp()
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  writeConfig(root, BASE_DEPLOY)
+  assert.equal(init(root, ['--write', '--rollback']).code, 0)
+
+  // 在标记之后追加本仓自己的 job，模拟真实仓
+  const file = join(root, DEPLOY_ROLLBACK_FILE)
+  writeFileSync(file, `${readFileSync(file, 'utf8')}\n  extra:\n    runs-on: ubuntu-latest\n`, 'utf8')
+
+  // 换一个 gitSha 再跑「只 --write」：不该要求显式 --rollback
+  const run2 = run(['deploy', 'init', '--root', root, '--write'], { buildInfo: { ...BUILD_INFO, gitSha: 'b'.repeat(40) } })
+  assert.equal(run2.code, 0, run2.err)
+
+  const content = readFileSync(file, 'utf8')
+  assert.ok(content.includes('rollback.yml@' + 'b'.repeat(40)), 'pin 应被刷新')
+  assert.ok(content.includes('  extra:\n'), '标记之后的追加内容应保留')
+})
+
+test('deploy init --write：手写的回滚 caller 不阻断部署 caller 刷新；显式 --rollback 才拒绝', (t) => {
+  const root = tmp()
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  writeConfig(root, BASE_DEPLOY)
+  const file = join(root, DEPLOY_ROLLBACK_FILE)
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, 'name: rollback-web\n# 手写，没有生成区标记\n', 'utf8')
+
+  const auto = run(['deploy', 'init', '--root', root, '--write'])
+  assert.equal(auto.code, 0, auto.err)
+  assert.ok(existsSync(workflowPath(root)), '部署 caller 必须照常落盘')
+  assert.match(auto.err, /已存在但不是生成的骨架（手写文件），已跳过/)
+  assert.equal(readFileSync(file, 'utf8'), 'name: rollback-web\n# 手写，没有生成区标记\n', '手写文件不许被改')
+
+  const explicit = run(['deploy', 'init', '--root', root, '--write', '--rollback'])
+  assert.equal(explicit.code, 1)
+  assert.match(explicit.err, /拒绝覆盖/)
+})
+
 test('deploy check：两份都在 → 两个生成区一致；改坏回滚那份 → 退 1 并点名', (t) => {
   const root = tmp()
   t.after(() => rmSync(root, { recursive: true, force: true }))

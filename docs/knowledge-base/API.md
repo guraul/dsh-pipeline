@@ -92,7 +92,7 @@ dsh-pipeline deploy check --root <消费仓>
 | `lib/lock.mjs` | `readLock`, `writeLock`, `checkLock`, `readInstalledBuild`, `formatExpect`, `LOCK_PATH`, `LockError` | 锁文件（§7.2） |
 | `lib/peer.mjs` | `collectRequirements`, `resolveDshVersion`, `checkPeer` | 插件 DSH 版本声明（§9） |
 | `lib/semver.mjs` | `parseVersion`, `compare`, `satisfies` | 版本范围匹配（§9） |
-| `lib/deploy.mjs` | `renderRegion`, `renderSkeleton`, `extractRegion`, `firstDifference`, `replaceRegion`, `resolveDeploy`, `DEPLOY_WORKFLOW_FILE`, `DEPLOY_WORKFLOW_REPO`, `REGION_BEGIN`, `REGION_END`, `DeployError` | 部署 caller 骨架 |
+| `lib/deploy.mjs` | `renderRegion`, `renderSkeleton`, `renderRollbackRegion`, `extractRegion`, `firstDifference`, `replaceRegion`, `resolveDeploy`, `DEPLOY_WORKFLOW_FILE`, `DEPLOY_ROLLBACK_FILE`, `DEPLOY_WORKFLOW_REPO`, `REGION_BEGIN`, `REGION_END`, `DeployError` | 部署 / 回滚 caller 骨架 |
 | `lib/profile-check.mjs` | `checkProfile`, `resolveDshHome`, `resolveProfileDir`, `OLD_PKG`, `NEW_PKGS` | profile 体检 |
 | `lib/build-info.mjs` | `readBuildInfo`, `describeBuild` | 构建标识 |
 

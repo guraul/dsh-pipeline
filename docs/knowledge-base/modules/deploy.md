@@ -34,14 +34,17 @@ dsh-pipeline deploy check --root <dir>
 
 | 动作 | 行为 | 退出码 |
 |---|---|---|
-| `init`（不带 `--write`） | 只把骨架打到 stdout；`--rollback` 必须与 `--write` 同用，否则退 2 | 0 |
+| `init`（不带 `--write`） | 只把部署骨架打到 stdout | 0 |
+| `init --rollback`（不带 `--write`） | 用法错误：`--rollback` 只影响落盘 | 2 |
 | `init --write`，文件不存在 | 创建（`mkdir -p` 目录） | 0 |
-| `init --write`，已有生成区 | **只替换生成区**，标记之后的追加 job 原样保留 | 0 |
-| `init --write`，已有文件但缺标记（手写文件） | 拒绝覆盖 | 1 |
+| `init --write`，已有生成区 | **只替换生成区**，标记之后的追加 job 原样保留；`rollback-web.yml` 已是生成物时**一并刷新**（不用每次记着加 `--rollback`） | 0 |
+| `init --write`，部署 caller 缺标记（手写） | 拒绝覆盖 | 1 |
+| `init --write`，回滚 caller 是手写文件 | 跳过它并提示，部署 caller 照常刷新；显式 `--rollback` 才拒绝覆盖 | 0 / 1 |
 | `check`，生成区一致 | 打印一致 | 0 |
 | `check`，不一致 | 打印**第一处差异**（行号 + 期望 / 实际两行） | 1 |
 | `check`，缺标记 | 「不是生成的骨架」 | 1 |
-| `check`，文件不存在 | 提示先跑 `deploy init` | 1 |
+| `check`，部署 caller 不存在 | 提示先跑 `deploy init` | 1 |
+| `check`，回滚 caller 不存在 | 静默跳过（迁移期，不改变既有输出） | 0 |
 | 参数错误 / 配置错误 / `artifact=oci-image` | 明确报错 | 2 |
 
 **源码运行不能生成**：`uses` 必须 pin 到 `build.json` 的 gitSha，源码目录没有 `build.json` → 退 2 并提示「请在已安装包内运行」；不要用假 pin 掩盖这一点。
@@ -91,4 +94,4 @@ dsh-pipeline deploy check --root <dir>
 
 ## 相关测试
 
-`test/deploy.test.mjs`（383 行）、`test/config.test.mjs`（deploy 段校验）、`test/cli.test.mjs`（命令层）。
+`test/deploy.test.mjs`、`test/config.test.mjs`（deploy 段校验）、`test/cli.test.mjs`（命令层）。

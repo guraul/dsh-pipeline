@@ -82,7 +82,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | `check-all` | 按配置逐包跑声明的检查并汇总 | 现行 |
 | `shim install\|check` | 生成 / 校验入口 shim | 现行 |
 | `hooks install\|check` | 安装 / 校验 pre-push 直推拦截钩子 | 现行 |
-| `deploy init\|check` | 生成 / 校验 caller workflow 骨架：`deploy-web.yml`（生成区 = `name` / `on` / `concurrency` + 单 job 的 `uses`+`with`+`secrets`，`with:` 含按 artifact 推导的 `mode` 与 `assemble`）；`--write --rollback` 连带生成 / 更新 `rollback-web.yml`（`workflow_dispatch` + `rollback.yml` 同一 pin，见 §10）。`check` 逐字节比对（回滚文件存在时一并校验，不存在则跳过），标记之后允许各仓追加自己的后置 job | **现行** |
+| `deploy init\|check` | 生成 / 校验 caller workflow 骨架：`deploy-web.yml`（生成区 = `name` / `on` / `concurrency` + 单 job 的 `uses`+`with`+`secrets`，`with:` 含按 artifact 推导的 `mode` 与 `assemble`）；`--write --rollback` 连带生成 / 更新 `rollback-web.yml`（`workflow_dispatch` + `rollback.yml` 同一 pin，见 §10）。**回滚文件已是生成物时，只跑 `--write` 也会刷新它**（不用每次记着加 `--rollback`）；它是手写文件时跳过并提示（显式 `--rollback` 才拒绝覆盖）。`check` 逐字节比对：部署 caller 必须存在且一致，回滚 caller 存在才校验、不存在静默跳过；标记之后允许各仓追加自己的后置 job | **现行** |
 
 新增子命令属于**契约变更**，必须同时更新本文件与 §3.3。
 

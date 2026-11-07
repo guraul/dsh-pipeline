@@ -34,8 +34,8 @@ import {
   extractRegion,
   firstDifference,
   renderRegion,
+  renderSkeleton,
   renderRollbackRegion,
-  renderRollbackSkeleton,
   replaceRegion,
 } from '../lib/deploy.mjs'
 import { evaluateGate } from '../lib/gate.mjs'
@@ -2055,6 +2055,9 @@ function runDeploy(argv, deps, io) {
   if (parsed.error) return argError(io, 'deploy', parsed.error)
   const options = parsed.options
   if (!nonEmpty(options.root)) return argError(io, 'deploy', '缺少必填参数 --root')
+  if (action === 'init' && options.rollback === true && options.write !== true) {
+    return argError(io, 'deploy', '--rollback 必须与 --write 同用（它只影响落盘，不影响打印）')
+  }
 
   let config
   try {
@@ -2085,7 +2088,7 @@ function runDeploy(argv, deps, io) {
     }
     throw error
   }
-  const skeleton = `${REGION_BEGIN}\n${region}\n${REGION_END}`
+  const skeleton = renderSkeleton(config.deploy, buildInfo.gitSha)
 
   let rollbackRegion
   try {
@@ -2097,7 +2100,7 @@ function runDeploy(argv, deps, io) {
     }
     throw error
   }
-  const rollbackSkeleton = renderRollbackSkeleton(config.deploy, buildInfo.gitSha)
+  const rollbackSkeleton = `${REGION_BEGIN}\n${rollbackRegion}\n${REGION_END}`
   // 两个 caller 走同一套「写 / 校验」流程，只是文件与期望内容不同
   const targets = [
     { file: DEPLOY_WORKFLOW_FILE, region, skeleton },
@@ -2105,16 +2108,26 @@ function runDeploy(argv, deps, io) {
   ]
 
   if (action === 'init') {
-    if (options.rollback === true && options.write !== true) {
-      return argError(io, 'deploy', '--rollback 必须与 --write 同用（它只影响落盘，不影响打印）')
-    }
     if (options.write !== true) {
       io.out(skeleton)
       return 0
     }
-    // 回滚 caller：显式 --rollback 或文件已存在时都刷新，避免包升级后留下旧 uses pin
-    const rollbackExists = existsSync(join(options.root, DEPLOY_ROLLBACK_FILE))
-    const writeTargets = options.rollback === true || rollbackExists ? targets : targets.slice(0, 1)
+    // 回滚 caller：显式 --rollback 或「已是生成物」时刷新；手写文件不碰（也不拖累部署 caller）
+    const rollbackFile = join(options.root, DEPLOY_ROLLBACK_FILE)
+    let rollbackExisting = null
+    try {
+      rollbackExisting = readFileSync(rollbackFile, 'utf8')
+    } catch (error) {
+      if (error?.code !== 'ENOENT') return argError(io, 'deploy', `读取 ${DEPLOY_ROLLBACK_FILE} 失败: ${messageOf(error)}`)
+    }
+    const rollbackGenerated = rollbackExisting !== null && replaceRegion(rollbackExisting, rollbackSkeleton) !== null
+    let writeTargets = targets.slice(0, 1)
+    if (options.rollback === true || rollbackGenerated) {
+      writeTargets = targets
+    } else if (rollbackExisting !== null) {
+      // 手写的回滚 caller：只在显式 --rollback 时才拒绝覆盖；这里跳过它，保证部署 caller 照常刷新
+      io.err(`deploy init: ${DEPLOY_ROLLBACK_FILE} 已存在但不是生成的骨架（手写文件），已跳过；要接管请先删除它再跑 --rollback`)
+    }
     // 先全部读一遍并校验「已有文件必须是生成的骨架」，再统一写：避免写了一半才失败
     const planned = []
     for (const target of writeTargets) {
