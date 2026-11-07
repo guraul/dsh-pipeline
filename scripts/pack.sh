@@ -27,10 +27,13 @@ git_sha="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
 dirty=false
 if [ -n "$(git status --porcelain 2>/dev/null)" ]; then dirty=true; fi
 built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# 源码指纹：运行时（lib/dist-freshness.mjs）在源码目录重算比对，源码改了没重新 pack 就报错
+source_path="$(pwd -P)"
+source_hash="$(node scripts/source-hash.mjs)"
 cat > build.json <<JSON
-{"gitSha":"$git_sha","builtAt":"$built_at","dirty":$dirty}
+{"gitSha":"$git_sha","builtAt":"$built_at","dirty":$dirty,"sourcePath":"$source_path","sourceHash":"$source_hash"}
 JSON
-echo "==> 构建标识: ${git_sha} ${built_at} dirty=${dirty}"
+echo "==> 构建标识: ${git_sha} ${built_at} dirty=${dirty} source=${source_hash:0:8}"
 
 echo "==> 门禁: node --test"
 set +e

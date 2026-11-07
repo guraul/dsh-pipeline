@@ -9,6 +9,7 @@
 | 变量 | 用途 | 必填 | 默认值 | 消费位置 |
 |---|---|---|---|---|
 | `DSH_PIPELINE_HOME` | 指向共享包安装目录（其下必须有 `bin/cli.mjs`），shim 定位包的第一优先级 | 否 | 空（依次回退主工作区 `tools/` → 脚本所在仓 `tools/`） | `templates/shim.sh` |
+| `DSH_PIPELINE_ALLOW_STALE` | 设为 `1` 时放行「dist 过期」（源码改了没重新 `pnpm pack`）的启动校验，其余值无效 | 否 | 空（不放行，过期即退 1） | `bin/cli.mjs` 启动时的 `verifyDistFreshness()`（`lib/dist-freshness.mjs`） |
 | `GH_CONFIG_DIR` | gh 的身份配置目录 | 否 | gh 自己的默认（`~/.config/gh`） | **本包只透传**，由 `gh` 读取（`review publish --post-review`、所有 gh 调用） |
 | `DSH_HOME` | dsh 家目录 | 否 | `$HOME/.dsh` | `lib/profile-check.mjs` `resolveDshHome`（`doctor --profile`） |
 | `HOME` | 家目录 | 否 | 系统值 | `profile-check`（DSH_HOME 缺省基准）、`hooks`（展开 `core.hooksPath` 里的 `~/`）、`task` 的 `~/` 展开 |
@@ -48,13 +49,13 @@ bash scripts/pack.sh
 
 `scripts/pack.sh` 做的事（顺序固定）：
 
-1. 写 `build.json` = `{gitSha, builtAt, dirty}`（`dirty` 由 `git status --porcelain` 判断）；
+1. 写 `build.json` = `{gitSha, builtAt, dirty, sourcePath, sourceHash}`（`dirty` 由 `git status --porcelain` 判断；`sourcePath` 是 `pwd -P`，`sourceHash` 调 `node scripts/source-hash.mjs`）；
 2. **门禁**：`node --test`，失败即 `exit 1`，**不产出任何 tarball**；
 3. `pnpm pack --pack-destination dist/`；
 4. 复制一份为 `dist/latest.tgz`；
 5. `trap` 清理：删临时日志，**删 `build.json`**（只在打包期间存在，不入库不留残留）。
 
-输出末尾打印版本、产物路径、`latest`、测试条数。`build.json` 也会被 `pnpm pack` 打进 tarball（`package.json` 的 `files` 里列了它），消费仓的 `doctor` / `selftest --repos` 就是读它。
+输出末尾打印版本、产物路径、`latest`、测试条数。`build.json` 也会被 `pnpm pack` 打进 tarball（`package.json` 的 `files` 里列了它），消费仓的 `doctor` / `selftest --repos` 就是读它；`sourcePath`/`sourceHash` 则供 CLI 启动时的 `verifyDistFreshness()` 比对——改了源码却没重新 pack，消费方 link 的 `dist/pkg` 会静默跑旧代码，现在会直接退 1 报错（放行开关 `DSH_PIPELINE_ALLOW_STALE=1`）。
 
 ### 消费仓刷新（重要，别用 `pnpm update`）
 

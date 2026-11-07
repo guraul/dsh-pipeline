@@ -38,6 +38,7 @@ import {
   renderRollbackRegion,
   replaceRegion,
 } from '../lib/deploy.mjs'
+import { verifyDistFreshness } from '../lib/dist-freshness.mjs'
 import { evaluateGate } from '../lib/gate.mjs'
 import { currentUser, issueView, prChecks, prDiff, prMerge, prView } from '../lib/gh.mjs'
 import { checkHook, installHook } from '../lib/hooks.mjs'
@@ -912,8 +913,9 @@ export function countChangedLines(diff) {
       currentIsTest = m ? isTestPath(m[2]) : false
       continue
     }
-    // 只跳带空格的文件头（`+++ b/path`）；内容行 `+++foo` 是真实新增，要计数
-    if (/^(\+\+\+|---) /.test(line)) continue
+    // 只跳锚定的文件头（`+++ b/…`、`--- a/…`、`/dev/null` 两侧）；
+    // 内容行 `+++ foo`（新增了一行 `++ foo`）、`--- bar`（删除了 `-- bar`）是真实增删，要计数
+    if (/^(\+\+\+ b\/|--- a\/|\+\+\+ \/dev\/null|--- \/dev\/null)/.test(line)) continue
     if (line.startsWith('+') || line.startsWith('-')) {
       total += 1
       if (currentIsTest) testLines += 1
@@ -2633,6 +2635,30 @@ function invokedDirectly() {
   }
 }
 
+/** 启动期只该「看一眼」的参数：包装坏了也得能看到帮助 / 版本，排障第一步不能被堵死。 */
+const INFO_ARGS = new Set(['-h', '--help', '-v', '--version'])
+
+// 启动即校验 dist 新鲜度：消费方 link 的是 dist/pkg，源码改了却忘 pack 会静默跑旧代码。
 if (invokedDirectly()) {
-  process.exit(runCli(process.argv.slice(2)))
+  const argv = process.argv.slice(2)
+  const freshness = verifyDistFreshness()
+  const stale = !freshness.ok && process.env.DSH_PIPELINE_ALLOW_STALE !== '1'
+  // 只看首 token：子命令参数里的 `-v`（verbose）或 `-- --help` 不算「看一眼」，不能只警告就带旧代码继续跑
+  const first = argv[0]
+  const infoOnly = first === undefined || INFO_ARGS.has(first)
+
+  if (stale && !infoOnly) {
+    process.stderr.write(
+      `${freshness.reason}\n要么 \`pnpm pack\` 重新打包，要么设 DSH_PIPELINE_ALLOW_STALE=1 临时放行。\n`,
+    )
+    // 不用 process.exit：它会截断尚未 flush 的 stderr，设 exitCode 让进程自然退出
+    process.exitCode = 1
+  } else {
+    if (stale) {
+      process.stderr.write(
+        `警告：${freshness.reason}（帮助 / 版本照常输出；正式使用前请 \`pnpm pack\` 或设 DSH_PIPELINE_ALLOW_STALE=1）\n`,
+      )
+    }
+    process.exitCode = runCli(argv)
+  }
 }
