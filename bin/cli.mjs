@@ -9,7 +9,7 @@
  * review 的 publish 复用 runRecord（与 record 同一条落盘路径），prepare 只编排 gh 读取，
  * --post-review 在落盘成功后把判定发成 GitHub review（幂等，见 sendReview），
  * prompt 只读请求文件与配置（取 review.tier）并复用 buildPrompt（不发外部命令、不写请求）；
- * selftest 只做参数编排与输出，检查逻辑在 lib/selftest.mjs（契约 §9，已实现 --shims / --config / --repos）；
+ * selftest 只做参数编排与输出，检查逻辑在 lib/selftest.mjs（契约 §9，检查项已全部实现：--shims / --config / --lock / --peer / --exit-codes / --fast / --repos）；
  * shim 的渲染 / 写入 / 比对全在 lib/shim.mjs（契约 §8），这里只做动作与参数解析；
  * check-all 的逐包执行与汇总在 lib/check-all.mjs，这里只做包发现与参数解析；
  * deploy 的骨架渲染、生成区提取与逐字节比对全在 lib/deploy.mjs（契约 §10），这里只做动作与参数解析。
@@ -166,7 +166,7 @@ selftest 用法:
   --exit-codes       退出码口径自检（契约 §4）：起子进程真跑七条用例——成功 0 / 业务拒绝 1 /
                      用法错误 2（缺参、未知参数、未知子命令）/ 环境错误 3（入口找不到共享包）；
                      任一不符退出 1，detail 指出哪条不符
-  --fast             等价于 --shims --config（契约 §9 的 pre-push 用法；不含 --repos / --exit-codes）
+  --fast             等价于 --shims --config（契约 §9 的 pre-push 用法；--repos / --lock / --peer / --exit-codes 会被忽略）
   --repos <a,b,c>    比对多个仓装的共享包是不是同一构建（读各自 build.json 的 gitSha/builtAt）。
                      绝对路径直接用、相对路径按 --root（缺省当前目录）解析、前导 ~/ 展开成家目录；
                      目录不存在或未装包的仓跳过并列出，可比对的仓不足 2 个则跳过退出 0；
@@ -1692,7 +1692,7 @@ function runLock(argv, deps, io) {
 
 /**
  * selftest：契约 §9 的一致性门禁。
- * --shims / --config / --lock / --exit-codes 已实现（--fast 等价于 --shims --config）；--repos 是独立的多仓比对模式，
+ * --shims / --config / --lock / --peer / --exit-codes 已实现（--fast 等价于 --shims --config）；--repos 是独立的多仓比对模式，
  * 与其它检查项互斥（--json 形态不同，合起来没有单一会话能同时表达两种结构）；
  * 没有未实现的检查项。检查逻辑在 lib/selftest.mjs，--shims 的比对复用 lib/shim.mjs。
  * --fast 只跑 --shims --config（契约 §9），与 --lock / --peer / --exit-codes 组合时后三者被忽略。
