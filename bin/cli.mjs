@@ -687,9 +687,24 @@ function emit(io, lines) {
   }
 }
 
-function argError(io, sub, message) {
-  io.err(`${sub}: ${message}`)
+/**
+ * 统一的错误行出口（契约 §5）：`dsh-pipeline: <子命令>: <错误码>: <说明>`。
+ * 错误码只收 6 个：E_USAGE / E_CONFIG / E_RECORD / E_PARSE / E_ENV / E_STATE。
+ */
+function errorLine(io, sub, code, message) {
+  io.err(`dsh-pipeline: ${sub}: ${code}: ${message}`)
+}
+
+/** 参数 / 用法错误：默认 E_USAGE，调用方可给更具体的码（如配置读取失败给 E_CONFIG）。 */
+function argError(io, sub, message, code = 'E_USAGE') {
+  errorLine(io, sub, code, message)
   return 2
+}
+
+/** 非参数类错误（流程内失败）：自带码与退出码，返回 code。 */
+function fail(io, sub, code, message, exitCode) {
+  errorLine(io, sub, code, message)
+  return exitCode
 }
 
 function runGate(argv, deps, io) {
@@ -763,7 +778,7 @@ function runMerge(argv, deps, io) {
     io.out(`已合并 PR #${parsed.pr}（--squash），现场已清理，main 已快进`)
     return 0
   }
-  io.err(`merge: 停在 ${String(result.step)} 步骤（${String(result.code)}）`)
+  errorLine(io, 'merge', String(result.code ?? 'E_STATE'), `停在 ${String(result.step)} 步骤`)
   return result.step === 'gate' || result.step === 'ci' ? 1 : 2
 }
 
@@ -993,7 +1008,7 @@ function runRecord(argv, deps, io) {
     policy = { ...policy, changedLines: { total: lines.total, production: lines.production, testLines: lines.testLines } }
   } catch (error) {
     // 策略算不出来就写不了可信记录：宁可失败，也不写一条 policy 缺失的记录。
-    io.err(`record: 高风险判定失败: ${messageOf(error)}`)
+    errorLine(io, 'record', 'E_ENV', `高风险判定失败: ${messageOf(error)}`)
     return 2
   }
 
@@ -1040,7 +1055,7 @@ function runRecord(argv, deps, io) {
     }
     // 记录已落盘但判定不可用：退出 1，让调用方走人工，而不是把审计轨迹丢掉。
     if (escalation !== null) {
-      io.err(`record: ${escalation.errorCode}: ${escalation.reason}；已按 ESCALATE 落盘`)
+      errorLine(io, 'record', escalation.errorCode ?? 'E_PARSE', `${escalation.reason}；已按 ESCALATE 落盘`)
       return 1
     }
     // 契约 §4 的新口径：判定 REJECT 也退 1（记录照常落盘）；
@@ -1048,7 +1063,7 @@ function runRecord(argv, deps, io) {
     if (analysis.verdict === 'REJECT' && options['legacy-exit-codes'] !== true) return 1
     return 0
   } catch (error) {
-    io.err(`record: 写入失败: ${messageOf(error)}`)
+    errorLine(io, 'record', 'E_ENV', `写入失败: ${messageOf(error)}`)
     return 2
   }
 }
@@ -1135,7 +1150,7 @@ function runReviewPrepare(argv, deps, io) {
   try {
     config = loadConfig(root).config
   } catch (error) {
-    return argError(io, sub, `读取配置失败: ${messageOf(error)}`)
+    return argError(io, sub, `读取配置失败: ${messageOf(error)}`, 'E_CONFIG')
   }
   const repo = config.repo
   if (typeof repo !== 'string' || repo.length === 0) {
@@ -1427,7 +1442,7 @@ function sendReview({ root, pr, headSha, io, runner }) {
   try {
     record = readRecord(file)
   } catch (error) {
-    io.err(`review publish: 读取审核记录失败: ${messageOf(error)}（review 未发出）`)
+    errorLine(io, 'review publish', 'E_RECORD', `读取审核记录失败: ${messageOf(error)}（review 未发出）`)
     return 2
   }
 
@@ -1435,12 +1450,12 @@ function sendReview({ root, pr, headSha, io, runner }) {
   try {
     config = loadConfig(root).config
   } catch (error) {
-    io.err(`review publish: 读取配置失败: ${messageOf(error)}（记录已写入，review 未发出）`)
+    errorLine(io, 'review publish', 'E_CONFIG', `读取配置失败: ${messageOf(error)}（记录已写入，review 未发出）`)
     return 2
   }
   const repo = config.repo
   if (!nonEmpty(repo)) {
-    io.err('review publish: 配置 .dsh/pipeline.json 缺少 repo，无法发送 review（记录已写入，review 未发出）')
+    errorLine(io, 'review publish', 'E_CONFIG', '配置 .dsh/pipeline.json 缺少 repo，无法发送 review（记录已写入，review 未发出）')
     return 2
   }
 
@@ -1464,7 +1479,7 @@ function sendReviewWithIdentity({ identity, repo, pr, headSha, io, runner, root,
     const who = currentUser({ runner })
     if (!who.ok) {
       io.err(who.error)
-      io.err('review publish: 记录已写，review 未发出（无法确认 gh 身份）')
+      errorLine(io, 'review publish', 'E_ENV', '记录已写，review 未发出（无法确认 gh 身份）')
       return 3
     }
     // GitHub 登录名大小写不敏感：统一小写比较，避免配置写成 Guraul-Review 时误判
@@ -1480,7 +1495,7 @@ function sendReviewWithIdentity({ identity, repo, pr, headSha, io, runner, root,
   const listed = listPullReviews({ repo, pr, runner })
   if (!listed.ok) {
     io.err(listed.error)
-    io.err('review publish: 记录已写，review 未发出（读取已有 review 失败）')
+    errorLine(io, 'review publish', 'E_ENV', '记录已写，review 未发出（读取已有 review 失败）')
     return 3
   }
   const alreadyPosted = listed.data.some(
@@ -1504,7 +1519,7 @@ function sendReviewWithIdentity({ identity, repo, pr, headSha, io, runner, root,
   const posted = createPullReview({ repo, pr, event, body, runner })
   if (!posted.ok) {
     io.err(posted.error)
-    io.err('review publish: 记录已写，review 未发出')
+    errorLine(io, 'review publish', 'E_ENV', '记录已写，review 未发出')
     return 3
   }
   io.out(`审核: 已发送 GitHub review（event=${event}）`)
@@ -1699,10 +1714,10 @@ function runDoctor(argv, deps, io) {
   } else {
     const expected = nonEmpty(parsed.options.expect) ? String(parsed.options.expect).toLowerCase() : null
     if (expected !== null && !buildMatchesExpected(baseline, expected)) {
-      io.err(`doctor: 基准构建 ${baseline.slice(0, 7)} 与期望 ${expected.slice(0, 7)} 不一致`)
+      errorLine(io, 'doctor', 'E_STATE', `基准构建 ${baseline.slice(0, 7)} 与期望 ${expected.slice(0, 7)} 不一致`)
       failed = true
     } else if (drift.length > 0) {
-      io.err(`doctor: 以下仓装的不是同一构建（基准 ${baseline.slice(0, 7)}）: ${drift.join(', ')}`)
+      errorLine(io, 'doctor', 'E_STATE', `以下仓装的不是同一构建（基准 ${baseline.slice(0, 7)}）: ${drift.join(', ')}`)
       failed = true
     }
   }
@@ -1799,7 +1814,7 @@ function runLock(argv, deps, io) {
     io.out(`lock: 已写入 ${LOCK_PATH.join('/')}（${formatExpect(installed.build)}）`)
     return 0
   } catch (error) {
-    io.err(`lock: 写入失败: ${messageOf(error)}`)
+    errorLine(io, 'lock', 'E_ENV', `写入失败: ${messageOf(error)}`)
     return 2
   }
 }
@@ -1889,7 +1904,7 @@ function runSelftest(argv, deps, io) {
 
   // 失败原文始终走 stderr：--json 只改 stdout 的形态，不改退出码也不吞错误
   for (const check of result.checks) {
-    if (!check.ok) io.err(`selftest: ${check.detail}`)
+    if (!check.ok) errorLine(io, 'selftest', 'E_STATE', check.detail)
     else if (options.json !== true) io.out(`${root}: ${check.detail}`)
   }
   if (options.json === true) io.out(JSON.stringify({ ok: result.ok, root, checks: result.checks }))
@@ -1981,7 +1996,7 @@ function runShim(argv, deps, io) {
     const result = installShims(root, { force: options.force === true })
     if (!result.ok) {
       for (const name of result.conflicts) {
-        io.err(`shim: 已存在且内容不同: ${name}（确认后加 --force 覆盖）`)
+        errorLine(io, 'shim', 'E_STATE', `已存在且内容不同: ${name}（确认后加 --force 覆盖）`)
       }
       return 1
     }
@@ -1992,18 +2007,18 @@ function runShim(argv, deps, io) {
 
   const result = checkShims(root)
   if (result.missingDir) {
-    io.err(`shim: ${result.dir} 不存在或不是目录，请先运行 shim install`)
+    errorLine(io, 'shim', 'E_STATE', `${result.dir} 不存在或不是目录，请先运行 shim install`)
     return 1
   }
   if (result.scanError !== null) {
     // 枚举不了目录 ≠ 没有多余文件：按环境错误退出，别把失败说成通过
-    io.err(`shim: 无法枚举 ${SHIM_DIR}: ${result.scanError}`)
+    errorLine(io, 'shim', 'E_ENV', `无法枚举 ${SHIM_DIR}: ${result.scanError}`)
     return 3
   }
   if (!result.ok) {
-    for (const name of result.mismatches) io.err(`shim: 与模板不一致: ${name}`)
+    for (const name of result.mismatches) errorLine(io, 'shim', 'E_STATE', `与模板不一致: ${name}`)
     for (const name of result.extras) {
-      io.err(`shim: 不允许的私有文件: ${name}（${SHIM_DIR} 只放生成物${describeExtra(name)}）`)
+      errorLine(io, 'shim', 'E_STATE', `不允许的私有文件: ${name}（${SHIM_DIR} 只放生成物${describeExtra(name)}）`)
     }
     return 1
   }
@@ -2042,7 +2057,7 @@ function runHooks(argv, deps, io) {
       runner: deps.runner,
     })
     if (!result.ok) {
-      io.err(`hooks: ${result.error}`)
+      errorLine(io, 'hooks', 'E_ENV', result.error)
       return result.code
     }
     io.out(`hooks: ${result.status === 'updated' ? '已更新' : '已安装'} ${result.path}`)
@@ -2051,7 +2066,7 @@ function runHooks(argv, deps, io) {
 
   const result = checkHook(root, { runner: deps.runner })
   if (!result.ok) {
-    io.err(`hooks: ${result.error}`)
+    errorLine(io, 'hooks', 'E_ENV', result.error)
     return result.code
   }
   io.out(`hooks: 钩子与本包一致: ${result.path}`)
@@ -2100,7 +2115,7 @@ function runCheckAllCommand(argv, deps, io) {
     try {
       config = loadConfig(root).config
     } catch (error) {
-      return argError(io, 'check-all', `读取配置失败: ${messageOf(error)}`)
+      return argError(io, 'check-all', `读取配置失败: ${messageOf(error)}`, 'E_CONFIG')
     }
     const checks = config.checks
     const configured = isPlainObject(checks) && Array.isArray(checks.packages) ? checks.packages : []
@@ -2133,7 +2148,7 @@ function runCheckAllCommand(argv, deps, io) {
   })
 
   if (result.missingPnpm) {
-    io.err('check-all: 找不到 pnpm（请安装 pnpm 并加入 PATH）')
+    errorLine(io, 'check-all', 'E_ENV', '找不到 pnpm（请安装 pnpm 并加入 PATH）')
     return 3
   }
   if (json) {
@@ -2186,7 +2201,7 @@ function runDeploy(argv, deps, io) {
   try {
     config = loadConfig(options.root).config
   } catch (error) {
-    return argError(io, 'deploy', `读取配置失败: ${messageOf(error)}`)
+    return argError(io, 'deploy', `读取配置失败: ${messageOf(error)}`, 'E_CONFIG')
   }
   if (!isPlainObject(config.deploy)) {
     return argError(io, 'deploy', '配置缺少 deploy 段（契约 §7.1），无法生成 / 校验部署骨架')
@@ -2370,7 +2385,7 @@ function runStatus(argv, deps, io) {
   try {
     collected = collectRecords(root)
   } catch (error) {
-    io.err(`status: 读取审核记录失败: ${messageOf(error)}`)
+    errorLine(io, 'status', 'E_ENV', `读取审核记录失败: ${messageOf(error)}`)
     return 2
   }
 
@@ -2489,7 +2504,7 @@ function runTask(argv, deps, io) {
     exists: deps.exists,
   })
   if (!result.ok) {
-    io.err(`task: ${result.error}`)
+    errorLine(io, 'task', 'E_ENV', result.error)
     return 2
   }
   result.lines.forEach((line, index) => io.out(index === 0 ? `task: ${line}` : line))
@@ -2514,7 +2529,7 @@ function runPr(argv, deps, io) {
     runner: deps.runner,
   })
   if (!result.ok) {
-    io.err(`pr: ${result.error}`)
+    errorLine(io, 'pr', 'E_ENV', result.error)
     return 2
   }
   result.lines.forEach((line, index) => io.out(index === 0 ? `pr: ${line}` : line))
