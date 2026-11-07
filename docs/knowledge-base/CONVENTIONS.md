@@ -11,7 +11,7 @@
 | 文件名 | kebab-case 英文：`build-info.mjs`、`check-all.mjs`、`profile-check.mjs`；命令相关模块与子命令同名（`gate.mjs` ↔ `gate`） |
 | 导出 | 函数 camelCase（`resolveMainRoot`）、常量 UPPER_SNAKE（`DEFAULT_TTL_MS`）、错误类 PascalCase（`RecordError`） |
 | 注释 | **中文，解释「为什么」**；每个模块顶部有一段背景说明（约束、历史事故、为什么这样设计）。不要写"这行在做什么" |
-| 错误信息 | 中文；错误行由 CLI 加 `<子命令>: ` 前缀，lib 只给原因 |
+| 错误信息 | 中文；错误行由 CLI 统一渲染成 `dsh-pipeline: <子命令>: <错误码>: <说明>`（契约 §5），lib 只给原因与内部码 |
 | 错误类型 | `ConfigError` / `RecordError` / `PolicyError` / `RoleError`，带 `code` 字段（`E_CONFIG` / `E_RECORD` / `E_POLICY` / `E_ROLE`）；其余用 `{ ok:false, code, error }` 返回值 |
 | 外部命令 | 一律 `{ ok, code, data, error }`，**不抛异常**；上层据此写审计与闸门，不需要 try/catch |
 | 打印 | `lib/` 不打印，`bin/cli.mjs` 决定 stdout/stderr |

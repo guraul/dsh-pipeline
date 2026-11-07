@@ -39,7 +39,7 @@
 在调 `evaluateGate` 之前多做三项 CLI 层检查：
 
 1. `--no-review`：写跳过审计（`.dsh-web/reviews/skips/<ts>-<pr>.json`），打印警告到 stderr，返回 0；写审计失败退 2；
-2. 没给 `--record` 且没声明 `--no-review`：**fail-closed** 退 1（`审核闸门: 未提供审核记录，且未声明 --no-review，按失败关闭处理`）；
+2. 没给 `--record` 且没声明 `--no-review`：**fail-closed** 退 1（`dsh-pipeline: gate: E_RECORD: 未提供审核记录，且未声明 --no-review，按失败关闭处理`）；
 3. 记录属于哪个 PR：`record.pr !== --pr` 退 1；`head-sha` 未给时用 `git HEAD`（取不到退 2）。
 
 ## 合并（`runMerge`）

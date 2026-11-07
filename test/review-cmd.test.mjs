@@ -773,7 +773,7 @@ test('review publish：判定 sha 与请求不符时仍落 ESCALATE/E_SHA_MISMAT
     run(['review', 'publish', '--pr', '7', '--response', response, '--root', root], io, { cwd: root }),
     1,
   )
-  assert.match(io.state.err, /E_SHA_MISMATCH/)
+  assert.match(io.state.err, /dsh-pipeline: record: E_STATE:/)
 
   const saved = readRecord(recordFile(reviewsDir(root), 7, SHA))
   assert.equal(saved.verdict, 'ESCALATE')

@@ -530,7 +530,7 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
       return {
         code: 2,
         skipped: false,
-        lines: [{ stream: 'err', text: `跳过审核失败: ${messageOf(error)}` }],
+        lines: [{ stream: 'err', text: `dsh-pipeline: gate: E_ENV: 跳过审核失败: ${messageOf(error)}` }],
       }
     }
   }
@@ -540,7 +540,7 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
       code: 1,
       skipped: false,
       lines: [
-        { stream: 'err', text: '审核闸门: 未提供审核记录，且未声明 --no-review，按失败关闭处理' },
+        { stream: 'err', text: 'dsh-pipeline: gate: E_RECORD: 未提供审核记录，且未声明 --no-review，按失败关闭处理' },
       ],
     }
   }
@@ -552,7 +552,7 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
     return {
       code: 1,
       skipped: false,
-      lines: [{ stream: 'err', text: `审核闸门: ${messageOf(error)}` }],
+      lines: [{ stream: 'err', text: `dsh-pipeline: gate: E_RECORD: ${messageOf(error)}` }],
     }
   }
 
@@ -561,7 +561,7 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
       code: 1,
       skipped: false,
       lines: [
-        { stream: 'err', text: `审核闸门: 记录属于 PR #${String(candidate.pr)}，与 --pr #${pr} 不符` },
+        { stream: 'err', text: `dsh-pipeline: gate: E_STATE: 记录属于 PR #${String(candidate.pr)}，与 --pr #${pr} 不符` },
       ],
     }
   }
@@ -573,7 +573,7 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
       return {
         code: 2,
         skipped: false,
-        lines: [{ stream: 'err', text: `无法获取当前 head 提交: ${current.error}` }],
+        lines: [{ stream: 'err', text: `dsh-pipeline: gate: E_ENV: 无法获取当前 head 提交: ${current.error}` }],
       }
     }
     sha = current.data
@@ -587,7 +587,7 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
     return {
       code: 2,
       skipped: false,
-      lines: [{ stream: 'err', text: `审核闸门: 读取配置失败: ${messageOf(error)}` }],
+      lines: [{ stream: 'err', text: `dsh-pipeline: gate: E_CONFIG: 读取配置失败: ${messageOf(error)}` }],
     }
   }
 
@@ -601,7 +601,7 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
     return {
       code: 1,
       skipped: false,
-      lines: [{ stream: 'err', text: `审核闸门: ${verdict.reason}` }],
+      lines: [{ stream: 'err', text: `dsh-pipeline: gate: ${publicCode(verdict.code)}: ${verdict.reason}` }],
     }
   }
 
@@ -701,10 +701,33 @@ function argError(io, sub, message, code = 'E_USAGE') {
   return 2
 }
 
-/** 非参数类错误（流程内失败）：自带码与退出码，返回 code。 */
-function fail(io, sub, code, message, exitCode) {
-  errorLine(io, sub, code, message)
-  return exitCode
+/** 契约 §5 允许的 6 个错误码。 */
+const PUBLIC_CODES = Object.freeze(['E_USAGE', 'E_CONFIG', 'E_RECORD', 'E_PARSE', 'E_ENV', 'E_STATE'])
+
+/**
+ * 把内部码（gate / merge / record 的 E_CI、E_VERDICT、E_SHA_MISMATCH…）折成契约的 6 码。
+ * 内部码继续留在记录与日志里用于审计，但**错误行只出现契约码**——否则消费仓会见到第 7、第 8 个码。
+ */
+function publicCode(internal, fallback = 'E_STATE') {
+  if (PUBLIC_CODES.includes(internal)) return internal
+  switch (internal) {
+    case 'E_CONFIG':
+    case 'E_POLICY':
+    case 'E_POLICY_VERSION':
+      return 'E_CONFIG'
+    case 'E_RECORD':
+    case 'E_SCHEMA':
+      return 'E_RECORD'
+    case 'E_PARSE':
+      return 'E_PARSE'
+    case 'E_ENV':
+    case 'E_CI':
+    case 'E_AUDIT':
+      return 'E_ENV'
+    default:
+      // E_VERDICT / E_EXPIRED / E_SHA_MISMATCH / E_PR_MISMATCH / E_INPUT … 都是「状态不对」
+      return PUBLIC_CODES.includes(fallback) ? fallback : 'E_STATE'
+  }
 }
 
 function runGate(argv, deps, io) {
@@ -760,8 +783,9 @@ function runMerge(argv, deps, io) {
   }
 
   for (const step of result.steps) {
+    // 成功行是状态行（阶段: 状态）；失败行必须走契约 §5 的错误行格式
     if (step.ok) io.out(`${step.name}: ${step.detail}`)
-    else io.err(`${step.name}: ${step.detail}`)
+    else errorLine(io, 'merge', publicCode(step.code), step.detail)
   }
 
   if (result.ok) {
@@ -778,7 +802,7 @@ function runMerge(argv, deps, io) {
     io.out(`已合并 PR #${parsed.pr}（--squash），现场已清理，main 已快进`)
     return 0
   }
-  errorLine(io, 'merge', String(result.code ?? 'E_STATE'), `停在 ${String(result.step)} 步骤`)
+  errorLine(io, 'merge', publicCode(result.code), `停在 ${String(result.step)} 步骤`)
   return result.step === 'gate' || result.step === 'ci' ? 1 : 2
 }
 
@@ -1008,7 +1032,7 @@ function runRecord(argv, deps, io) {
     policy = { ...policy, changedLines: { total: lines.total, production: lines.production, testLines: lines.testLines } }
   } catch (error) {
     // 策略算不出来就写不了可信记录：宁可失败，也不写一条 policy 缺失的记录。
-    errorLine(io, 'record', 'E_ENV', `高风险判定失败: ${messageOf(error)}`)
+    errorLine(io, 'record', 'E_CONFIG', `高风险判定失败: ${messageOf(error)}`)
     return 2
   }
 
@@ -1055,7 +1079,7 @@ function runRecord(argv, deps, io) {
     }
     // 记录已落盘但判定不可用：退出 1，让调用方走人工，而不是把审计轨迹丢掉。
     if (escalation !== null) {
-      errorLine(io, 'record', escalation.errorCode ?? 'E_PARSE', `${escalation.reason}；已按 ESCALATE 落盘`)
+      errorLine(io, 'record', publicCode(escalation.errorCode, 'E_STATE'), `${escalation.reason}；已按 ESCALATE 落盘`)
       return 1
     }
     // 契约 §4 的新口径：判定 REJECT 也退 1（记录照常落盘）；
@@ -1484,8 +1508,11 @@ function sendReviewWithIdentity({ identity, repo, pr, headSha, io, runner, root,
     }
     // GitHub 登录名大小写不敏感：统一小写比较，避免配置写成 Guraul-Review 时误判
     if (who.data.toLowerCase() !== identity.account.trim().toLowerCase()) {
-      io.err(
-        `review publish: 当前 gh 身份是 ${who.data}，配置要求 ${identity.account}（记录已写入，review 未发出）`,
+      errorLine(
+        io,
+        'review publish',
+        'E_STATE',
+        `当前 gh 身份是 ${who.data}，配置要求 ${identity.account}（记录已写入，review 未发出）`,
       )
       return 2
     }
@@ -1798,7 +1825,7 @@ function runLock(argv, deps, io) {
       io.out(`lock: ${result.detail}`)
       return 0
     }
-    io.err(`lock: ${result.detail}`)
+    errorLine(io, 'lock', 'E_STATE', result.detail)
     return 1
   }
 
@@ -2204,7 +2231,7 @@ function runDeploy(argv, deps, io) {
     return argError(io, 'deploy', `读取配置失败: ${messageOf(error)}`, 'E_CONFIG')
   }
   if (!isPlainObject(config.deploy)) {
-    return argError(io, 'deploy', '配置缺少 deploy 段（契约 §7.1），无法生成 / 校验部署骨架')
+    return argError(io, 'deploy', '配置缺少 deploy 段（契约 §7.1），无法生成 / 校验部署骨架', 'E_CONFIG')
   }
 
   // 判据必须是「显式传了没有」，不能用 isPlainObject：测试会注入 null 表示「这里没有 build.json」，
@@ -2221,7 +2248,7 @@ function runDeploy(argv, deps, io) {
     region = renderRegion(config.deploy, buildInfo.gitSha)
   } catch (error) {
     if (error instanceof DeployError) {
-      io.err(`deploy ${action}: ${error.message}`)
+      errorLine(io, 'deploy', 'E_CONFIG', error.message)
       return error.code
     }
     throw error
@@ -2233,7 +2260,7 @@ function runDeploy(argv, deps, io) {
     rollbackRegion = renderRollbackRegion(config.deploy, buildInfo.gitSha)
   } catch (error) {
     if (error instanceof DeployError) {
-      io.err(`deploy ${action}: ${error.message}`)
+      errorLine(io, 'deploy', 'E_CONFIG', error.message)
       return error.code
     }
     throw error
@@ -2264,7 +2291,7 @@ function runDeploy(argv, deps, io) {
       writeTargets = targets
     } else if (rollbackExisting !== null) {
       // 手写的回滚 caller：只在显式 --rollback 时才拒绝覆盖；这里跳过它，保证部署 caller 照常刷新
-      io.err(`deploy init: ${DEPLOY_ROLLBACK_FILE} 已存在但不是生成的骨架（手写文件），已跳过；要接管请先删除它再跑 deploy init --write --rollback`)
+      io.err(`构建: 提示: ${DEPLOY_ROLLBACK_FILE} 已存在但不是生成的骨架（手写文件），已跳过；要接管请先删除它再跑 deploy init --write --rollback`)
     }
     // 先全部读一遍并校验「已有文件必须是生成的骨架」，再统一写：避免写了一半才失败
     const planned = []
@@ -2278,7 +2305,7 @@ function runDeploy(argv, deps, io) {
       }
       const merged = existing === null ? null : replaceRegion(existing, target.skeleton)
       if (existing !== null && merged === null) {
-        io.err(`deploy init: ${target.file} 已存在且不是生成的骨架（缺标记），拒绝覆盖`)
+        errorLine(io, 'deploy', 'E_STATE', `${target.file} 已存在且不是生成的骨架（缺标记），拒绝覆盖`)
         return 1
       }
       planned.push({ file, target, existing, merged })
@@ -2307,7 +2334,7 @@ function runDeploy(argv, deps, io) {
       if (error?.code === 'ENOENT') {
         // 部署 caller 是必须的；回滚 caller 允许尚未接入（迁移期），只在输出里提示
         if (target.file === DEPLOY_WORKFLOW_FILE) {
-          io.err(`deploy check: ${target.file} 不存在，请先运行 deploy init`)
+          errorLine(io, 'deploy', 'E_STATE', `${target.file} 不存在，请先运行 deploy init`)
           return 1
         }
         // 回滚 caller 允许尚未接入（迁移期）：静默跳过，不改变既有输出契约
@@ -2320,16 +2347,16 @@ function runDeploy(argv, deps, io) {
     if (!extracted.ok) {
       // 与 init 同口径：手写的回滚 caller 只是「尚未接管」，跳过并提示；部署 caller 缺标记才算错
       if (target.file === DEPLOY_ROLLBACK_FILE) {
-        io.err(`deploy check: ${target.file} 是手写文件（缺生成区标记），已跳过；要接管请删除它再跑 deploy init --write --rollback`)
+        io.err(`构建: 提示: ${target.file} 是手写文件（缺生成区标记），已跳过；要接管请删除它再跑 deploy init --write --rollback`)
         continue
       }
-      io.err(`deploy check: ${target.file} 不是生成的骨架（缺生成区标记），无法比对`)
+      errorLine(io, 'deploy', 'E_STATE', `${target.file} 不是生成的骨架（缺生成区标记），无法比对`)
       return 1
     }
     checked += 1
     const diff = firstDifference(target.region, extracted.region)
     if (diff !== null) {
-      io.err(`deploy check: ${target.file} 的生成区与配置不一致（第一处差异在第 ${diff.line} 行）`)
+      errorLine(io, 'deploy', 'E_STATE', `${target.file} 的生成区与配置不一致（第一处差异在第 ${diff.line} 行）`)
       io.err(`  期望: ${diff.expected}`)
       io.err(`  实际: ${diff.actual}`)
       return 1
@@ -2480,12 +2507,12 @@ function runTask(argv, deps, io) {
     try {
       config = loadConfig(configRoot).config
     } catch (error) {
-      return argError(io, 'task', `读取配置失败: ${messageOf(error)}`)
+      return argError(io, 'task', `读取配置失败: ${messageOf(error)}`, 'E_CONFIG')
     }
     const configured = config.worktreesDir
     if (configured !== undefined && configured !== null) {
       if (!nonEmpty(configured)) {
-        return argError(io, 'task', '配置 worktreesDir 必须是非空目录路径')
+        return argError(io, 'task', '配置 worktreesDir 必须是非空目录路径', 'E_CONFIG')
       }
       worktreesDir = configured
     }
@@ -2562,10 +2589,10 @@ export function runCli(argv, deps = {}) {
   }
   if (!IMPLEMENTED.has(first)) {
     if (SUBCOMMANDS.includes(first)) {
-      io.err(`dsh-pipeline ${first}: 未实现`)
+      errorLine(io, first, 'E_USAGE', '未实现')
       return 2
     }
-    io.err(`dsh-pipeline: 未知子命令 "${first}"`)
+    errorLine(io, first, 'E_USAGE', '未知子命令')
     io.err(HELP)
     return 2
   }
@@ -2586,7 +2613,7 @@ export function runCli(argv, deps = {}) {
     if (first === 'deploy') return runDeploy(rest, deps, io)
     return runStatus(rest, deps, io)
   } catch (error) {
-    io.err(`dsh-pipeline ${first}: ${messageOf(error)}`)
+    errorLine(io, first, 'E_ENV', messageOf(error))
     return 2
   }
 }
