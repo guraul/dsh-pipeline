@@ -187,6 +187,18 @@ test('不带 --post-review：只落盘，gh 一次都不调', (t) => {
   assert.deepEqual(ghCalls(fixture), [], '没带 --post-review 时不许发出任何 gh 调用')
 })
 
+test('记录没写成（退 2）：不发 review，退出码保持 2', (t) => {
+  const fixture = cleanup(t, makeFixture())
+  // 把 reviews 目录换成同名文件，让 writeRecord 必然失败
+  mkdirSync(join(fixture.root, '.dsh-web'), { recursive: true })
+  writeFileSync(join(fixture.root, '.dsh-web', 'reviews'), 'not a dir', 'utf8')
+
+  const result = runPublish(fixture, ['--post-review'])
+
+  assert.equal(result.status, 2, result.stderr)
+  assert.deepEqual(ghCalls(fixture), [], '记录没写成时不许发任何 gh 请求')
+})
+
 test('event 映射：APPROVE / REJECT / ESCALATE 各发成对应 event', (t) => {
   const cases = [
     ['APPROVE', 'APPROVE'],

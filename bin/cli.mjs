@@ -299,7 +299,7 @@ review 用法:
            身份（GH_CONFIG_DIR 等）由 gh 自己读环境变量，本命令只透传、不处理。
            --dry-run 不写盘、不发请求，只打印将要发送的 event 与 body 前 200 字；
            --legacy-exit-codes 判定 REJECT 时退回旧口径退出 0（缺省退 1）；
-           带 --post-review 时退出码反映「review 是否发出」，不反映判定。
+           带 --post-review 时退出码反映「review 是否发出」，不反映判定；记录没写成时不发送。
   prompt   读 --request 指定的请求 JSON，用 buildPrompt 组出审核提示词（不发任何外部命令）；
            审核档位取 .dsh/pipeline.json 的 review.tier（inline | tools，缺省 tools，见契约 §7.3）；
            --request 必填、没有缺省回退（拿错请求文件的代价是把错提示词发给 reviewer）；
@@ -1249,11 +1249,15 @@ function runReviewPublish(argv, deps, io) {
     return previewPostReview({ root, pr: pr.value, request, responseFile: options.response, io })
   }
 
-  // 判定是否可用与退出码解耦：REJECT 现在退 1，但它是一次有效判定，--post-review 仍要发
-  const responseText = readTextFile(options.response, '响应文件')
-  if (responseText.error) return argError(io, sub, responseText.error)
-  const analysis = analyzeVerdict(responseText.text, { nonce: request.nonce, diff: request.diff })
-  const usable = analysis.ok && analysis.sha === request.head_sha
+  // 判定是否可用与退出码解耦：REJECT 现在退 1，但它是一次有效判定，--post-review 仍要发。
+  // 只在需要发送时解析（普通 publish 的读取顺序与开销保持不变）。
+  let usable = false
+  if (options['post-review'] === true) {
+    const responseText = readTextFile(options.response, '响应文件')
+    if (responseText.error) return argError(io, sub, responseText.error)
+    const analysis = analyzeVerdict(responseText.text, { nonce: request.nonce, diff: request.diff })
+    usable = analysis.ok && analysis.sha === request.head_sha
+  }
 
   const forward = [
     '--request',
@@ -1275,9 +1279,10 @@ function runReviewPublish(argv, deps, io) {
 
   const code = runRecord(forward, deps, io)
   if (options['post-review'] !== true) return code
-  // 记录写了但判定不可用：解析出来的结论不可信，没有可发的 event，
-  // 审计留盘即可——不能把 E_PARSE 的兜底 ESCALATE 当成 reviewer 的真实意见发出去。
-  if (!usable) return code
+  // 判定不可用：解析出来的结论不可信，没有可发的 event，审计留盘即可——
+  // 不能把 E_PARSE 的兜底 ESCALATE 当成 reviewer 的真实意见发出去。
+  // 记录没写成（退 2）同样不发：没有记录就没有可追溯的判定。
+  if (!usable || code === 2) return code
   return sendReview({ root, pr: pr.value, headSha: request.head_sha, io, runner: deps.runner })
 }
 
