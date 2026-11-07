@@ -226,7 +226,7 @@ test('deploy 默认 null，只接受对象或 null', () => {
 
 test('deploy 合法配置：全字段、可选项、枚举与边界值', () => {
   const full = {
-    artifact: 'oci-image',
+    artifact: 'static-dir',
     service: 'serve-9928',
     remoteDir: '/root/project/app',
     workDir: 'app',
@@ -236,8 +236,8 @@ test('deploy 合法配置：全字段、可选项、枚举与边界值', () => {
     keepReleases: 50,
   }
   assert.deepEqual(validateConfig({ deploy: full }).deploy, full)
-  // 可选项缺省即未设置；枚举三值全收（oci-image 生成时才报尚未实现）
-  for (const artifact of ['static-dir', 'node-standalone', 'oci-image']) {
+  // 可选项缺省即未设置；枚举只收两种（容器部署已明确不做，oci-image 属非法值）
+  for (const artifact of ['static-dir', 'node-standalone']) {
     assert.equal(validateConfig({ deploy: { ...MINIMAL_DEPLOY, artifact } }).deploy.artifact, artifact)
   }
   assert.equal(validateConfig({ deploy: { ...MINIMAL_DEPLOY, keepReleases: 1 } }).deploy.keepReleases, 1)

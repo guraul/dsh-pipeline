@@ -7,7 +7,7 @@
  * node-standalone 放行（mode=releases + assemble）、qualityCmd / buildCmd / paths 三字段
  * （渲染顺序、paths 元素顺序、不配不出现、新行参与 check 逐字节比对）、linkPaths 字段
  * （link_paths 渲染在 build_cmd 之后、逗号+空格拼接、不配不出现、改配置后 check 报差异）、
- * artifact=oci-image 退 2、
+ * artifact=oci-image 在配置层被拒、
  * 缺文件 / 缺标记退 1、手写文件拒绝覆盖退 1、参数与缺 deploy 段 / 缺 build.json 退 2。
  * 构建标识经 deps.buildInfo 注入，不依赖包内 build.json（CI 源码运行没有该文件）。
  * 只调 runCli（注入输出流），不碰真实 gh / git。
@@ -456,20 +456,14 @@ test('deploy init --write：改配置重跑只换生成区，保留标记之后�
   assert.equal(check(root).code, 0)
 })
 
-test('deploy：artifact=oci-image → init 与 check 都退 2，报尚未实现', (t) => {
+test('deploy：artifact=oci-image 在配置层就被拒（容器部署明确不做）', (t) => {
   const root = tmp()
   t.after(() => rmSync(root, { recursive: true, force: true }))
   writeConfig(root, { ...BASE_DEPLOY, artifact: 'oci-image' })
 
   const initResult = init(root)
   assert.equal(initResult.code, 2)
-  assert.equal(initResult.out, '')
-  assert.match(initResult.err, /oci-image 尚未实现/)
-
-  const checkResult = check(root)
-  assert.equal(checkResult.code, 2)
-  assert.match(checkResult.err, /oci-image 尚未实现/)
-  assert.ok(!existsSync(workflowPath(root)), '未实现时不应落盘')
+  assert.match(initResult.err, /artifact 只能是 static-dir \| node-standalone/)
 })
 
 test('deploy check：文件不存在 → 退 1 提示先跑 deploy init；缺标记 → 报不是生成的骨架', (t) => {

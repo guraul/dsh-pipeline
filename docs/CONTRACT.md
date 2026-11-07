@@ -92,7 +92,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 **配置字段（已进 schema）**：`worktreesDir` 由 `task` 消费——缺省读配置、`--worktrees-dir` 优先；`checks` 由 `check-all` 消费——`--packages` 优先，其次 `checks.packages`（按给定顺序），再否则自动发现并按 `checks.exclude` 过滤；`deploy` 由 `deploy init|check` 消费（字段见 §7.1，部署行为见 §10）；`review` 段的 `tier` / `postReview` / `identity` / `rounds` 全部进 schema 并被消费（见 §7.3）。
 
-**目标**：只剩 `oci-image` 产物（§10）。
+**目标**：无。§3.2 / §4 / §6 / §7 / §9 / §10 的能力已全部落地；容器部署（原 `oci-image` 占位）已明确不做，见 §10。
 
 硬规则：目标条目在实现合并前**不得**被入口 shim 调用，也不得在文档里写成可用；§9 的门禁项现已全部落地，CI 可以直接引用。
 
@@ -195,7 +195,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
   "deploy": {
     "artifact": "static-dir",          // 必填；static-dir / node-standalone 可用
                                        // （node-standalone 由 deploy.yml 的 assemble 步骤组装 release）；
-                                       // oci-image 仅 schema 放行，生成骨架时报「尚未实现」退 2
+                                       // 容器部署已明确不做（见 §10），oci-image 不是合法值
     "service": "serve-9928",           // 必填非空字符串（systemd 服务名）
     "remoteDir": "/root/project/<app>", // 必填非空字符串（绝对路径，服务器部署根目录）
     "workDir": "app",                  // 必填非空字符串（仓内构建目录；deploy.yml 的 work_dir 是必填 input）
@@ -371,7 +371,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | 项 | 规定 |
 |---|---|
 | 实现 | 本仓 `.github/workflows/deploy.yml`（`on: workflow_call`）与 `rollback.yml` |
-| 构建 | 三个 input 均有默认值（老 caller 零改动）：`quality_cmd`（默认 `pnpm exec tsc --noEmit && pnpm test`）/ `build_cmd`（默认 `pnpm exec expo export --platform web --clear`）/ `assemble`（`static-dir` \| `node-standalone`，默认 `static-dir`）；`assemble: node-standalone` 时多一步「组装 release」——`.next/standalone/**` → `<artifact_dir>/`、`.next/static` 与 `public` 按 standalone 自带前缀补位、仓根 `scripts/` → `<artifact_dir>/scripts`，**组装阶段不建 data 软链**——需要外置状态（数据库/上传）就在 `deploy.linkPaths` 声明，由 `Link persistent paths` 在切软链前创建；不声明则 release 内没有这些路径 |
+| 构建 | 三个 input 均有默认值（老 caller 零改动）：`quality_cmd`（默认 `pnpm exec tsc --noEmit && pnpm test`）/ `build_cmd`（默认 `pnpm exec expo export --platform web --clear`）/ `assemble`（`static-dir` \| `node-standalone`，默认 `static-dir`；**容器部署不做**——不引入 Docker / Kubernetes，两台服务器都是 systemd 直跑，`static-dir` / `node-standalone` + 软链切换已满足本节三条铁律）；`assemble: node-standalone` 时多一步「组装 release」——`.next/standalone/**` → `<artifact_dir>/`、`.next/static` 与 `public` 按 standalone 自带前缀补位、仓根 `scripts/` → `<artifact_dir>/scripts`，**组装阶段不建 data 软链**——需要外置状态（数据库/上传）就在 `deploy.linkPaths` 声明，由 `Link persistent paths` 在切软链前创建；不声明则 release 内没有这些路径 |
 | 各仓 | 只保留一个 caller workflow（约 15 行），传 `service` / `remote_dir` / `work_dir` / `artifact_dir` / `health_url` / `keep_releases`，按需再传 `quality_cmd` / `build_cmd` / `assemble` |
 | 凭据 | 各仓 `secrets.DEPLOY_SSH_KEY`，caller 用 `secrets: inherit` |
 | 布局 | **统一**「`releases/<id>` + `dist` 软链 + 重启服务 + 验活 + 保留最近 N 个」 |
@@ -438,3 +438,4 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | 2026-11-07 | §9 实现 `selftest --peer`：四来源按优先级，版本取 `--dsh-version` 或仓内装包；门禁项全部落地 |
 | 2026-11-07 | §6 的 root 统一落地：`record` / `review prepare\|publish` 与 `selftest` / `shim` / `hooks` / `status` 共用 `resolveMainWorktreeRoot`（显式 `--root` > 主工作区 > 当前目录），审核记录不再随 worktree 被删；上面 v1.2 那条里「§6 的 root 统一」已不再是目标 |
 | 2026-11-07 | §7.1 的 `review` 目标字段全部落地：`postReview`（配置层默认发送）、`identity.ghConfigDir` / `identity.account`（发送身份与账号校验）、`rounds`（1..3，缺省 3，同时约束 `--round`、请求里的 `round`、`gate` 与 `merge`）；§3.3 目标清单只剩 `oci-image` |
+| 2026-11-07 | 删掉 `oci-image` 空枚举：明确不做容器部署（不引入 Docker / Kubernetes），`DEPLOY_ARTIFACTS` 只留 `static-dir` / `node-standalone`，配了 `oci-image` 在配置层即 `E_CONFIG`；§3.3 目标清单清零，契约首次全部为「现行」 |

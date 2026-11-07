@@ -217,7 +217,7 @@ findings 只取判定行之前的 ```json 块（之后的示例块不看）
 
 | 决定 | 取值 |
 |---|---|
-| `artifact` → `mode` | `static-dir` / `node-standalone` → `releases`；`oci-image` 只进 schema，生成时报「尚未实现」退 2 |
+| `artifact` → `mode` | `static-dir` / `node-standalone` → `releases`（容器部署已明确不做，`oci-image` 在配置层即被拒） |
 | `artifact` → `assemble` | 同名透传；`node-standalone` 时 `deploy.yml` 多一步把 `.next/standalone` 组装成 release 目录 |
 | `uses` 的版本 | pin 到**当前安装包** `build.json` 的 `gitSha`：没装包（源码运行）不能生成，避免假 pin |
 
