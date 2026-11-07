@@ -608,7 +608,7 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
   return {
     code: 0,
     skipped: false,
-    lines: [{ stream: 'out', text: `审核闸门: PR #${pr} 通过` }],
+    lines: [{ stream: 'out', text: `审核: PR #${pr} 通过` }],
   }
 }
 
@@ -1036,7 +1036,7 @@ function runRecord(argv, deps, io) {
     if (options.json === true) {
       io.out(JSON.stringify(JSON.parse(readFileSync(file, 'utf8'))))
     } else {
-      io.out(`已写入审核记录: ${file}`)
+      io.out(`审核: 已写入审核记录: ${file}`)
     }
     // 记录已落盘但判定不可用：退出 1，让调用方走人工，而不是把审计轨迹丢掉。
     if (escalation !== null) {
@@ -1407,7 +1407,7 @@ function previewPostReview({ root, pr, request, responseFile, io }) {
     recordPath: relative(root, recordFile(reviewsDir(root), pr, request.head_sha)),
   })
 
-  io.out('review publish: --dry-run，不写盘、不发请求')
+  io.out('审核: --dry-run，不写盘、不发请求')
   io.out(`event: ${event}`)
   io.out(`body（前 200 字）:\n${body.slice(0, 200)}`)
   return 0
@@ -1488,7 +1488,7 @@ function sendReviewWithIdentity({ identity, repo, pr, headSha, io, runner, root,
       isPlainObject(item) && item.commit_id === headSha && String(item.body ?? '').includes(marker),
   )
   if (alreadyPosted) {
-    io.out('review publish: 已存在同 SHA 的 review，跳过发送')
+    io.out('审核: 已存在同 SHA 的 review，跳过发送')
     return 0
   }
 
@@ -1507,7 +1507,7 @@ function sendReviewWithIdentity({ identity, repo, pr, headSha, io, runner, root,
     io.err('review publish: 记录已写，review 未发出')
     return 3
   }
-  io.out(`review publish: 已发送 GitHub review（event=${event}）`)
+  io.out(`审核: 已发送 GitHub review（event=${event}）`)
   return 0
 }
 
@@ -1584,7 +1584,7 @@ function runReviewPrompt(argv, deps, io) {
   } catch (error) {
     return argError(io, sub, `写入提示词失败: ${messageOf(error)}`)
   }
-  io.out(`已写入 ${options.out}`)
+  io.out(`审核: 已写入 ${options.out}`)
   return 0
 }
 
@@ -2272,12 +2272,12 @@ function runDeploy(argv, deps, io) {
       if (existing === null) {
         mkdirSync(dirname(file), { recursive: true })
         writeFileSync(file, `${target.skeleton}\n`, 'utf8')
-        io.out(`deploy init: 已写入 ${target.file}`)
+        io.out(`构建: 已写入 ${target.file}`)
         continue
       }
       // 已有文件只替换生成区，标记之后的追加内容原样保留（可写性上面已校验过）
       writeFileSync(file, merged, 'utf8')
-      io.out(`deploy init: 已更新 ${target.file} 的生成区（标记之后的追加内容保留）`)
+      io.out(`构建: 已更新 ${target.file} 的生成区（标记之后的追加内容保留）`)
     }
     return 0
   }
@@ -2320,7 +2320,7 @@ function runDeploy(argv, deps, io) {
       return 1
     }
   }
-  io.out(checked > 1 ? 'deploy check: 两个生成区都与配置一致' : 'deploy check: 生成区与配置一致')
+  io.out(checked > 1 ? '构建: 两个生成区都与配置一致' : '构建: 生成区与配置一致')
   return 0
 }
 

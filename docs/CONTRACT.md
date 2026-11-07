@@ -92,7 +92,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 **配置字段（已进 schema）**：`worktreesDir` 由 `task` 消费——缺省读配置、`--worktrees-dir` 优先；`checks` 由 `check-all` 消费——`--packages` 优先，其次 `checks.packages`（按给定顺序），再否则自动发现并按 `checks.exclude` 过滤；`deploy` 由 `deploy init|check` 消费（字段见 §7.1，部署行为见 §10）；`review` 段的 `tier` / `postReview` / `identity` / `rounds` 全部进 schema 并被消费（见 §7.3）。
 
-**目标**：只剩 §5 的两处输出格式 P2——「状态行改成 `<阶段>: <状态>`」与「错误行带错误码」（与退出码统一同批做）。其余（§3.2 / §4 / §6 / §7 / §9 / §11 / §10）已全部落地；容器部署（原 `oci-image` 占位）已明确不做，见 §10。
+**目标**：只剩 §5 的「错误行带错误码」（P2，与退出码统一同批做）。其余（§3.2 / §4 / §5 的状态行 / §6 / §7 / §9 / §11 / §10）已全部落地；容器部署（原 `oci-image` 占位）已明确不做，见 §10。
 
 硬规则：目标条目在实现合并前**不得**被入口 shim 调用，也不得在文档里写成可用；§9 的门禁项现已全部落地，CI 可以直接引用。
 
@@ -126,9 +126,11 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | 类型 | 现行 | 目标 |
 |---|---|---|
 | 数据行 | stdout，无前缀 | 同 |
-| 状态行 | `<子命令>: <消息>`，中文 | `<阶段>: <状态>`（`审核` / `合并` / `构建`） |
+| 状态行 | `<阶段>: <状态>`，中文（阶段：`审核` / `合并` / `构建`；其余命令仍用子命令前缀，见下） | 同 |
 | 错误行 | stderr，`<子命令>: <消息>` | stderr，`dsh-pipeline: <子命令>: <错误码>: <说明>` |
 | 机器模式 | `--json` 输出一个 JSON 对象 | 同 |
+
+**阶段的划分**（契约 §5 的状态行）：`审核` = `review prepare` / `review prompt` / `review publish` / `record` / `gate`；`合并` = `merge`（其进度行 `repo:` / `head:` / `gate:` / `ci:` / `merge:` / `worktree:` / `fetch:` / `ff:` / `branch:` 本身就是阶段式）；`构建` = `deploy init` / `deploy check`。其余命令（`task` / `pr` / `shim` / `hooks` / `lock` / `selftest` / `check-all` / `doctor` / `status`）不在这三个阶段里，保留子命令前缀。
 
 错误行要带上错误码属于**目标（P2）**，与退出码统一同批做；在那之前外部脚本不要依赖错误里出现错误码。
 
@@ -440,3 +442,4 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | 2026-11-07 | §7.1 的 `review` 目标字段全部落地：`postReview`（配置层默认发送）、`identity.ghConfigDir` / `identity.account`（发送身份与账号校验）、`rounds`（1..3，缺省 3，同时约束 `--round`、请求里的 `round`、`gate` 与 `merge`）；§3.3 目标清单只剩 `oci-image` |
 | 2026-11-07 | 删掉 `oci-image` 空枚举：明确不做容器部署（不引入 Docker / Kubernetes），`DEPLOY_ARTIFACTS` 只留 `static-dir` / `node-standalone`，配了 `oci-image` 在配置层即 `E_CONFIG`；§3.3 目标清单如实收敛为三处 P2（§5 状态行格式 / §5 错误行错误码 / §11 shim check 私有文件） |
 | 2026-11-07 | §11 的「`scripts/pipeline/` 不许有私有文件」落地：`checkShims` 增加反向扫描，清单外条目（含隐藏文件）判失败并点名；目录枚举不了退 3（fail-closed）。§3.3 目标清单只剩 §5 的两处输出格式 |
+| 2026-11-07 | §5 的状态行落地：`review prepare\|prompt\|publish` / `record` / `gate` 统一用 `审核: `，`deploy init\|check` 用 `构建: `，`merge` 的进度行本就是阶段式；其余命令保留子命令前缀。§3.3 目标只剩「错误行带错误码」 |
