@@ -190,11 +190,13 @@ shim 用法:
   在 <root>/scripts/pipeline/ 生成 6 个入口（权限 0755）；已存在且内容相同则跳过，
   内容不同且没给 --force 时报错退出 1。成功每个文件打一行「写入: <相对路径>」。
   dsh-pipeline shim check [--root <dir>]
-  用当前包版本渲染模板后与磁盘逐字节比对（契约 §8）；不一致退出 1，
+  用当前包版本渲染模板后与磁盘逐字节比对（契约 §8）；不一致退出 1。
+  同时反向扫描 <root>/scripts/pipeline：清单之外的任何条目（含隐藏文件）都算私有文件、退出 1
+  ——契约 §11 要求该目录只放生成物。目录枚举不了时退出 3（不把失败说成通过）。
   <root>/scripts/pipeline 不存在时提示先跑 shim install。
   --root <dir>       仓库根目录（缺省主工作区；git 定位不到时退回当前目录）
   --force            仅 install：覆盖内容不同的已存在文件
-  退出码: 0 一致 / 1 不一致或内容冲突 / 2 用法错误
+  退出码: 0 一致 / 1 不一致、内容冲突或有私有文件 / 2 用法错误 / 3 无法枚举目录
 
 hooks 用法:
   dsh-pipeline hooks install [--root <dir>] [--force] [--allow-main]
@@ -1920,6 +1922,13 @@ function runReposCheck(raw, options, deps, io) {
  * 根目录口径与 selftest 一致（显式 --root > 主工作区 > 当前目录）。
  * 退出码：0 成功 / 1 内容冲突或不一致 / 2 用法错误。
  */
+/** 多余条目的处置提示：元数据文件与私有脚本分开说，免得让人以为 .DS_Store 是脚本。 */
+function describeExtra(name) {
+  return name === '.DS_Store' || name === 'Thumbs.db'
+    ? '；这是系统元数据文件，可直接删除'
+    : '，私有脚本请移出该目录'
+}
+
 function runShim(argv, deps, io) {
   const [action, ...rest] = argv
   if (action === undefined || action.startsWith('--')) {
@@ -1957,10 +1966,15 @@ function runShim(argv, deps, io) {
     io.err(`shim: ${result.dir} 不存在或不是目录，请先运行 shim install`)
     return 1
   }
+  if (result.scanError !== null) {
+    // 枚举不了目录 ≠ 没有多余文件：按环境错误退出，别把失败说成通过
+    io.err(`shim: 无法枚举 ${SHIM_DIR}: ${result.scanError}`)
+    return 3
+  }
   if (!result.ok) {
     for (const name of result.mismatches) io.err(`shim: 与模板不一致: ${name}`)
     for (const name of result.extras) {
-      io.err(`shim: 不允许的私有文件: ${name}（${SHIM_DIR} 只放生成物，私有脚本请移出该目录）`)
+      io.err(`shim: 不允许的私有文件: ${name}（${SHIM_DIR} 只放生成物${describeExtra(name)}）`)
     }
     return 1
   }

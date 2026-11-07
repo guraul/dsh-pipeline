@@ -138,6 +138,29 @@ test('shim check：目录里有私有文件 → 退 1，逐个点名（契约 §
   assert.match(result.err, /只放生成物/)
 })
 
+test('shim check：目录枚举不了 → 退 3，不把失败说成通过（fail-closed）', (t) => {
+  const root = tmp()
+  const dir = join(root, 'scripts', 'pipeline')
+  t.after(() => {
+    try {
+      chmodSync(dir, 0o755)
+    } catch {}
+    rmSync(root, { recursive: true, force: true })
+  })
+  assert.equal(install(root).code, 0)
+  // 只有执行位、没有读位：按名字读 6 个入口仍成功，但 readdir 会 EACCES
+  chmodSync(dir, 0o111)
+
+  const result = run(['shim', 'check', '--root', root])
+  if (result.code === 0) {
+    // 以 root 身份运行时 chmod 挡不住 readdir，这条用例无意义
+    t.skip('当前身份不受目录权限限制（如 root），跳过')
+    return
+  }
+  assert.equal(result.code, 3, result.err)
+  assert.match(result.err, /无法枚举/)
+})
+
 test('selftest --shims：私有文件同样判失败，明细里点名', (t) => {
   const root = tmp()
   t.after(() => rmSync(root, { recursive: true, force: true }))
