@@ -158,7 +158,7 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| `gate` 报 `E_STATE`，说明里写「规则版本 / 提交不一致 / 已过期」 | 记录按旧版本包审、绑定的 head 与当前 head 不符、或超过 24h TTL——这三种内部码（`E_POLICY_VERSION` / `E_SHA_MISMATCH` / `E_EXPIRED`）在输出层都折成契约的 `E_STATE`；内部码只用于本包内部诊断（gate 现场判定，不落记录） | 重新审核，不要改记录 |
+| `gate` 报 `E_STATE`，说明里写「规则版本 / 提交不一致 / 已过期」 | 记录按旧版本包审、绑定的 head 与当前 head 不符、或超过 24h TTL——这三种内部码（`E_POLICY_VERSION` / `E_SHA_MISMATCH` / `E_EXPIRED`）在输出层都折成契约的 `E_STATE`；gate 现场判定的内部码不落盘（`record` 落盘时仍会把内部码写进记录的 `errorCode` 字段） | 重新审核，不要改记录 |
 | `merge` 报「主工作区停留在 X，已跳过快进」 | 主工作区检出的是 PR 分支且有未提交改动 | 按提示 `git -C <main> checkout main` 后重跑；未合并前不要动现场 |
 | `merge` 报「本地分支仍被工作区检出，跳过删除」 | 分支还在某个 worktree 里 | `git -C <main> branch -D -- <branch>` |
 | `shim check` / `selftest --shims` 红 | 入口被手改，或包升级后没重新生成 | `shim install --root <仓>`（会覆盖生成物）；确认不是手写壳 |

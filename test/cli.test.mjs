@@ -287,6 +287,34 @@ test('merge 收尾删分支透传 force：实际执行的是 branch -D（回归 
   assert.deepEqual(branchCalls, [['branch', '-D', '--', 'task/7']])
 })
 
+test('gate: --record 指向不存在的文件 → E_RECORD（E_IO 折成契约码）', () => {
+  const root = tmp()
+  withRepo(root)
+  const io = makeIO()
+  const { runner } = stubRunner(root)
+
+  assert.equal(
+    run(['gate', '--pr', '7', '--root', root, '--record', join(root, 'nope.json'), '--head-sha', SHA], io, { runner }),
+    1,
+  )
+  assert.match(io.state.err, /dsh-pipeline: gate: E_RECORD: /)
+})
+
+test('gate: --record 指向坏 JSON → E_PARSE（记录不可解析）', () => {
+  const root = tmp()
+  withRepo(root)
+  const file = join(root, 'bad.json')
+  writeFileSync(file, '{ not json', 'utf8')
+  const io = makeIO()
+  const { runner } = stubRunner(root)
+
+  assert.equal(
+    run(['gate', '--pr', '7', '--root', root, '--record', file, '--head-sha', SHA], io, { runner }),
+    1,
+  )
+  assert.match(io.state.err, /dsh-pipeline: gate: E_PARSE: /)
+})
+
 test('merge: gh 在 pr 步骤失败 → E_ENV（数字退出码折成契约码）', () => {
   const root = tmp()
   withRepo(root)
