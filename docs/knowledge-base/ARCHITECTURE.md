@@ -1,6 +1,6 @@
 # 架构与数据流
 
-**最后更新**：2026-11-06 · 对应提交 `cf7544f`
+**最后更新**：2026-11-08 · 对应提交 `cccfe84`
 
 ## 1. 整体架构
 
@@ -21,9 +21,9 @@
 ```text
 ┌─ bin/cli.mjs ──────── 只做：参数解析、参数校验、调 lib、打印、映射退出码
 │    ↓
-├─ 纯函数层 ── lib/gate.mjs（闸门）· lib/policy.mjs（高风险）· lib/roles.mjs（角色）· lib/semver.mjs（版本范围）
+├─ 纯函数层 ── lib/gate.mjs（闸门）· lib/policy.mjs（高风险）· lib/roles.mjs（角色）· lib/semver.mjs（版本范围）· lib/region.mjs（生成区）
 │              无 IO、不读时钟；now / 入参由调用方传入，同一输入永远同一结论
-├─ 编排层 ──── lib/merge.mjs（合并整条流程）· lib/task.mjs · lib/pr.mjs
+├─ 编排层 ──── lib/merge.mjs（合并整条流程）· lib/task.mjs · lib/pr.mjs · lib/init.mjs（四件套接入）
 │              deps 可注入（gh / git / now / sleep / exists），单测用假依赖断言调用顺序
 ├─ 持久层 ──── lib/record.mjs（记录与跳过审计）· lib/config.mjs（配置）· lib/fs-probe.mjs（存在性探测）
 │              写文件先落 .tmp 再 rename，避免读到半截 JSON；
@@ -44,7 +44,7 @@ argv
  └─ runCli(argv, deps)
      ├─ -h/--help（无参数也打印）→ 0
      ├─ -v/--version → `<版本> (<构建描述>)`，构建描述来自 build.json（源码运行时说明是源码）
-     ├─ 不在 IMPLEMENTED（14 个）→ 在 SUBCOMMANDS 里报「未实现」退 2，否则报未知子命令 + 帮助退 2
+     ├─ 不在 IMPLEMENTED（15 个）→ 在 SUBCOMMANDS 里报「未实现」退 2，否则报未知子命令 + 帮助退 2
      └─ 分派到 run*() → 各自 parseArgs → 校验 → 调 lib → 输出 → 返回码
 ```
 
