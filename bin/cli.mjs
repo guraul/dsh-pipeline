@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url'
 
 import { discoverPackages, runCheckAll as runCheckAllFlow } from '../lib/check-all.mjs'
 import { loadConfig } from '../lib/config.mjs'
+import { isIoError } from '../lib/fs-probe.mjs'
 import {
   DEPLOY_ROLLBACK_FILE,
   DEPLOY_WORKFLOW_FILE,
@@ -1235,7 +1236,7 @@ function runReviewPrepare(argv, deps, io) {
   try {
     config = loadConfig(root).config
   } catch (error) {
-    return argError(io, sub, `读取配置失败: ${messageOf(error)}`, 'E_CONFIG')
+    return argError(io, sub, `读取配置失败: ${messageOf(error)}`, isIoError(error) ? 'E_ENV' : 'E_CONFIG')
   }
   const repo = config.repo
   if (typeof repo !== 'string' || repo.length === 0) {
@@ -1802,6 +1803,15 @@ function runDoctor(argv, deps, io) {
     }
   }
 
+  // 读盘失败（装包目录 / package.json 不可读）是环境错误：退 3，不混进「构建不一致」的 1
+  const ioErrors = rows.filter((row) => typeof row.ioError === 'string')
+  if (ioErrors.length > 0) {
+    for (const row of ioErrors) {
+      errorLine(io, 'doctor', 'E_ENV', `${row.root}: 读取已装包失败: ${row.ioError}`)
+    }
+    return 3
+  }
+
   // 退出码在两种输出模式之间必须一致：CI 常用 --json，不能因为换了输出格式就当成功
   let failed = false
   if (allSource) {
@@ -2233,7 +2243,7 @@ function runCheckAllCommand(argv, deps, io) {
     try {
       config = loadConfig(root).config
     } catch (error) {
-      return argError(io, 'check-all', `读取配置失败: ${messageOf(error)}`, 'E_CONFIG')
+      return argError(io, 'check-all', `读取配置失败: ${messageOf(error)}`, isIoError(error) ? 'E_ENV' : 'E_CONFIG')
     }
     const checks = config.checks
     const configured = isPlainObject(checks) && Array.isArray(checks.packages) ? checks.packages : []
@@ -2243,7 +2253,8 @@ function runCheckAllCommand(argv, deps, io) {
       try {
         names = discoverPackages(root)
       } catch (error) {
-        return argError(io, 'check-all', `读取目录失败: ${messageOf(error)}`)
+        // 读目录 / 读 package.json 失败都是环境错误（契约 §4）
+        return argError(io, 'check-all', `读取目录失败: ${messageOf(error)}`, 'E_ENV')
       }
       const exclude = isPlainObject(checks) && Array.isArray(checks.exclude) ? new Set(checks.exclude) : null
       if (exclude !== null) names = names.filter((name) => !exclude.has(name))
@@ -2319,7 +2330,7 @@ function runDeploy(argv, deps, io) {
   try {
     config = loadConfig(options.root).config
   } catch (error) {
-    return argError(io, 'deploy', `读取配置失败: ${messageOf(error)}`, 'E_CONFIG')
+    return argError(io, 'deploy', `读取配置失败: ${messageOf(error)}`, isIoError(error) ? 'E_ENV' : 'E_CONFIG')
   }
   if (!isPlainObject(config.deploy)) {
     return argError(io, 'deploy', '配置缺少 deploy 段（契约 §7.1），无法生成 / 校验部署骨架', 'E_CONFIG')
@@ -2598,7 +2609,7 @@ function runTask(argv, deps, io) {
     try {
       config = loadConfig(configRoot).config
     } catch (error) {
-      return argError(io, 'task', `读取配置失败: ${messageOf(error)}`, 'E_CONFIG')
+      return argError(io, 'task', `读取配置失败: ${messageOf(error)}`, isIoError(error) ? 'E_ENV' : 'E_CONFIG')
     }
     const configured = config.worktreesDir
     if (configured !== undefined && configured !== null) {
