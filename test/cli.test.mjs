@@ -287,6 +287,24 @@ test('merge 收尾删分支透传 force：实际执行的是 branch -D（回归 
   assert.deepEqual(branchCalls, [['branch', '-D', '--', 'task/7']])
 })
 
+test('merge: gh 在 pr 步骤失败 → E_ENV（数字退出码折成契约码）', () => {
+  const root = tmp()
+  withRepo(root)
+  const file = writeApprovedRecord(root)
+  const io = makeIO()
+  // gh pr view 非零退出：merge 的 head 步骤拿到数字码
+  const runner = (command, args) => {
+    if (command === 'git') return { status: 0, stdout: `${SHA}\n`, stderr: '' }
+    if (args[0] === 'pr' && args[1] === 'view') {
+      return { status: 1, stdout: '', stderr: 'gh: authentication failed' }
+    }
+    return { status: 0, stdout: 'merged\n', stderr: '' }
+  }
+
+  assert.equal(run(['merge', '--pr', '7', '--root', root, '--record', file], io, { runner }), 2)
+  assert.match(io.state.err, /dsh-pipeline: merge: E_ENV: /)
+})
+
 test('merge: 闸门拒绝时不调用 gh，退出码 1', () => {
   const root = tmp()
   withRepo(root)
@@ -299,7 +317,7 @@ test('merge: 闸门拒绝时不调用 gh，退出码 1', () => {
     1,
   )
   assert.equal(calls.length, 0)
-  assert.match(io.state.err, /dsh-pipeline: merge: E_/)
+  assert.match(io.state.err, /dsh-pipeline: merge: E_STATE: /)
 })
 
 test('merge: 记录通过但未配置 repo 时退出码 2', () => {

@@ -318,7 +318,7 @@ review 用法:
   prompt   读 --request 指定的请求 JSON，用 buildPrompt 组出审核提示词（不发任何外部命令）；
            审核档位取 .dsh/pipeline.json 的 review.tier（inline | tools，缺省 tools，见契约 §7.3）；
            --request 必填、没有缺省回退（拿错请求文件的代价是把错提示词发给 reviewer）；
-           未给 --out 打到 stdout，给了就写文件并打印「已写入 <路径>」；
+           未给 --out 打到 stdout，给了就写文件并打印「审核: 已写入 <路径>」；
            --role <名> 取该角色的 instructions（默认角色 + .dsh/pipeline.json 的 roles 覆盖），未知角色退出 2。
 
 gate / merge 选项:
@@ -348,7 +348,7 @@ record 选项:
   --legacy-exit-codes  判定 REJECT 时退回旧口径退出 0（缺省退 1；记录两种口径都照常落盘）
   --form <名>        记录的形态标记（缺省 cli）
   --duration-ms <n>  本次审核耗时（毫秒，可选）
-  --json             把写出的记录完整对象打到 stdout（不再打印「已写入审核记录」）
+  --json             把写出的记录完整对象打到 stdout（不再打印「审核: 已写入审核记录」）
 
   判定行无法解析或提交不匹配时仍写一条 ESCALATE 记录，退出码 1（审计轨迹不丢）。
 
@@ -531,7 +531,7 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
       return {
         code: 2,
         skipped: false,
-        lines: [{ stream: 'err', text: `dsh-pipeline: gate: E_ENV: 跳过审核失败: ${messageOf(error)}` }],
+        lines: [{ stream: 'err', text: errorText('gate', 'E_ENV', `跳过审核失败: ${messageOf(error)}`) }],
       }
     }
   }
@@ -541,7 +541,10 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
       code: 1,
       skipped: false,
       lines: [
-        { stream: 'err', text: 'dsh-pipeline: gate: E_RECORD: 未提供审核记录，且未声明 --no-review，按失败关闭处理' },
+        {
+          stream: 'err',
+          text: errorText('gate', 'E_RECORD', '未提供审核记录，且未声明 --no-review，按失败关闭处理'),
+        },
       ],
     }
   }
@@ -553,7 +556,7 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
     return {
       code: 1,
       skipped: false,
-      lines: [{ stream: 'err', text: `dsh-pipeline: gate: E_RECORD: ${messageOf(error)}` }],
+      lines: [{ stream: 'err', text: errorText('gate', 'E_RECORD', messageOf(error)) }],
     }
   }
 
@@ -562,7 +565,10 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
       code: 1,
       skipped: false,
       lines: [
-        { stream: 'err', text: `dsh-pipeline: gate: E_STATE: 记录属于 PR #${String(candidate.pr)}，与 --pr #${pr} 不符` },
+        {
+          stream: 'err',
+          text: errorText('gate', 'E_STATE', `记录属于 PR #${String(candidate.pr)}，与 --pr #${pr} 不符`),
+        },
       ],
     }
   }
@@ -574,7 +580,7 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
       return {
         code: 2,
         skipped: false,
-        lines: [{ stream: 'err', text: `dsh-pipeline: gate: E_ENV: 无法获取当前 head 提交: ${current.error}` }],
+        lines: [{ stream: 'err', text: errorText('gate', 'E_ENV', `无法获取当前 head 提交: ${current.error}`) }],
       }
     }
     sha = current.data
@@ -588,7 +594,7 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
     return {
       code: 2,
       skipped: false,
-      lines: [{ stream: 'err', text: `dsh-pipeline: gate: E_CONFIG: 读取配置失败: ${messageOf(error)}` }],
+      lines: [{ stream: 'err', text: errorText('gate', 'E_CONFIG', `读取配置失败: ${messageOf(error)}`) }],
     }
   }
 
@@ -602,7 +608,7 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
     return {
       code: 1,
       skipped: false,
-      lines: [{ stream: 'err', text: `dsh-pipeline: gate: ${publicCode(verdict.code)}: ${verdict.reason}` }],
+      lines: [{ stream: 'err', text: errorText('gate', publicCode(verdict.code), verdict.reason) }],
     }
   }
 
@@ -692,8 +698,13 @@ function emit(io, lines) {
  * 统一的错误行出口（契约 §5）：`dsh-pipeline: <子命令>: <错误码>: <说明>`。
  * 错误码只收 6 个：E_USAGE / E_CONFIG / E_RECORD / E_PARSE / E_ENV / E_STATE。
  */
+/** 错误行的文本形态（契约 §5）：`dsh-pipeline: <子命令>: <错误码>: <说明>`。 */
+function errorText(sub, code, message) {
+  return `dsh-pipeline: ${sub}: ${code}: ${message}`
+}
+
 function errorLine(io, sub, code, message) {
-  io.err(`dsh-pipeline: ${sub}: ${code}: ${message}`)
+  io.err(errorText(sub, code, message))
 }
 
 /** 参数 / 用法错误：默认 E_USAGE，调用方可给更具体的码（如配置读取失败给 E_CONFIG）。 */
@@ -718,6 +729,7 @@ function publicCode(internal, fallback = 'E_STATE') {
       return 'E_CONFIG'
     case 'E_RECORD':
     case 'E_SCHEMA':
+    case 'E_IO':
       return 'E_RECORD'
     case 'E_PARSE':
       return 'E_PARSE'
