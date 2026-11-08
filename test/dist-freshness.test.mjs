@@ -200,24 +200,33 @@ test('空指纹给出专属文案（不伪装成读取失败）', () => {
   const result = verifyDistFreshness({ buildPath })
   assert.equal(result.ok, false)
   assert.match(result.reason, /源码指纹为空/)
+  // 回归保护：旧实现会把它包装成「源码目录读取失败（UNKNOWN）」
+  assert.doesNotMatch(result.reason, /UNKNOWN|读取失败/)
   rmSync(root, { recursive: true, force: true })
 })
 
-test('源码根存在但不可访问 → 判不过（不再当成不存在）', () => {
-  const root = mkdtempSync(join(tmpdir(), 'dsh-eacces-'))
+test('源码根存在但不可访问（ELOOP 自指链接）→ 判不过，不静默 skip', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-eloop-'))
   const buildPath = join(root, 'build.json')
   const src = join(root, 'src')
-  mkdirSync(join(src, 'lib'), { recursive: true })
-  writeFileSync(join(src, 'lib', 'a.mjs'), 'x\n')
+  // 自指符号链接：statSync 抛 ELOOP，root 用户也无法绕过（与 chmod 000 不同，root 下仍生效）
+  symlinkSync(src, src)
   writeFileSync(buildPath, JSON.stringify({ gitSha: 'x', builtAt: 'y', sourcePath: src, sourceHash: 'deadbeef' }))
-  chmodSync(src, 0o000)
-  try {
-    const result = verifyDistFreshness({ buildPath })
-    assert.equal(result.ok, false)
-    assert.equal(result.skipped, false)
-    assert.match(result.reason, /不可访问|读取失败/)
-  } finally {
-    chmodSync(src, 0o755)
-    rmSync(root, { recursive: true, force: true })
-  }
+  const result = verifyDistFreshness({ buildPath })
+  assert.equal(result.ok, false)
+  assert.equal(result.skipped, false)
+  assert.match(result.reason, /不可访问|读取失败/)
+  rmSync(root, { recursive: true, force: true })
+})
+
+test('记录的源码路径是文件而非目录 → 明确报「不是目录」', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-notdir-'))
+  const buildPath = join(root, 'build.json')
+  const notDir = join(root, 'not-a-dir.txt')
+  writeFileSync(notDir, 'x')
+  writeFileSync(buildPath, JSON.stringify({ gitSha: 'x', builtAt: 'y', sourcePath: notDir, sourceHash: 'deadbeef' }))
+  const result = verifyDistFreshness({ buildPath })
+  assert.equal(result.ok, false)
+  assert.match(result.reason, /不是目录/)
+  rmSync(root, { recursive: true, force: true })
 })
