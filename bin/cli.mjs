@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url'
 
 import { discoverPackages, runCheckAll as runCheckAllFlow } from '../lib/check-all.mjs'
 import { loadConfig } from '../lib/config.mjs'
-import { isIoError } from '../lib/fs-probe.mjs'
+import { isIoError, probePath } from '../lib/fs-probe.mjs'
 import {
   DEPLOY_ROLLBACK_FILE,
   DEPLOY_WORKFLOW_FILE,
@@ -186,7 +186,7 @@ selftest 用法:
                      dsh.engines.dsh → dsh.compatibility.dsh → @deepseek-ai/dsh* 的 peer 依赖；
                      无声明→跳过(0)；全部覆盖→0；任一不覆盖→1；不知道当前版本→2
   --dsh-version <v>  仅 --peer：当前 DSH 版本（缺省读 <root>/node_modules 或 <root>/tools/node_modules 下的 @deepseek-ai/dsh）
-  退出码: 0 通过（没有配置文件也退 0）/ 1 检查不通过 / 2 用法错误 / 3 读盘失败（--lock 的锁文件、--repos 的装包目录或 build.json）
+  退出码: 0 通过（没有配置文件也退 0）/ 1 检查不通过 / 2 用法错误 / 3 读盘失败（--config / --shims / --lock / --repos 的文件或目录读不出来）
 
 shim 用法:
   dsh-pipeline shim install [--root <dir>] [--force]
@@ -593,13 +593,14 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
   try {
     maxRounds = loadConfig(root).config.review.rounds
   } catch (error) {
+    const ioError = isIoError(error)
     return {
-      code: isIoError(error) ? 3 : 2,
+      code: ioError ? 3 : 2,
       skipped: false,
       lines: [
         {
           stream: 'err',
-          text: errorText('gate', isIoError(error) ? 'E_ENV' : 'E_CONFIG', `读取配置失败: ${messageOf(error)}`),
+          text: errorText('gate', ioError ? 'E_ENV' : 'E_CONFIG', `读取配置失败: ${messageOf(error)}`),
         },
       ],
     }
@@ -1675,7 +1676,8 @@ function runReviewPrompt(argv, deps, io) {
   try {
     config = loadConfig(resolveReviewRoot(undefined, deps)).config
   } catch (error) {
-    return argError(io, sub, messageOf(error))
+    // 配置读不出来是环境错误；配置写错才是 E_CONFIG
+    return argError(io, sub, messageOf(error), isIoError(error) ? 'E_ENV' : 'E_CONFIG')
   }
 
   let role = {}
@@ -1995,13 +1997,11 @@ function runSelftest(argv, deps, io) {
   // --peer 要先知道「当前 DSH 版本」：显式参数优先，其次读仓里装的 @deepseek-ai/dsh
   let dshVersion
   if (checks.includes('peer')) {
-    let rootStat = null
-    try {
-      rootStat = statSync(root)
-    } catch {
-      rootStat = null
+    const rootProbe = probePath(root)
+    if (rootProbe.kind === 'io-error') {
+      return argError(io, 'selftest', `读取 --root 失败: ${rootProbe.error}`, 'E_ENV')
     }
-    if (rootStat === null || !rootStat.isDirectory()) {
+    if (rootProbe.kind === 'missing' || !rootProbe.stat.isDirectory()) {
       return argError(io, 'selftest', `--root 不是目录: ${root}`)
     }
     const explicit = options['dsh-version']
@@ -2237,13 +2237,12 @@ function runCheckAllCommand(argv, deps, io) {
   }
 
   const root = nonEmpty(options.root) ? options.root : nonEmpty(deps.cwd) ? deps.cwd : process.cwd()
-  let rootStat
-  try {
-    rootStat = statSync(root)
-  } catch {
-    return argError(io, 'check-all', `目录不存在: ${root}`)
+  const rootProbe = probePath(root)
+  if (rootProbe.kind === 'io-error') {
+    return argError(io, 'check-all', `读取目录失败: ${rootProbe.error}`, 'E_ENV')
   }
-  if (!rootStat.isDirectory()) return argError(io, 'check-all', `不是目录: ${root}`)
+  if (rootProbe.kind === 'missing') return argError(io, 'check-all', `目录不存在: ${root}`)
+  if (!rootProbe.stat.isDirectory()) return argError(io, 'check-all', `不是目录: ${root}`)
 
   if (names === undefined) {
     // flag 没给才读配置：--packages 覆盖 checks.packages，读不了 / 不合规当场退 2。

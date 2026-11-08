@@ -1,6 +1,6 @@
 /**
  * 「读盘失败不能当成不存在」这一整类的回归。
- * 覆盖：probePath 本身、selftest --config、doctor、check-all。
+ * 覆盖：probePath 本身、selftest --config、doctor、check-all、merge、gate。
  * （hooks / shim / peer 的同一改动由各自的既有测试覆盖，这里不重复造夹具。）
  */
 import test from 'node:test'
@@ -123,4 +123,66 @@ test('check-all：包目录的 package.json 读不出来 → 退 3（不静默�
   const result = run(['check-all', '--root', root])
   assert.equal(result.code, 3)
   assert.match(result.err, /dsh-pipeline: check-all: E_ENV: /)
+})
+
+test('merge：配置读不出来 → 退 3（不是业务拒绝 1）', (t) => {
+  const root = tmp()
+  mkdirSync(join(root, '.dsh'), { recursive: true })
+  const file = join(root, '.dsh', 'pipeline.json')
+  writeFileSync(file, '{"repo":"owner/repo"}', 'utf8')
+  t.after(() => {
+    try {
+      chmodSync(file, 0o644)
+    } catch {
+      // 已清理
+    }
+    rmSync(root, { recursive: true, force: true })
+  })
+  if (skipAsRoot(t)) return
+  chmodSync(file, 0o000)
+
+  const result = run(['merge', '--pr', '7', '--root', root, '--record', join(root, 'nope.json')])
+  assert.equal(result.code, 3)
+  assert.match(result.err, /dsh-pipeline: merge: E_ENV: /)
+})
+
+test('gate：配置读不出来 → 退 3（不是参数错误 2）', (t) => {
+  const root = tmp()
+  mkdirSync(join(root, '.dsh'), { recursive: true })
+  const file = join(root, '.dsh', 'pipeline.json')
+  writeFileSync(file, '{"repo":"owner/repo"}', 'utf8')
+  t.after(() => {
+    try {
+      chmodSync(file, 0o644)
+    } catch {
+      // 已清理
+    }
+    rmSync(root, { recursive: true, force: true })
+  })
+  if (skipAsRoot(t)) return
+  chmodSync(file, 0o000)
+
+  // 造一条能过记录检查的审核记录，让 gate 走到「读配置」那一步
+  const sha = 'a'.repeat(40)
+  const recordFile = join(root, '.dsh-web', 'reviews', `7-${sha}.json`)
+  mkdirSync(join(root, '.dsh-web', 'reviews'), { recursive: true })
+  writeFileSync(
+    recordFile,
+    JSON.stringify({
+      schemaVersion: 1,
+      policyVersion: '0.1.0',
+      pr: 7,
+      round: 1,
+      verdict: 'APPROVE',
+      head_sha: sha,
+      findings: [],
+      evidence: ['x'],
+      createdAt: new Date().toISOString(),
+    }),
+    'utf8',
+  )
+
+  const result = run(['gate', '--pr', '7', '--root', root, '--record', recordFile, '--head-sha', sha])
+  assert.equal(result.code, 3)
+  assert.match(result.err, /dsh-pipeline: gate: E_ENV: /)
 })
