@@ -463,3 +463,4 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | 2026-11-08 | `merge` 的退出码按失败码分类（契约 §4 口径不变、实现对齐）：用法/配置 → 2，gh / git / 读不到 head → 3，闸门拒绝 / CI 未过 / 记录与状态问题 → 1；此前 gh 失败被报成 2 |
 | 2026-11-08 | 退出码口径统一：环境错误（gh / git / 写盘 / 读盘 / 未捕获异常）全命令退 3，入参 / 配置退 2，业务拒绝退 1；`E_REPO` 拆成 `E_CONFIG`（配置读不出）与 `E_ENV`（origin 读不出） |
 | 2026-11-08 | §3.2 新增 `init`：一键生成配置 + 入口 shim + pre-push 钩子 + `docs/pipeline` 骨架（幂等、`--check` 只读校验）；§9 新增 `--init`（不并入 `--fast`） |
+| 2026-11-08 | `--request` / `--response` / `--findings` 的读失败按 errno 分档：文件不存在退 2、权限 / IO 退 3；`review prompt --out` 写盘失败退 3 |

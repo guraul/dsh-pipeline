@@ -318,3 +318,33 @@ test('review prompt：--out 写盘失败 → 退 3', (t) => {
   assert.equal(result.code, 3)
   assert.match(result.err, /dsh-pipeline: review prompt: E_ENV: /)
 })
+
+test('record：--findings 不可读 → 退 3（不存在才是 2）', (t) => {
+  const root = tmp()
+  const request = join(root, 'request.json')
+  writeFileSync(request, JSON.stringify({ pr: 7, nonce: 'ABCDEFGHJKLM', head_sha: 'a'.repeat(40) }), 'utf8')
+  const response = join(root, 'response.txt')
+  writeFileSync(response, 'VERDICT: APPROVE\n', 'utf8')
+  const findings = join(root, 'findings.json')
+  writeFileSync(findings, '{"findings":[],"evidence":[]}', 'utf8')
+  t.after(() => {
+    try {
+      chmodSync(findings, 0o644)
+    } catch {
+      // 已清理
+    }
+    rmSync(root, { recursive: true, force: true })
+  })
+  if (skipAsRoot(t)) return
+  chmodSync(findings, 0o000)
+
+  const result = run([
+    'record',
+    '--request', request,
+    '--response', response,
+    '--findings', findings,
+    '--root', root,
+  ])
+  assert.equal(result.code, 3)
+  assert.match(result.err, /dsh-pipeline: record: E_ENV: /)
+})

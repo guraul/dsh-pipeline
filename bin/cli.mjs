@@ -924,7 +924,7 @@ function hasJsonFence(text) {
  */
 function readFindingsFile(file) {
   const raw = readTextFile(file, 'findings 文件')
-  if (raw.error) return { error: raw.error }
+  if (raw.error) return { error: raw.error, ioError: raw.ioError }
 
   let payload
   try {
@@ -1079,7 +1079,7 @@ function runRecord(argv, deps, io) {
   // 兜底文件先读先校验：传了坏文件就明确失败，不静默忽略。
   // 它是「参数/环境错误」，必须先于判定失败处理，否则一条坏路径会被误当成判定问题。
   const fallback = options.findings === undefined ? null : readFindingsFile(options.findings)
-  if (fallback !== null && fallback.error) return argError(io, 'record', fallback.error)
+  if (fallback !== null && fallback.error) return argError(io, 'record', fallback.error, readErrorCode(fallback))
 
   const analysis = analyzeVerdict(response, { nonce: request.nonce, diff: request.diff })
   // 判定不可用不阻断落盘：审计轨迹不能因为「模型没按格式回答」而断掉。
@@ -1257,7 +1257,7 @@ function runReviewPrepare(argv, deps, io) {
   if (options.facts !== undefined) {
     if (!nonEmpty(options.facts)) return argError(io, sub, '--facts 必须是非空文件路径')
     const read = readEvidence(options.facts, '--facts')
-    if (read.error) return argError(io, sub, read.error, read.ioError ? 'E_ENV' : 'E_USAGE')
+    if (read.error) return argError(io, sub, read.error, readErrorCode(read))
     facts = read.text
   }
 
@@ -1273,7 +1273,7 @@ function runReviewPrepare(argv, deps, io) {
     includes = []
     for (const path of uniquePaths) {
       const read = readEvidence(path, '--include')
-      if (read.error) return argError(io, sub, read.error, read.ioError ? 'E_ENV' : 'E_USAGE')
+      if (read.error) return argError(io, sub, read.error, readErrorCode(read))
       includes.push({ path, content: read.text })
     }
   }
