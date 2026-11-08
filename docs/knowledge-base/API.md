@@ -17,7 +17,7 @@
 | `review publish` | 把判定落成记录；可选发 GitHub review | `--pr`、`--response`(必填)、`--request`、`--round`、`--root`、`--model`、`--provider`、`--form`、`--post-review`、`--dry-run`、`--legacy-exit-codes` | `runReviewPublish` →（复用）`runRecord` + `sendReview` | 0 APPROVE（或带 `--legacy-exit-codes` 的 REJECT）/ 1 REJECT 或 ESCALATE / 2 参数与配置 / 3 发 review 失败 |
 | `record` | 只落盘判定记录（供外部流程使用） | `--request`、`--response`(必填)、`--findings`、`--round`、`--root`、`--model`、`--provider`、`--form`、`--duration-ms`、`--name`、`--json` | `runRecord` | 0（含 REJECT）/ 1 ESCALATE 已落盘 / 2 |
 | `gate` | 审核闸门检查 | `--pr`、`--root`(均必填)、`--record`、`--head-sha`、`--no-review`、`--reason` | `runGate` → `decideGate` → `lib/gate.mjs` | 0 / 1 闸门拒绝 / 2 |
-| `merge` | 闸门通过后 squash 合并并清理现场 | 同 `gate`，另加 `--check-only`、`--checks-file`、`--force` | `runMerge` → `lib/merge.mjs` `runMerge` | 0 / 1 / 2 |
+| `merge` | 闸门通过后 squash 合并并清理现场 | 同 `gate`，另加 `--check-only`、`--checks-file`、`--force` | `runMerge` → `lib/merge.mjs` `runMerge` | 0 / 1 闸门或 CI 拒绝 / 2 用法或配置 / 3 gh、git 等环境失败 |
 | `status` | 审核记录概况 | `--root`（缺省主工作区） | `runStatus` | 0 / 2 |
 | `doctor` | 多仓「装的共享包是否同一构建」；可选 profile 体检 | `--repo a,b`、`--json`、`--expect <sha>`、`--profile <dir>` | `runDoctor` → `lib/doctor.mjs` / `lib/profile-check.mjs` | 0 / 1 漂移或体检失败 / 2 |
 | `selftest` | 一致性自检（契约 §9） | `--shims`、`--config`、`--lock`、`--peer`、`--exit-codes`、`--fast`、`--repos a,b`、`--json`、`--root`、`--dsh-version` | `runSelftest` → `lib/selftest.mjs` | 0 / 1 / 2（`--peer` 不知道当前版本即 2） |

@@ -329,7 +329,8 @@ test('merge: gh 在 pr 步骤失败 → E_ENV（数字退出码折成契约码�
     return { status: 0, stdout: 'merged\n', stderr: '' }
   }
 
-  assert.equal(run(['merge', '--pr', '7', '--root', root, '--record', file], io, { runner }), 2)
+  // gh 失败是环境错误：按契约 §4 退 3（不是用法错误的 2）
+  assert.equal(run(['merge', '--pr', '7', '--root', root, '--record', file], io, { runner }), 3)
   assert.match(io.state.err, /dsh-pipeline: merge: E_ENV: /)
 })
 

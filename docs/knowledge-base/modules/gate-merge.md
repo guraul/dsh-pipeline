@@ -1,6 +1,6 @@
 # 模块：闸门、合并与高风险策略
 
-**最后更新**：2026-11-06 · 对应提交 `cf7544f`
+**最后更新**：2026-11-08 · 对应提交 `18289d5`
 
 ## 职责
 
@@ -23,14 +23,17 @@
 
 | # | 条件 | 失败码 | 说明 |
 |---|---|---|---|
-| 1 | 是对象 | `E_RECORD` | 缺失或无法解析 |
-| 2 | `schemaVersion === 1` | `E_SCHEMA`（缺失算 `E_RECORD`） | 结构版本 |
-| 3 | `round ∈ 1..maxRounds` | `E_RECORD` | 轮次上限取配置 `review.rounds`（1..3，缺省 3） |
-| 4 | `verdict === 'APPROVE'` | `E_VERDICT` | 带上记录里的 `errorCode`（可能是 `E_PARSE` / `E_POLICY`）、绝不猜测或补全 |
-| 5 | `head_sha === headSha` | `E_SHA_MISMATCH` | 判定绑定的提交 |
-| 6 | `createdAt` 可解析且 `now - createdAt <= ttl` | `E_RECORD` / `E_EXPIRED` | TTL 默认 24h |
-| 7 | `policy.hit` 为假 | `E_POLICY` | 命中高风险必须人工放行，理由从 `policy.reasons` 里取路径 |
-| 8 | `policyVersion === 当前包版本` | `E_POLICY_VERSION` | 按旧规则审的记录必须复审 |
+| 1 | 记录文件存在 | `E_RECORD` | 缺失即拒（fail-closed） |
+| 2 | 文件内容是合法 JSON | `E_PARSE` | 存在但解析不了 |
+| 3 | `schemaVersion === 1` | `E_SCHEMA`（缺失算 `E_RECORD`） | 结构版本 |
+| 4 | `round ∈ 1..maxRounds` | `E_RECORD` | 轮次上限取配置 `review.rounds`（1..3，缺省 3） |
+| 5 | `verdict === 'APPROVE'` | `E_VERDICT` | 带上记录里的 `errorCode`（可能是 `E_PARSE` / `E_POLICY`）、绝不猜测或补全 |
+| 6 | `head_sha === headSha` | `E_SHA_MISMATCH` | 判定绑定的提交 |
+| 7 | `createdAt` 可解析且 `now - createdAt <= ttl` | `E_RECORD` / `E_EXPIRED` | TTL 默认 24h |
+| 8 | `policy.hit` 为假 | `E_POLICY` | 命中高风险必须人工放行，理由从 `policy.reasons` 里取路径 |
+| 9 | `policyVersion === 当前包版本` | `E_POLICY_VERSION` | 按旧规则审的记录必须复审 |
+
+（失败码是**内部码**；输出层的错误行一律折成契约 §5 的 6 码，见 `bin/cli.mjs` 的 `publicCode`。）
 
 **无 IO、不直接读时钟**：`now` 由调用方传入（缺省才取当前时间），同一组输入永远同一结论，单测与审计可复现。
 

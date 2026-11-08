@@ -820,7 +820,19 @@ function runMerge(argv, deps, io) {
     return 0
   }
   errorLine(io, 'merge', publicCode(result.code), `停在 ${String(result.step)} 步骤`)
-  return result.step === 'gate' || result.step === 'ci' ? 1 : 2
+  return mergeExitCode(result.code)
+}
+
+/**
+ * merge 的退出码（契约 §4）：按失败码分类，不按「第几步」猜。
+ * - 2 用法 / 配置：E_USAGE / E_INPUT / E_CONFIG
+ * - 3 环境：E_ENV / E_GH / E_GIT / E_HEAD（gh、git、读不到 head）
+ * - 1 业务拒绝：闸门拒绝、CI 未过、记录不可用、状态不匹配
+ */
+function mergeExitCode(code) {
+  if (code === 'E_USAGE' || code === 'E_INPUT' || code === 'E_CONFIG') return 2
+  if (code === 'E_ENV' || code === 'E_GH' || code === 'E_GIT' || code === 'E_HEAD') return 3
+  return 1
 }
 
 function readTextFile(file, label) {
