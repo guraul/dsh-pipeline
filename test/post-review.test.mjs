@@ -242,6 +242,7 @@ test('配置 review.identity.account 与当前身份不一致 → 退 2 且不�
 
   const result = runPublish(fixture, ['--post-review'], { STUB_USER_LOGIN: 'guraul-review' })
   assert.equal(result.status, 2)
+  assert.match(result.stderr, /dsh-pipeline: review publish: E_CONFIG: /)
   assert.match(result.stderr, /当前 gh 身份是 guraul-review，配置要求 someone-else/)
   assert.ok(!ghCalls(fixture).some((line) => line.includes('POST')), '身份不符时不许发 review')
   assert.ok(existsSync(recordPath(fixture)), '记录仍要落盘')
@@ -265,7 +266,7 @@ test('配置 review.rounds=2：--round 3 退 2（轮次上限按配置）', (t) 
   assert.match(result.stderr, /--round 必须是 1\.\.2 的整数/)
 })
 
-test('记录没写成（退 2）：不发 review，退出码保持 2', (t) => {
+test('记录没写成（写盘失败退 3）：不发 review，退出码保持 3', (t) => {
   const fixture = cleanup(t, makeFixture())
   // 把 reviews 目录换成同名文件，让 writeRecord 必然失败
   mkdirSync(join(fixture.root, '.dsh-web'), { recursive: true })
@@ -273,7 +274,7 @@ test('记录没写成（退 2）：不发 review，退出码保持 2', (t) => {
 
   const result = runPublish(fixture, ['--post-review'])
 
-  assert.equal(result.status, 2, result.stderr)
+  assert.equal(result.status, 3, result.stderr)
   assert.deepEqual(ghCalls(fixture), [], '记录没写成时不许发任何 gh 请求')
 })
 

@@ -76,7 +76,7 @@ gh pr view / gh pr diff
 |---|---|---|---|
 | 判定行缺失 / 多条 / 标记不符 / diff 含标记 | `ESCALATE` | `errorCode=E_PARSE`，`findings=[]`，`evidence=[解析器给的原因]`（响应内容不可信，一律不留） | 1 |
 | 判定行可解析但 SHA 与请求不符 | `ESCALATE` | `errorCode=E_SHA_MISMATCH`，保留 findings，evidence 追加不匹配原因 | 1 |
-| 落盘本身失败 | 不写 | — | 2 |
+| 落盘本身失败 | 不写 | — | 3 |
 
 唯一例外：`record --name <文件名>` 直接把记录写成 `<pr>-<sha>.shard-i-of-n.json`（分片审核），避免"先写规范名再删除"那段"单片判定冒充整份判定"的窗口。
 

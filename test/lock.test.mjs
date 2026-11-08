@@ -9,7 +9,7 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -293,4 +293,40 @@ test('selftest --lock --json：结构与其它检查项一致', (t) => {
   assert.equal(payload.checks.length, 1)
   assert.equal(payload.checks[0].name, 'lock')
   assert.equal(payload.checks[0].ok, true)
+})
+
+test('lock check：锁文件读不出来（E_IO）→ 退 3', (t) => {
+  if (process.getuid?.() === 0) return t.skip('root 不受权限位限制')
+  const root = tmp()
+  mkdirSync(join(root, '.dsh'), { recursive: true })
+  const file = join(root, '.dsh', 'pipeline.lock.json')
+  writeFileSync(file, '{}', 'utf8')
+  chmodSync(file, 0o000)
+  t.after(() => chmodSync(file, 0o644))
+
+  const result = run(['lock', 'check', '--root', root])
+  assert.equal(result.code, 3)
+  assert.match(result.err, /dsh-pipeline: lock: E_ENV: /)
+})
+
+test('selftest --lock：锁文件读不出来 → 退 3（与 lock check 同口径）', (t) => {
+  if (process.getuid?.() === 0) return t.skip('root 不受权限位限制')
+  const root = makeRepo()
+  const file = join(root, '.dsh', 'pipeline.lock.json')
+  mkdirSync(join(root, '.dsh'), { recursive: true })
+  writeFileSync(file, '{}', 'utf8')
+  chmodSync(file, 0o000)
+  // 单个 after：先恢复权限（否则删不掉）再删目录
+  t.after(() => {
+    try {
+      chmodSync(file, 0o644)
+    } catch {
+      // 文件已被清掉就跳过
+    }
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  const result = run(['selftest', '--lock', '--root', root])
+  assert.equal(result.code, 3)
+  assert.match(result.err, /dsh-pipeline: selftest: E_ENV: /)
 })

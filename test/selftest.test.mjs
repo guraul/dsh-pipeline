@@ -10,7 +10,7 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -462,4 +462,26 @@ test('selftest --repos --json：结构与退出码跟人读模式一致', (t) =>
   })
   // --json 只改 stdout 形态，失败原文照样进 stderr
   assert.equal(failed.err, `::error::基准 ${SHA.slice(0, 7)}，不一致的仓：${drift}\n`)
+})
+
+test('selftest --repos：某个仓的 build.json 读不出来 → 退 3（不静默放行）', (t) => {
+  if (process.getuid?.() === 0) return t.skip('root 不受权限位限制')
+  const base = tmpdir()
+  const a = makeRepo(base, `repos-io-a-${process.pid}`, { sha: 'aaaaaaa' })
+  const b = makeRepo(base, `repos-io-b-${process.pid}`, { sha: 'bbbbbbb' })
+  const bad = join(b, 'tools', 'node_modules', 'dsh-pipeline', 'build.json')
+  chmodSync(bad, 0o000)
+  // 单个 after：先恢复权限再删目录（node:test 的 after 按注册顺序执行）
+  t.after(() => {
+    try {
+      chmodSync(bad, 0o644)
+    } catch {
+      // 已清理就跳过
+    }
+    for (const root of [a, b]) rmSync(root, { recursive: true, force: true })
+  })
+
+  const result = run(['selftest', '--repos', `${a},${b}`])
+  assert.equal(result.code, 3)
+  assert.match(result.err, /dsh-pipeline: selftest: E_ENV: /)
 })

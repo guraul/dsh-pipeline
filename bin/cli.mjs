@@ -15,7 +15,7 @@
  * deploy 的骨架渲染、生成区提取与逐字节比对全在 lib/deploy.mjs（契约 §10），这里只做动作与参数解析。
  *
  * 输出约定：面向人的信息走 stdout，错误与警告走 stderr，全部中文。
- * 退出码：0 通过 / 1 闸门拒绝 / 2 参数或环境错误 / 3 环境错误（--post-review 的 gh 调用失败）。
+ * 退出码：0 通过 / 1 闸门拒绝或 CI 未过 / 2 参数或配置错误 / 3 环境错误（gh、git、写审计等 IO 失败）。
  * runner 可注入，测试用假 runner 断言实际发出的命令，不碰真实 gh/git。
  */
 import {existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync} from 'node:fs'
@@ -175,16 +175,17 @@ selftest 用法:
   --repos <a,b,c>    比对多个仓装的共享包是不是同一构建（读各自 build.json 的 gitSha/builtAt）。
                      绝对路径直接用、相对路径按 --root（缺省当前目录）解析、前导 ~/ 展开成家目录；
                      目录不存在或未装包的仓跳过并列出，可比对的仓不足 2 个则跳过退出 0；
+                     build.json 读不出来（权限 / IO）不算跳过，退 3；
                      与 --shims / --config / --lock / --peer / --exit-codes / --fast 互斥
   --json             输出 {"ok":true|false,"root":"…","checks":[{"name":"…","ok":…,"detail":"…"}]}；
-                     带 --repos 时改为 {"ok":…,"baseline":"…","repos":[{"path","sha","builtAt","ok"}],"skipped":[{"path","reason"}]}
+                     带 --repos 时改为 {"ok":…,"baseline":"…","repos":[{"path","sha","builtAt","ok"}],"skipped":[{"path","reason","ioError"?}]}
                      （退出码与人读模式一致）
   --root <dir>       仓库根目录（缺省主工作区；git 定位不到时退回当前目录）；--repos 用它解析相对路径
   --peer             检查各包声明的 DSH 版本范围是否覆盖当前版本：声明来自 engines.dsh →
                      dsh.engines.dsh → dsh.compatibility.dsh → @deepseek-ai/dsh* 的 peer 依赖；
                      无声明→跳过(0)；全部覆盖→0；任一不覆盖→1；不知道当前版本→2
   --dsh-version <v>  仅 --peer：当前 DSH 版本（缺省读 <root>/node_modules 或 <root>/tools/node_modules 下的 @deepseek-ai/dsh）
-  退出码: 0 通过（没有配置文件也退 0）/ 1 检查不通过 / 2 用法错误
+  退出码: 0 通过（没有配置文件也退 0）/ 1 检查不通过 / 2 用法错误 / 3 读盘失败（--lock 的锁文件、--repos 的 build.json）
 
 shim 用法:
   dsh-pipeline shim install [--root <dir>] [--force]
@@ -211,7 +212,7 @@ hooks 用法:
   dsh-pipeline hooks check [--root <dir>]
   校验已装钩子与本包当前版本生成的内容一致；未装退出 1 并提示 hooks install。
   --root <dir>       仓库根目录（缺省主工作区；git 定位不到时退回当前目录）
-  退出码: 0 一致 / 1 未装、不一致或拒绝覆盖 / 2 用法或环境错误
+  退出码: 0 一致 / 1 未装、不一致或拒绝覆盖 / 2 用法错误 / 3 git 或读盘失败
 
 check-all 用法:
   dsh-pipeline check-all [--root <dir>] [--packages a,b,c] [--json]
@@ -256,7 +257,7 @@ lock 用法:
   dsh-pipeline lock check --root <dir>   比对装包与锁：一致→0；不一致/格式非法/旧版本包→1；
                                          锁不存在或未装包→跳过（0）。与 selftest --lock 同一实现
   --root <dir>       仓库根目录（必填；不猜当前目录）
-  退出码: 0 一致或跳过 / 1 不一致、格式非法或旧版本包 / 2 用法错误或未装包
+  退出码: 0 一致或跳过 / 1 不一致、格式非法或旧版本包 / 2 用法错误、未装包 / 3 读盘或写盘失败
 
 task 用法:
   dsh-pipeline task <issue号> [--slug <slug>] [--root <dir>] [--worktrees-dir <dir>]
@@ -361,7 +362,7 @@ status 选项:
   -h, --help     显示帮助
   -v, --version  显示版本
 
-退出码: 0 通过 / 1 闸门拒绝 / 2 参数或环境错误`
+退出码: 0 通过 / 1 闸门拒绝或 CI 未过 / 2 参数或配置错误 / 3 环境错误（gh、git、读盘或写盘失败）`
 
 function messageOf(error) {
   return error instanceof Error ? error.message : String(error)
@@ -529,7 +530,7 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
       }
     } catch (error) {
       return {
-        code: 2,
+        code: 3, // 写审计是 IO：环境错误，不是用法错误
         skipped: false,
         lines: [{ stream: 'err', text: errorText('gate', 'E_ENV', `跳过审核失败: ${messageOf(error)}`) }],
       }
@@ -578,7 +579,7 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
     const current = gitHeadSha(root, { runner })
     if (!current.ok) {
       return {
-        code: 2,
+        code: 3, // 读 git HEAD 失败是环境错误（契约 §4）
         skipped: false,
         lines: [{ stream: 'err', text: errorText('gate', 'E_ENV', `无法获取当前 head 提交: ${current.error}`) }],
       }
@@ -656,8 +657,9 @@ const REVIEW_PUBLISH_VALUE_FLAGS = new Set([
   'form',
 ])
 const REVIEW_PUBLISH_BOOL_FLAGS = new Set(['post-review', 'dry-run', 'legacy-exit-codes'])
-/** `record` 的「没写成」退出码：写盘失败或前置校验失败（契约 §4 的 2）。 */
-const RECORD_NOT_WRITTEN = 2
+/** `record` 的「没写成」退出码：前置校验失败退 2、写盘失败退 3（契约 §4）。 */
+const RECORD_NOT_WRITTEN = 2 // 前置校验失败
+const RECORD_WRITE_FAILED = 3 // 写盘失败（环境错误）
 const REVIEW_PROMPT_VALUE_FLAGS = new Set(['request', 'out', 'role'])
 const REVIEW_PROMPT_BOOL_FLAGS = new Set()
 const SELFTEST_VALUE_FLAGS = new Set(['root', 'repos', 'dsh-version'])
@@ -710,7 +712,8 @@ function errorLine(io, sub, code, message) {
 /** 参数 / 用法错误：默认 E_USAGE，调用方可给更具体的码（如配置读取失败给 E_CONFIG）。 */
 function argError(io, sub, message, code = 'E_USAGE') {
   errorLine(io, sub, code, message)
-  return 2
+  // 契约 §4：环境错误退 3，其余（用法 / 配置）退 2
+  return code === 'E_ENV' ? 3 : 2
 }
 
 /** 契约 §5 允许的 6 个错误码。 */
@@ -727,6 +730,8 @@ function publicCode(internal, fallback = 'E_STATE') {
   switch (internal) {
     case 'E_CONFIG':
       return 'E_CONFIG'
+    case 'E_INPUT':
+      return 'E_USAGE'
     case 'E_RECORD':
     case 'E_SCHEMA':
     case 'E_IO':
@@ -734,14 +739,19 @@ function publicCode(internal, fallback = 'E_STATE') {
     case 'E_PARSE':
       return 'E_PARSE'
     case 'E_ENV':
-    case 'E_CI':
     case 'E_AUDIT':
     case 'E_GH':
     case 'E_GIT':
     case 'E_HEAD':
+    case 'E_PUSH':
+    case 'E_PR':
+    case 'E_REPO':
+    case 'E_FETCH':
+    case 'E_WORKTREE':
+    case 'E_ROOT':
       return 'E_ENV'
     default:
-      // E_VERDICT / E_EXPIRED / E_SHA_MISMATCH / E_PR_MISMATCH / E_INPUT / E_POLICY /
+      // E_CI（CI 真的没过）/ E_VERDICT / E_EXPIRED / E_SHA_MISMATCH / E_PR_MISMATCH / E_INPUT / E_POLICY /
       // E_POLICY_VERSION … 都是「状态不对」，不是配置读不出来
       return PUBLIC_CODES.includes(fallback) ? fallback : 'E_STATE'
   }
@@ -820,7 +830,35 @@ function runMerge(argv, deps, io) {
     return 0
   }
   errorLine(io, 'merge', publicCode(result.code), `停在 ${String(result.step)} 步骤`)
-  return result.step === 'gate' || result.step === 'ci' ? 1 : 2
+  return mergeExitCode(result.code)
+}
+
+/**
+ * task / pr 的流程退出码（契约 §4）：入参类 2、环境类 3。
+ * 这两个命令的失败码比 merge 多（E_BRANCH / E_DIRTY / E_ISSUE / E_WORKTREE…），
+ * 其中只有 gh / git / 仓库不可读算环境错误。
+ */
+function flowExitCode(code) {
+  if (typeof code === 'number' || code === null) return 3
+  const env = ['E_GIT', 'E_REPO', 'E_PUSH', 'E_PR', 'E_ENV', 'E_GH', 'E_FETCH', 'E_WORKTREE', 'E_ROOT']
+  if (env.includes(code)) return 3
+  return 2
+}
+
+/**
+ * merge 的退出码（契约 §4）：按失败码分类，不按「第几步」猜。
+ * - 2 用法 / 配置：E_USAGE / E_INPUT / E_CONFIG
+ * - 3 环境：数字码 / null（gh、git 失败）、E_ENV / E_GH / E_GIT / E_HEAD / E_AUDIT
+ * - 1 业务拒绝：闸门拒绝、CI 未过、记录不可用、状态不匹配
+ */
+function mergeExitCode(code) {
+  // gh / git 封装失败带的是数字退出码（或 null）：一律是环境错误
+  if (typeof code === 'number' || code === null) return 3
+  if (code === 'E_USAGE' || code === 'E_INPUT' || code === 'E_CONFIG') return 2
+  if (code === 'E_ENV' || code === 'E_GH' || code === 'E_GIT' || code === 'E_HEAD' || code === 'E_AUDIT') {
+    return 3
+  }
+  return 1
 }
 
 function readTextFile(file, label) {
@@ -1001,7 +1039,7 @@ function runRecord(argv, deps, io) {
 
   const analysis = analyzeVerdict(response, { nonce: request.nonce, diff: request.diff })
   // 判定不可用不阻断落盘：审计轨迹不能因为「模型没按格式回答」而断掉。
-  // 记录写成 ESCALATE，退出码仍是 1（闸门拒绝）；只有落盘失败才是 2。
+  // 记录写成 ESCALATE，退出码仍是 1（闸门拒绝）；只有前置校验失败才是 2（写盘失败是 3）。
   let escalation = null
   if (!analysis.ok) {
     escalation = { errorCode: 'E_PARSE', reason: analysis.reason }
@@ -1105,8 +1143,13 @@ function runRecord(argv, deps, io) {
     if (analysis.verdict === 'REJECT' && options['legacy-exit-codes'] !== true) return 1
     return 0
   } catch (error) {
+    // 语义错误（记录不合规 / 名字非法）退 2；真正的 fs 失败才退 3
+    if (error?.code === 'E_RECORD' || error?.code === 'E_SCHEMA') {
+      errorLine(io, 'record', publicCode(error.code), messageOf(error))
+      return 2
+    }
     errorLine(io, 'record', 'E_ENV', `写入失败: ${messageOf(error)}`)
-    return 2
+    return 3 // 写盘失败是环境错误（契约 §4）
   }
 }
 
@@ -1421,7 +1464,7 @@ function runReviewPublish(argv, deps, io) {
   // 判定不可用：解析出来的结论不可信，没有可发的 event，审计留盘即可——
   // 不能把 E_PARSE 的兜底 ESCALATE 当成 reviewer 的真实意见发出去。
   // 记录没写成（退 2）同样不发：没有记录就没有可追溯的判定。
-  if (!usable || code === RECORD_NOT_WRITTEN) return code
+  if (!usable || code === RECORD_NOT_WRITTEN || code === RECORD_WRITE_FAILED) return code
   return sendReview({ root, pr: pr.value, headSha: request.head_sha, io, runner: deps.runner })
 }
 
@@ -1484,8 +1527,15 @@ function sendReview({ root, pr, headSha, io, runner }) {
   try {
     record = readRecord(file)
   } catch (error) {
-    errorLine(io, 'review publish', 'E_RECORD', `读取审核记录失败: ${messageOf(error)}（review 未发出）`)
-    return 2
+    // 只有读盘失败（E_IO）是环境错误；记录损坏 / 不合规是记录问题
+    const ioError = error?.code === 'E_IO'
+    errorLine(
+      io,
+      'review publish',
+      ioError ? 'E_ENV' : 'E_RECORD',
+      `读取审核记录失败: ${messageOf(error)}（review 未发出）`,
+    )
+    return ioError ? 3 : 1
   }
 
   let config
@@ -1529,10 +1579,10 @@ function sendReviewWithIdentity({ identity, repo, pr, headSha, io, runner, root,
       errorLine(
         io,
         'review publish',
-        'E_STATE',
+        'E_CONFIG',
         `当前 gh 身份是 ${who.data}，配置要求 ${identity.account}（记录已写入，review 未发出）`,
       )
-      return 2
+      return 2 // 配置与身份不符属配置错误（契约 §4 的 --post-review 口径）
     }
   }
 
@@ -1690,7 +1740,9 @@ function collectRecords(root) {
         time: Number.isNaN(created) ? mtime : created,
         mtime,
       })
-    } catch {
+    } catch (error) {
+      // 读盘失败（权限 / IO）不是「记录不合规」，要报出来；解析失败才算 invalid
+      if (error?.code === 'E_IO') throw error
       invalid += 1
     }
   }
@@ -1812,8 +1864,8 @@ function resolveMainWorktreeRoot(value, deps) {
  *
  * write 从「装包位置的 build.json」取标识写进锁——不读源码目录的 build.json，
  * 也不回退到「源码运行」，否则会写出一个别人装不上对不上的假 pin。
- * check 与 selftest --lock 共用 checkLock，输出口径一致。
- * 退出码：0 成功或跳过 / 1 不一致、格式非法或旧版本包 / 2 用法错误、未装包。
+ * check 与 selftest --lock 共用 checkLock；检查项带 E_IO 时两者都按环境错误退 3。
+ * 退出码：0 成功或跳过 / 1 不一致、格式非法或旧版本包 / 2 用法错误、未装包 / 3 读盘或写盘失败。
  */
 function runLock(argv, deps, io) {
   const [action, ...rest] = argv
@@ -1843,6 +1895,10 @@ function runLock(argv, deps, io) {
       io.out(`lock: ${result.detail}`)
       return 0
     }
+    if (result.code === 'E_IO') {
+      errorLine(io, 'lock', 'E_ENV', result.detail)
+      return 3 // 读盘失败是环境错误
+    }
     errorLine(io, 'lock', 'E_STATE', result.detail)
     return 1
   }
@@ -1850,6 +1906,10 @@ function runLock(argv, deps, io) {
   const installed = readInstalledBuild(root)
   if (installed.state === 'missing') {
     return argError(io, 'lock', `${root} 下没有装共享包（tools/node_modules/dsh-pipeline），先 pnpm install`)
+  }
+  if (installed.state === 'io-error') {
+    errorLine(io, 'lock', 'E_ENV', `读取已装包的 build.json 失败: ${installed.error}`)
+    return 3
   }
   if (installed.state === 'legacy') {
     return argError(io, 'lock', '装的是没有 build.json 的旧版本包，先重新打包并刷新依赖')
@@ -1860,7 +1920,7 @@ function runLock(argv, deps, io) {
     return 0
   } catch (error) {
     errorLine(io, 'lock', 'E_ENV', `写入失败: ${messageOf(error)}`)
-    return 2
+    return 3 // 写盘失败是环境错误（契约 §4）
   }
 }
 
@@ -1870,7 +1930,7 @@ function runLock(argv, deps, io) {
  * 与其它检查项互斥（--json 形态不同，合起来没有单一会话能同时表达两种结构）；
  * 没有未实现的检查项。检查逻辑在 lib/selftest.mjs，--shims 的比对复用 lib/shim.mjs。
  * --fast 只跑 --shims --config（契约 §9），与 --lock / --peer / --exit-codes 组合时后三者被忽略。
- * 退出码：0 通过（含「无配置文件跳过」「--repos 可比对的仓不足 2 个」）/ 1 检查不通过 / 2 用法错误或检查项未实现。
+ * 退出码：0 通过（含「无配置文件跳过」「--repos 可比对的仓不足 2 个」）/ 1 检查不通过 / 2 用法错误或检查项未实现 / 3 读盘失败（`E_IO`）。
  */
 function runSelftest(argv, deps, io) {
   const parsed = parseArgs(argv, SELFTEST_VALUE_FLAGS, SELFTEST_BOOL_FLAGS)
@@ -1948,12 +2008,17 @@ function runSelftest(argv, deps, io) {
   const result = runChecks(root, checks, { runner: deps.runner, dshVersion })
 
   // 失败原文始终走 stderr：--json 只改 stdout 的形态，不改退出码也不吞错误
+  let ioFailed = false
   for (const check of result.checks) {
-    if (!check.ok) errorLine(io, 'selftest', 'E_STATE', check.detail)
-    else if (options.json !== true) io.out(`${root}: ${check.detail}`)
+    if (!check.ok) {
+      // 检查项带 E_IO 时按环境错误报（如锁文件读不出来）
+      if (check.code === 'E_IO') ioFailed = true
+      errorLine(io, 'selftest', check.code === 'E_IO' ? 'E_ENV' : 'E_STATE', check.detail)
+    } else if (options.json !== true) io.out(`${root}: ${check.detail}`)
   }
   if (options.json === true) io.out(JSON.stringify({ ok: result.ok, root, checks: result.checks }))
-  return result.ok ? 0 : 1
+  if (result.ok) return 0
+  return ioFailed ? 3 : 1
 }
 
 /**
@@ -1993,10 +2058,16 @@ function runReposCheck(raw, options, deps, io) {
   } else {
     for (const repo of result.repos) io.out(`${repo.path}\t${repo.sha.slice(0, 7)} ${repo.builtAt}`)
     for (const skip of result.skipped) io.out(`${skip.path}\t跳过（${skip.reason}）`)
-    if (!result.enough) io.out('跳过（可比对的仓不足 2 个）')
+    if (!result.enough && !result.ioError) io.out('跳过（可比对的仓不足 2 个）')
     else if (result.ok) io.out(`构建一致：${result.repos.length} 个仓`)
   }
 
+  if (result.ioError) {
+    // 读盘失败是环境错误：退 3，不要混进「构建不一致」的 1
+    const bad = result.skipped.filter((item) => item.ioError === true).map((item) => item.path)
+    errorLine(io, 'selftest', 'E_ENV', `读不到已装包的 build.json: ${bad.join(', ')}`)
+    return 3
+  }
   if (!result.ok) {
     // GitHub annotation 风格，CI 能直接把它标成注解；--json 模式下照样进 stderr
     const drift = result.repos.filter((repo) => !repo.ok).map((repo) => repo.path)
@@ -2074,7 +2145,7 @@ function runShim(argv, deps, io) {
 /**
  * hooks：动作是位置参数（install / check），生成、安装与比对在 lib/hooks.mjs。
  * 根目录口径与 shim / selftest 一致（显式 --root > 主工作区 > 当前目录）。
- * 退出码：0 成功 / 1 业务拒绝（未装、不一致、拒绝覆盖）/ 2 用法或环境错误。
+ * 退出码：0 成功 / 1 业务拒绝（未装、不一致、拒绝覆盖）/ 2 用法错误 / 3 git 或读盘失败。
  */
 function runHooks(argv, deps, io) {
   const [action, ...rest] = argv
@@ -2102,8 +2173,8 @@ function runHooks(argv, deps, io) {
       runner: deps.runner,
     })
     if (!result.ok) {
-      errorLine(io, 'hooks', 'E_ENV', result.error)
-      return result.code
+      errorLine(io, 'hooks', result.code === 1 ? 'E_STATE' : 'E_ENV', result.error)
+      return result.code === 2 ? 3 : result.code
     }
     io.out(`hooks: ${result.status === 'updated' ? '已更新' : '已安装'} ${result.path}`)
     return 0
@@ -2111,8 +2182,8 @@ function runHooks(argv, deps, io) {
 
   const result = checkHook(root, { runner: deps.runner })
   if (!result.ok) {
-    errorLine(io, 'hooks', 'E_ENV', result.error)
-    return result.code
+    errorLine(io, 'hooks', result.code === 1 ? 'E_STATE' : 'E_ENV', result.error)
+    return result.code === 2 ? 3 : result.code
   }
   io.out(`hooks: 钩子与本包一致: ${result.path}`)
   return 0
@@ -2431,7 +2502,7 @@ function runStatus(argv, deps, io) {
     collected = collectRecords(root)
   } catch (error) {
     errorLine(io, 'status', 'E_ENV', `读取审核记录失败: ${messageOf(error)}`)
-    return 2
+    return 3 // 环境错误（契约 §4）
   }
 
   let latest = null
@@ -2492,7 +2563,7 @@ function expandHome(path) {
 
 /**
  * task：issue 号是位置参数（唯一一个），其余走 --root / --worktrees-dir。
- * 参数错误一律 2，流程失败也一律 2——task 没有「闸门拒绝」这种中间态。
+ * 入参类失败退 2；git / gh / 目录等环境失败退 3（契约 §4）——task 没有「闸门拒绝」这种中间态。
  */
 function runTask(argv, deps, io) {
   const [first, ...rest] = argv
@@ -2549,8 +2620,8 @@ function runTask(argv, deps, io) {
     exists: deps.exists,
   })
   if (!result.ok) {
-    errorLine(io, 'task', 'E_ENV', result.error)
-    return 2
+    errorLine(io, 'task', publicCode(result.code), result.error)
+    return flowExitCode(result.code)
   }
   result.lines.forEach((line, index) => io.out(index === 0 ? `task: ${line}` : line))
   return 0
@@ -2574,8 +2645,8 @@ function runPr(argv, deps, io) {
     runner: deps.runner,
   })
   if (!result.ok) {
-    errorLine(io, 'pr', 'E_ENV', result.error)
-    return 2
+    errorLine(io, 'pr', publicCode(result.code), result.error)
+    return flowExitCode(result.code)
   }
   result.lines.forEach((line, index) => io.out(index === 0 ? `pr: ${line}` : line))
   return 0
@@ -2632,7 +2703,7 @@ export function runCli(argv, deps = {}) {
     return runStatus(rest, deps, io)
   } catch (error) {
     errorLine(io, first, 'E_ENV', messageOf(error))
-    return 2
+    return 3 // 未捕获异常按环境错误处理（契约 §4）
   }
 }
 

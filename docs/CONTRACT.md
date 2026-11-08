@@ -104,14 +104,14 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 |---|---|---|
 | 0 | 成功 | 全部命令；`record` / `review publish` 在 `APPROVE` 或带 `--legacy-exit-codes` 的 `REJECT` 下 |
 | 1 | **业务拒绝** | `gate` / `merge`（闸门拒绝、CI 未过）；`record` / `review publish`（判定 `REJECT`，或判定不可用时的兜底 `ESCALATE`） |
-| 2 | **用法错误** | 全部命令 |
-| 3 | **环境错误** | 全部命令 |
+| 2 | **用法 / 配置错误** | 全部命令（入参、配置读取与校验、`--checks-file` 等） |
+| 3 | **环境错误** | 全部命令的 gh / git / 写盘 / 读盘失败与未捕获异常（`merge`、`gate`、`task`、`pr`、`status`、`lock`、`record`、`shim`、`hooks`、`check-all`、`selftest --lock` 都按此） |
 
 **`record` / `review publish` 的判定与退出码**：`REJECT` → **1**（记录照常落盘——落盘成功不代表判定通过）；判定不可用（解析失败 / 提交不匹配）→ 兜底 `ESCALATE` → 1；`APPROVE` → 0。
 
 **迁移开关 `--legacy-exit-codes`（现行，切换完成后删除）**：带它时 `REJECT` 退回 **0**，给还没改 `set -e` 脚本的调用方留过渡期；其余判定不变。
 
-**例外：`--post-review`** 的退出码反映「review 是否发出」（成功 0 / 配置错误 2 / gh 失败 3），不反映判定——`REJECT` 的 review 照常发出，判定看记录。**记录没写成（退 2）时不发送**：没有记录就没有可追溯的判定。
+**例外：`--post-review`** 的退出码反映「review 是否发出」（成功 0 / 配置错误 2 / gh 失败 3），不反映判定——`REJECT` 的 review 照常发出，判定看记录。**记录没写成时不发送**：前置校验失败退 2、写盘失败退 3，两种都不发 review——没有记录就没有可追溯的判定。
 
 **例外：dist 新鲜度校验（`lib/dist-freshness.mjs`，2026-11-07 起）**：CLI 启动时比对装包 `build.json.sourceHash` 与源码重算值，不一致（源码改了却没重新 `pnpm pack`）→ stderr 打印原因并**退 1**；设 `DSH_PIPELINE_ALLOW_STALE=1` 临时放行。没有 `build.json`（源码运行）、源码 checkout 已删除、旧版打包缺字段 → 静默跳过，不影响任何命令。
 
@@ -139,11 +139,11 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | 码 | 含义 |
 |---|---|
 | `E_USAGE` | 参数 / 用法错误（缺必填、未知选项、取值非法） |
-| `E_CONFIG` | 配置读取或校验失败 |
+| `E_CONFIG` | 配置读取或校验失败；`review.identity.account` 与实际登录不符也归此类 |
 | `E_RECORD` | 审核记录缺失 / 不可用 |
 | `E_PARSE` | 判定解析失败（nonce / SHA / 格式） |
 | `E_ENV` | 外部命令或环境失败（gh / git / pnpm / 目录不可读） |
-| `E_STATE` | 状态不匹配（PR 号、head、身份、文件缺标记） |
+| `E_STATE` | 状态不匹配（PR 号、head、文件缺标记、PR 无 headRefOid） |
 
 警告行（`警告:` / `提示:`）**不带**错误码——它们不是错误。
 
@@ -196,7 +196,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
     "postReview": true,               // 可选布尔，缺省 false；true = review publish 默认发送（等价每次带 --post-review）
     "identity": {                     // 可选对象；发 review 用的身份
       "ghConfigDir": "~/.config/gh-reviewer", // 可选；展开 ~ 后作为 GH_CONFIG_DIR 传给 gh
-      "account": "guraul-review"      // 可选；发请求前用 gh api user 校验登录名，不一致退 2
+      "account": "guraul-review"      // 可选；发请求前用 gh api user 校验登录名，不一致退 2（配置错误，记录已落盘、review 未发出）
     },
     "rounds": 3                       // 可选；1..3 的整数，缺省 3；只能把上限往下收（记录层最大就是 3）
   }
@@ -258,6 +258,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | 情形 | 结果 |
 |---|---|
 | 锁文件不存在 | **跳过**（退 0）：这个仓还没启用锁 |
+| 锁文件或装包 `build.json` 读不出来（权限 / IO） | **失败**（退 3，`E_IO`）：环境问题，不是「没启用锁」 |
 | 装包目录不存在 | **跳过**（退 0）：还没 install |
 | 装了包但没有 `build.json`（旧版本包） | **失败**（退 1）：无法证明与锁一致 |
 | 锁与装包不一致 / 锁格式非法（多余字段、`expect` 不是 `<sha7> <构建时间>`） | **失败**（退 1） |
@@ -280,7 +281,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 - `review prompt` 按档改「输出要求」第 0.1 条：`inline` 明确「没有工具权限，下面的材料就是全部依据」，并写明「只对材料里的必答问题负责，答不了才 `ESCALATE`，其余细节标『未核验』不影响判定」；`tools` 保留原文，要求把实际核验方式写进 `evidence`。两档共用第 4–8 条（`ESCALATE` 判据、建议上限与去向、不重复、APPROVE 不提建议、超限合并）。
 - **如实标注**：`tools` 档在 codebuddy 下**不是硬只读**——该产品没有「只读 + 工具」档位，审核方仍可能写入。兜底靠任务书写明边界 + 事后 `git status` + 闸门的 SHA 比对；记录与汇报里**不得**写成「只读审核」。
 - 选档看材料能否自证，不按改动大小拍脑袋：纯配置 / 纯文档且 diff 自包含用 `inline`；行为改动、跨文件改动，或 PR 里出现「我跑过 / 我验证过」这类需要复核的断言用 `tools`。
-- **身份**：`review.identity.ghConfigDir` 在发 review 前设为 `GH_CONFIG_DIR`（`~` 会展开），命令结束后还原；`review.identity.account` 非空时先用 `gh api user --jq .login` 校验，不一致退 2 且不发送（记录已落盘）。
+- **身份**：`review.identity.ghConfigDir` 在发 review 前设为 `GH_CONFIG_DIR`（`~` 会展开），命令结束后还原；`review.identity.account` 非空时先用 `gh api user --jq .login` 校验，不一致退 2（`E_CONFIG`）且不发送（记录已落盘）。
 - **轮次上限**：`review.rounds`（1..3，缺省 3）同时约束 `record` / `review prepare` / `review publish` 的 `--round`、`review publish` 请求里的 `round`，以及 `gate` 与 `merge` 的轮次判定；超限即「人在环」。**只能收紧不能放宽**——记录层（`lib/record.mjs` 的 `MAX_ROUND`）最大就是 3，写不进去的轮次不该被配置放行。
 
 #### 时限与体量
@@ -361,10 +362,10 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 |---|---|---|
 | `--shims` | 6 个入口 == 按当前版本渲染后的模板 | 退出 1 |
 | `--config` | `.dsh/pipeline.json` 能被 schema 接受，无未声明字段 | 退出 1 |
-| `--lock` | 安装的构建 == `pipeline.lock.json` 的 `expect`（读锁 → 读装包 `build.json` → 比对；锁不存在 / 未装包跳过，旧版本包或不一致失败，见 §7.2） | 退出 1 |
+| `--lock` | 安装的构建 == `pipeline.lock.json` 的 `expect`（读锁 → 读装包 `build.json` → 比对；锁不存在 / 未装包跳过，旧版本包或不一致失败，见 §7.2；锁文件或 `build.json` 读不出来退 **3**） | 退出 1（读盘失败 3） |
 | `--peer` | 各包的 DSH 版本声明覆盖当前版本（静态比较）：按优先级取 `engines.dsh` → `dsh.engines.dsh` → `dsh.compatibility.dsh` → `@deepseek-ai/dsh*` peer；版本用 `--dsh-version` 或仓内装包；无声明跳过、不知道版本退 2 | 退出 1 |
 | `--exit-codes` | 退出码口径自检：起子进程真跑七条用例——APPROVE 记录过闸门→0；REJECT 记录过闸门、按旧规则审的记录（`E_POLICY_VERSION`）→1；缺必填参数/未知参数/未知子命令→2；入口找不到共享包→3（并断言输出里出现「找不到共享包」）；cwd 钉在临时目录、只有环境错误那条注入 `DSH_PIPELINE_HOME`；任一不符即失败并点名用例 | 退出 1 |
-| `--repos` | 多个仓装的共享包是不是同一构建（读各自 `tools/node_modules/dsh-pipeline/build.json` 的 `gitSha`/`builtAt`，比对 `gitSha`；目录不存在 / 未装包的仓跳过并列出，可比对的仓不足 2 个则跳过退 0；`--json` 给 `{ok,baseline,repos,skipped}`） | 退出 1 |
+| `--repos` | 多个仓装的共享包是不是同一构建（读各自 `tools/node_modules/dsh-pipeline/build.json` 的 `gitSha`/`builtAt`，比对 `gitSha`；目录不存在 / 未装包的仓跳过并列出，可比对的仓不足 2 个则跳过退 0；`build.json` 读不出来退 **3**；`--json` 给 `{ok,baseline,repos,skipped}`） | 退出 1（读盘失败 3） |
 | `--fast` | 只跑 `--shims --config`（pre-push 用，<2 秒） | 退出 1 |
 
 `doctor` 的多仓比对属于本机检查，不进 CI（CI 没有兄弟仓）。
@@ -457,3 +458,5 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | 2026-11-07 | §11 的「`scripts/pipeline/` 不许有私有文件」落地：`checkShims` 增加反向扫描，清单外条目（含隐藏文件）判失败并点名；目录枚举不了退 3（fail-closed）。§3.3 目标清单只剩 §5 的两处输出格式 |
 | 2026-11-07 | §5 的状态行落地：`review prepare\|prompt\|publish` / `record` / `gate` 统一用 `审核: `，`deploy init\|check` 用 `构建: `，`merge` 的进度行本就是阶段式；其余命令保留子命令前缀。§3.3 目标只剩「错误行带错误码」 |
 | 2026-11-07 | §5 的错误行落地：统一走 `argError` / `errorLine`，格式 `dsh-pipeline: <子命令>: <错误码>: <说明>`，错误码收为 6 个（E_USAGE / E_CONFIG / E_RECORD / E_PARSE / E_ENV / E_STATE）；警告行不带码。§3.3 目标清单清零 |
+| 2026-11-08 | `merge` 的退出码按失败码分类（契约 §4 口径不变、实现对齐）：用法/配置 → 2，gh / git / 读不到 head → 3，闸门拒绝 / CI 未过 / 记录与状态问题 → 1；此前 gh 失败被报成 2 |
+| 2026-11-08 | 退出码口径统一：环境错误（gh / git / 写盘 / 读盘 / 未捕获异常）全命令退 3，入参 / 配置退 2，业务拒绝退 1；`E_REPO` 拆成 `E_CONFIG`（配置读不出）与 `E_ENV`（origin 读不出） |

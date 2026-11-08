@@ -32,7 +32,7 @@ dsh-pipeline task <issue号> [--slug <slug>] [--root <dir>] [--worktrees-dir <di
 | `--slug` | 与自动 slug 同一字符集与长度上限；规范化后为空 → 退 2，**不静默回退**到自动 slug |
 | 幂等 | worktree 已存在 → 只打印路径，退 0，**不 fetch、不动现场** |
 | 路径冲突 | 路径存在但不是本仓 worktree → `E_PATH` 退 2 |
-| fetch | 失败重试 3 次（间隔 3s，`Atomics.wait` 同步等待）仍失败 → `E_FETCH` 退 2 |
+| fetch | 失败重试 3 次（间隔 3s，`Atomics.wait` 同步等待）仍失败 → `E_FETCH` 退 **3**（环境错误） |
 | 身份 | worktree 建好后把 `user.name` / `user.email` 从主工作区复制到 worktree 局部配置；读不到就跳过（不把身份缺失判成失败） |
 
 **`--worktrees-dir` 的存在理由**：宿主会从主仓加载源码（如 memx），worktree 建在仓内会让宿主加载到未合并代码，所以要能把 worktree 挪到仓库外。只在显式给了该 flag 时才 `mkdir -p` 父目录——缺省路径行为一个字节都不变。

@@ -1,6 +1,6 @@
 # 模块：闸门、合并与高风险策略
 
-**最后更新**：2026-11-06 · 对应提交 `cf7544f`
+**最后更新**：2026-11-08 · 对应提交 `18289d5`
 
 ## 职责
 
@@ -23,14 +23,17 @@
 
 | # | 条件 | 失败码 | 说明 |
 |---|---|---|---|
-| 1 | 是对象 | `E_RECORD` | 缺失或无法解析 |
-| 2 | `schemaVersion === 1` | `E_SCHEMA`（缺失算 `E_RECORD`） | 结构版本 |
-| 3 | `round ∈ 1..maxRounds` | `E_RECORD` | 轮次上限取配置 `review.rounds`（1..3，缺省 3） |
-| 4 | `verdict === 'APPROVE'` | `E_VERDICT` | 带上记录里的 `errorCode`（可能是 `E_PARSE` / `E_POLICY`）、绝不猜测或补全 |
-| 5 | `head_sha === headSha` | `E_SHA_MISMATCH` | 判定绑定的提交 |
-| 6 | `createdAt` 可解析且 `now - createdAt <= ttl` | `E_RECORD` / `E_EXPIRED` | TTL 默认 24h |
-| 7 | `policy.hit` 为假 | `E_POLICY` | 命中高风险必须人工放行，理由从 `policy.reasons` 里取路径 |
-| 8 | `policyVersion === 当前包版本` | `E_POLICY_VERSION` | 按旧规则审的记录必须复审 |
+| 1 | 记录文件存在 | `E_RECORD` | 缺失即拒（fail-closed） |
+| 2 | 文件内容是合法 JSON | `E_PARSE` | 存在但解析不了（由 `readRecord` 抛，CLI 的 `decideGate` 透出；`evaluateGate` 只接收已解析对象） |
+| 3 | `schemaVersion === 1` | `E_SCHEMA`（缺失算 `E_RECORD`） | 结构版本 |
+| 4 | `round ∈ 1..maxRounds` | `E_RECORD` | 轮次上限取配置 `review.rounds`（1..3，缺省 3） |
+| 5 | `verdict === 'APPROVE'` | `E_VERDICT` | 带上记录里的 `errorCode`（可能是 `E_PARSE` / `E_POLICY`）、绝不猜测或补全 |
+| 6 | `head_sha === headSha` | `E_SHA_MISMATCH` | 判定绑定的提交 |
+| 7 | `createdAt` 可解析且 `now - createdAt <= ttl` | `E_RECORD` / `E_EXPIRED` | TTL 默认 24h |
+| 8 | `policy.hit` 为假 | `E_POLICY` | 命中高风险必须人工放行，理由从 `policy.reasons` 里取路径 |
+| 9 | `policyVersion === 当前包版本` | `E_POLICY_VERSION` | 按旧规则审的记录必须复审 |
+
+（失败码是**内部码**；输出层的错误行一律折成契约 §5 的 6 码，见 `bin/cli.mjs` 的 `publicCode`。）
 
 **无 IO、不直接读时钟**：`now` 由调用方传入（缺省才取当前时间），同一组输入永远同一结论，单测与审计可复现。
 
@@ -38,9 +41,9 @@
 
 在调 `evaluateGate` 之前多做三项 CLI 层检查：
 
-1. `--no-review`：写跳过审计（`.dsh-web/reviews/skips/<ts>-<pr>.json`），打印警告到 stderr，返回 0；写审计失败退 2；
+1. `--no-review`：写跳过审计（`.dsh-web/reviews/skips/<ts>-<pr>.json`），打印警告到 stderr，返回 0；写审计失败退 **3**（环境错误）；
 2. 没给 `--record` 且没声明 `--no-review`：**fail-closed** 退 1（`dsh-pipeline: gate: E_RECORD: 未提供审核记录，且未声明 --no-review，按失败关闭处理`）；
-3. 记录属于哪个 PR：`record.pr !== --pr` 退 1；`head-sha` 未给时用 `git HEAD`（取不到退 2）。
+3. 记录属于哪个 PR：`record.pr !== --pr` 退 1；`head-sha` 未给时用 `git HEAD`（取不到退 **3**，环境错误）。
 
 ## 合并（`runMerge`）
 
@@ -49,10 +52,10 @@
 | 步 | 动作 | 失败码 | 关键约束 |
 |---|---|---|---|
 | `repo` | 读 `.dsh/pipeline.json` 的 `repo` | `E_CONFIG` | 缺 repo 直接拒绝 |
-| `head` | `gh pr view` 的 `headRefOid`（或 `--head-sha`） | `E_HEAD`（gh 读取失败 → 输出层折成 `E_ENV`）/ `E_STATE`（PR 没有 headRefOid）/ `E_INPUT`（输出层同样折成 `E_STATE`） | **不用本机 HEAD** |
+| `head` | `gh pr view` 的 `headRefOid`（或 `--head-sha`） | `E_HEAD`（gh 读取失败 → 输出层折成 `E_ENV`）/ `E_STATE`（PR 没有 headRefOid）/ `E_INPUT`（输出层折成 `E_USAGE`，退 2） | **不用本机 HEAD** |
 | `gate` | 同闸门（含跳过审计） | 闸门的码 | 不通过时后面的 gh 命令一条都不发 |
 | `pr` | 取 `headRefName` / `state` | `E_PR` | `CLOSED` 拒绝；`MERGED` 只清理 |
-| `ci` | `gh pr checks` 或 `--checks-file` | `E_CI` | 未知状态按阻塞；无 checks 跳过门槛；`--force` 连 gh 都不发 |
+| `ci` | `gh pr view --json statusCheckRollup` 或 `--checks-file` | `E_CI`（checks 真的没过）/ `E_ENV`（gh 失败或输出解析不了）/ `E_INPUT`（`--checks-file` 读不到或不是 JSON） | 未知状态按阻塞；无 checks 跳过门槛；`--force` 连 gh 都不发 |
 | `merge` | `gh pr merge --squash` | `E_GH` | squash 固定 |
 | `worktree` | 移除持有该分支的 worktree | `E_GIT` | 主工作区不可 remove → 跳过并继续 |
 | `fetch` | 主工作区 `fetch origin` | `E_GIT` | 只更新远端引用 |
@@ -67,8 +70,8 @@
   - **未知状态按阻塞**（判定不出来时不静默放行）
 - 对象：`{state}`，`success` 及其放行同义词算通过，其余算失败
 - 其它形状：`checks 数据无法判定` → 失败（`E_CI`）
-- `gh` 退出码 0 但无输出 → 视为"该 PR 没有配置 checks"，跳过门槛（与参考脚本一致）
-- `--checks-file` 不可读 / 非 JSON → `E_CI`，不退化成通过
+- `gh` 退出码 0 且 `statusCheckRollup` 是空数组 → 视为「该 PR 没有配置 checks」，跳过门槛；**输出解析不了或形状不对 → `E_ENV` 拒绝放行**（不把「判定不出来」当「没有 checks」）
+- `--checks-file` 不可读 / 非 JSON → `E_INPUT`（入参问题），不退化成通过
 
 ### 三个开关的边界
 
@@ -94,7 +97,7 @@ mergePolicy({ highRiskAppend })  // → { patterns, hit(files, changedLines, {di
 - glob 只实现 `**`（跨目录）、`*`（单层）、`?`（单字符）；路径先 `normalizePath`（反斜杠转 `/`、去 `./`、合并 `//`），否则同一路径换个写法就能绕过；
 - `dependencyChange` 用正则判断 diff 里是否增删了 `"dependencies"` / `"devDependencies"` / `"optionalDependencies"` 段。
 
-`record` 子命令负责**计算** `policy` 并写进记录；`gate` 只**读取** `record.policy.hit`。这是两段式：策略算不出来时 `record` 直接退 2（宁可失败，也不写一条 `policy` 缺失的记录）。
+`record` 子命令负责**计算** `policy` 并写进记录；`gate` 只**读取** `record.policy.hit`。这是两段式：策略算不出来时 `record` 直接退 2（配置类；宁可失败，也不写一条 `policy` 缺失的记录）。
 
 ## 依赖
 

@@ -932,7 +932,7 @@ test('gh pr checks 有 pending：拒绝合并（E_CI），零清理', () => {
   assert.equal(git.calls.length, 0)
 })
 
-test('--checks-file 内容不是合法 JSON：按 E_CI 拒绝，不静默放行', () => {
+test('--checks-file 内容不是合法 JSON：按 E_INPUT 拒绝（入参问题），不静默放行', () => {
   const { root, file } = approvedRoot()
   const gh = fakeGh()
   const git = fakeGit()
@@ -950,7 +950,7 @@ test('--checks-file 内容不是合法 JSON：按 E_CI 拒绝，不静默放行'
 
   assert.equal(result.ok, false)
   assert.equal(result.step, 'ci')
-  assert.equal(result.code, 'E_CI')
+  assert.equal(result.code, 'E_INPUT')
   assert.match(result.error, /不是合法 JSON/)
   assert.equal(gh.calls.filter((call) => call.op === 'prMerge').length, 0)
 })
