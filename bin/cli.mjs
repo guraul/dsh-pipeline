@@ -2656,7 +2656,7 @@ if (invokedDirectly()) {
   } else {
     if (stale) {
       process.stderr.write(
-        `警告：${freshness.reason}（帮助 / 版本照常输出；正式使用前请 \`pnpm pack\` 或设 DSH_PIPELINE_ALLOW_STALE=1）\n`,
+        `警告：${freshness.reason}（本次是只读查看；正式使用前请 \`pnpm pack\` 或设 DSH_PIPELINE_ALLOW_STALE=1）\n`,
       )
     }
     process.exitCode = runCli(argv)
