@@ -1,6 +1,6 @@
 # 模块：接入与一致性工具（init / selftest / shim / hooks / check-all / doctor / build-info）
 
-**最后更新**：2026-11-08 · 对应提交 `cccfe84`
+**最后更新**：2026-11-08 · 对应提交 `8a4f46b`
 
 这一组命令的共同点：**只读检查优先、能修才写、判据是"渲染后逐字节比对"而不是"看起来像"**。它们替代了各仓过去手写的 `build-check.sh` / `review-loop-check.sh` 之类脚本。
 
@@ -76,7 +76,7 @@ dsh-pipeline init --check [--root <dir>]
 | `docs/pipeline/`（README + review-loop） | 模板在 `templates/pipeline-docs/`，生成区用 HTML 注释标记包裹；标记之外可追加，重跑只替换生成区；无标记的手写文件拒绝覆盖（`--force` 才接管） |
 
 - **幂等**：二次 `init` 不改动任何文件（配置跳过、shim 相同跳过、钩子 unchanged、docs 生成区相同跳过）。
-- **`--check`**：只读，逐项 `✓ / ✗`；缺任一项退 1。与 `selftest --init` 同一判据（`checkInit` 复用 `checkConfigFile` / `checkShims` / `checkHook` / `checkDocs`）。
+- **`--check`**：只读，逐项 `✓ / ✗`；缺任一项退 1。与 `selftest --init` 同一判据（`checkInit` 复用 `checkConfigFile` / `checkShims` / `checkHook` / `checkDocs`，`resolveRepo` 与注入的 `runner` 也一并透传）。
 - **不并入 `--fast`**：pre-push 只跑 `--shims --config`；消费仓尚未接入 docs 骨架时，不应让 pre-push 因缺它而红。
 - **repo 推导**：`--repo` 优先，其次 `git remote get-url origin`；都拿不到就省略该字段（下游命令需要时自己报错，不猜）。
 - **两段式**：先对四项做只判定的预演（各 install 的 `dryRun`），任一项不通过就一个文件都不写——避免「配置失败但 shim / hooks 已落盘」的半写状态。

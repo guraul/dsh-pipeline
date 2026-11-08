@@ -16,6 +16,7 @@ import { join } from 'node:path'
 
 import { runCli } from '../bin/cli.mjs'
 import { DOC_REGION_BEGIN, DOCS_DIR } from '../lib/init.mjs'
+import { checkInit } from '../lib/selftest.mjs'
 import { SHIM_DIR, SHIM_ENTRIES } from '../lib/shim.mjs'
 
 function run(argv, deps = {}) {
@@ -274,6 +275,31 @@ test('预演失败时一项都不写（钩子冲突）', () => {
     assert.equal(existsSync(join(root, '.dsh', 'pipeline.json')), false, '钩子冲突时不该写配置')
     assert.equal(existsSync(join(root, SHIM_DIR)), false, '钩子冲突时不该写 shim')
     assert.equal(existsSync(join(root, DOCS_DIR)), false, '钩子冲突时不该写 docs')
+  } finally {
+    cleanup(root)
+  }
+})
+
+test('checkInit 透传 runner 与 repo（与 init --check 同一判据）', () => {
+  const root = makeRepo({ remote: 'git@github.com:a/b.git' })
+  try {
+    assert.equal(run(['init', '--root', root]).code, 0)
+
+    const calls = []
+    const runner = (command, args, options) => {
+      calls.push([command, ...args].join(' '))
+      return spawnSync(command, args, { encoding: 'utf8', ...options })
+    }
+    const result = checkInit(root, { runner })
+    assert.equal(result.ok, true, result.detail)
+    assert.ok(
+      calls.some((call) => call.includes('remote get-url origin')),
+      `repo 解析应走注入的 runner: ${calls.join('; ')}`,
+    )
+    assert.ok(
+      calls.some((call) => call.includes('rev-parse --git-common-dir')),
+      `hooks 检查应走注入的 runner: ${calls.join('; ')}`,
+    )
   } finally {
     cleanup(root)
   }
