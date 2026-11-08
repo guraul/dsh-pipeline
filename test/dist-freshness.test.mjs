@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, cpSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -175,4 +175,49 @@ test('CLI: 过期时子命令参数里的 -v 不算信息命令，仍然退 1', 
   const result = runPkg(pkgRoot, ['status', '--root', root, '-v'])
   assert.equal(result.status, 1, result.stderr)
   assert.match(result.stderr, /dist 已过期/)
+})
+
+test('package.json 仅重排键序不改指纹（稳定序列化）', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-pkg-order-'))
+  mkdirSync(join(root, 'lib'), { recursive: true })
+  writeFileSync(join(root, 'lib', 'a.mjs'), 'export const a = 1\n')
+  const pkgA = '{"name":"x","type":"module","bin":{"dsh":"bin/cli.mjs"},"exports":{".":"./lib/a.mjs"}}'
+  const pkgB = '{"exports":{".":"./lib/a.mjs"},"bin":{"dsh":"bin/cli.mjs"},"type":"module","name":"x"}'
+  writeFileSync(join(root, 'package.json'), pkgA)
+  const first = sourceHash(root)
+  writeFileSync(join(root, 'package.json'), pkgB)
+  assert.equal(sourceHash(root), first)
+  rmSync(root, { recursive: true, force: true })
+})
+
+test('空指纹给出专属文案（不伪装成读取失败）', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-empty-'))
+  const buildPath = join(root, 'build.json')
+  // 源码根存在但 lib/bin/templates 全缺
+  const src = join(root, 'src')
+  mkdirSync(src, { recursive: true })
+  writeFileSync(buildPath, JSON.stringify({ gitSha: 'x', builtAt: 'y', sourcePath: src, sourceHash: 'deadbeef' }))
+  const result = verifyDistFreshness({ buildPath })
+  assert.equal(result.ok, false)
+  assert.match(result.reason, /源码指纹为空/)
+  rmSync(root, { recursive: true, force: true })
+})
+
+test('源码根存在但不可访问 → 判不过（不再当成不存在）', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-eacces-'))
+  const buildPath = join(root, 'build.json')
+  const src = join(root, 'src')
+  mkdirSync(join(src, 'lib'), { recursive: true })
+  writeFileSync(join(src, 'lib', 'a.mjs'), 'x\n')
+  writeFileSync(buildPath, JSON.stringify({ gitSha: 'x', builtAt: 'y', sourcePath: src, sourceHash: 'deadbeef' }))
+  chmodSync(src, 0o000)
+  try {
+    const result = verifyDistFreshness({ buildPath })
+    assert.equal(result.ok, false)
+    assert.equal(result.skipped, false)
+    assert.match(result.reason, /不可访问|读取失败/)
+  } finally {
+    chmodSync(src, 0o755)
+    rmSync(root, { recursive: true, force: true })
+  }
 })
