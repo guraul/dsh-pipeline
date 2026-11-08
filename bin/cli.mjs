@@ -15,7 +15,7 @@
  * deploy 的骨架渲染、生成区提取与逐字节比对全在 lib/deploy.mjs（契约 §10），这里只做动作与参数解析。
  *
  * 输出约定：面向人的信息走 stdout，错误与警告走 stderr，全部中文。
- * 退出码：0 通过 / 1 闸门拒绝 / 2 参数或环境错误 / 3 环境错误（--post-review 的 gh 调用失败）。
+ * 退出码：0 通过 / 1 闸门拒绝 / 2 参数或配置错误 / 3 环境错误（gh、git、写审计等 IO 失败）。
  * runner 可注入，测试用假 runner 断言实际发出的命令，不碰真实 gh/git。
  */
 import {existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync} from 'node:fs'
@@ -529,7 +529,7 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
       }
     } catch (error) {
       return {
-        code: 2,
+        code: 3, // 写审计是 IO：环境错误，不是用法错误
         skipped: false,
         lines: [{ stream: 'err', text: errorText('gate', 'E_ENV', `跳过审核失败: ${messageOf(error)}`) }],
       }
@@ -826,7 +826,7 @@ function runMerge(argv, deps, io) {
 /**
  * merge 的退出码（契约 §4）：按失败码分类，不按「第几步」猜。
  * - 2 用法 / 配置：E_USAGE / E_INPUT / E_CONFIG
- * - 3 环境：E_ENV / E_GH / E_GIT / E_HEAD（gh、git、读不到 head）
+ * - 3 环境：数字码 / null（gh、git 失败）、E_ENV / E_GH / E_GIT / E_HEAD / E_AUDIT
  * - 1 业务拒绝：闸门拒绝、CI 未过、记录不可用、状态不匹配
  */
 function mergeExitCode(code) {
