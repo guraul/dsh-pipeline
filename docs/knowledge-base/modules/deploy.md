@@ -35,14 +35,18 @@ GitHub 有一条硬规则：**公开仓不能调用私有仓里的可复用工�
 | 私有 | 私有 | 可以 |
 | **私有** | **公开** | **必然失败** |
 
-失败时的表现极具误导性：**运行连 job 都不会创建**（`referenced_workflows: []`），GitHub 只给一句「This run likely failed because of a workflow file issue」——不提可见性。
+失败时的表现极具误导性：**运行连 job 都不会创建**（`referenced_workflows: []`），GitHub 在运行页只给一句「This run likely failed because of a workflow file issue」——完全不提可见性。
+
+真正可检索的信号在**运行日志的解析错误**里：`error parsing called workflow ... workflow was not found`（或用 `gh run view <id>` 看头部）。按「workflow file issue」去搜，基本搜不到有用结果；按 `workflow was not found` 才能定位。注意 `referenced_workflows` 为空是**常见形态**，不是判据本身。
 
 2026-11-08 实测：本包仓当时是私有，`guraul/agent-mobile` 是公开仓，它的 `deploy-web` 从切换共享工作流那天起连续失败 3 天（5 次运行全红）。期间排查过 YAML 语法、caller 的 inputs 与 `deploy.yml` 声明是否一一对应、`secrets` 是否存在、pin 的 SHA 是否存在于远端——**全部正常**。真正的判据只有两条命令：
 
 ```bash
-gh api repos/<消费仓> --jq .private
-gh api repos/guraul/dsh-pipeline --jq .private
+gh repo view <消费仓> --json visibility --jq .visibility        # PUBLIC / PRIVATE
+gh repo view guraul/dsh-pipeline --json visibility --jq .visibility
 ```
+
+判据就是一行映射：**被调用方 PRIVATE + 调用方 PUBLIC = 必红**。
 
 处置：把本包仓改为公开（2026-11-08 已执行；转公开前确认过无凭据、无 `.env`、无字面主机地址，git 历史里也没有）。
 
@@ -114,7 +118,14 @@ dsh-pipeline deploy check --root <dir>
 2. **比对只比生成区**：不要改成比整份文件，否则各仓追加的后置 job 会被判不一致。
 3. **`firstDifference` 给的是第一处差异**，不要只打印「不一致」——排障时要能直接看到哪一行。
 4. **不要给可选项写默认值**：`resolveDeploy` 的 `null` 语义是「不写这一行」，写成空串会顶掉 `deploy.yml` 的默认值。
-5. **不要把本包仓改回私有**：消费仓里只要有一个是公开仓，它的部署就会立刻全红，且报错只说「workflow file issue」（见上面「可见性前提」）。真要改私有，先确认所有消费仓都是私有。
+5. **不要把本包仓改回私有**：消费仓里只要有一个是公开仓，它的部署就会立刻全红，且报错只说「workflow file issue」（见上面「可见性前提」）。
+
+   **改回私有的正确顺序**（顺序反了会先制造一次全红）：
+   1. 列出消费仓——GitHub **没有反向索引**（「谁在调用这个 workflow」查不到），私有消费仓的 caller 用 `gh search code` 也搜不到，所以只能靠人工维护的清单。当前已知：`guraul/agent-mobile`（公开）、`guraul/homebase`（私有）。**新增消费仓时必须在这里登记**；
+   2. 把清单里仍公开的消费仓改成私有，或让它改用内联部署步骤；
+   3. 确认清单里已无公开仓，才允许把本包仓切回私有。
+
+   **转公开是不可逆的信息披露**：历史一旦公开，fork、clone、缓存都可能已经存在，事后再转私有**不能**收回已披露的内容。所以切公开前必须扫一遍当前树与 git 历史（凭据、`.env`、字面主机地址、内部域名）。
 6. **不要重新引入 `oci-image` 枚举**：容器部署已明确不做（契约 §10），该值在配置层就 `E_CONFIG`；真要支持容器是新需求，需同时加 `deploy.yml` 分支并更新契约。
 
 ## 相关测试
