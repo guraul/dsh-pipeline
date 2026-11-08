@@ -411,17 +411,17 @@ test('review prepare：未配置 repo 时退出 2，一个 gh 命令都不发', 
   assert.equal(calls.length, 0)
 })
 
-test('review prepare：读不到 PR 或 diff 时退出 2，不写请求文件', () => {
+test('review prepare：读不到 PR 或 diff 时退出 3（环境错误），不写请求文件', () => {
   const root = makeRoot()
   const failing = ghRunner({ view: VIEW_OK, diff: DIFF, viewStatus: 1 })
   const io = makeIO()
-  assert.equal(run(['review', 'prepare', '--pr', '7', '--root', root], io, { runner: failing.runner }), 2)
+  assert.equal(run(['review', 'prepare', '--pr', '7', '--root', root], io, { runner: failing.runner }), 3)
   assert.match(io.state.err, /无法读取 PR #7/)
   assert.equal(existsSync(requestPath(root)), false)
 
   const diffFailing = ghRunner({ view: VIEW_OK, diff: DIFF, diffStatus: 1 })
   const io2 = makeIO()
-  assert.equal(run(['review', 'prepare', '--pr', '7', '--root', root], io2, { runner: diffFailing.runner }), 2)
+  assert.equal(run(['review', 'prepare', '--pr', '7', '--root', root], io2, { runner: diffFailing.runner }), 3)
   assert.match(io2.state.err, /diff/)
   assert.equal(existsSync(requestPath(root)), false)
 })

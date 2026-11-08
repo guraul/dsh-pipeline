@@ -15,7 +15,7 @@
  * deploy 的骨架渲染、生成区提取与逐字节比对全在 lib/deploy.mjs（契约 §10），这里只做动作与参数解析。
  *
  * 输出约定：面向人的信息走 stdout，错误与警告走 stderr，全部中文。
- * 退出码：0 通过 / 1 闸门拒绝 / 2 参数或配置错误 / 3 环境错误（gh、git、写审计等 IO 失败）。
+ * 退出码：0 通过 / 1 闸门拒绝或 CI 未过 / 2 参数或配置错误 / 3 环境错误（gh、git、写审计等 IO 失败）。
  * runner 可注入，测试用假 runner 断言实际发出的命令，不碰真实 gh/git。
  */
 import {existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync} from 'node:fs'
@@ -578,7 +578,7 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
     const current = gitHeadSha(root, { runner })
     if (!current.ok) {
       return {
-        code: 2,
+        code: 3, // 读 git HEAD 失败是环境错误（契约 §4）
         skipped: false,
         lines: [{ stream: 'err', text: errorText('gate', 'E_ENV', `无法获取当前 head 提交: ${current.error}`) }],
       }
@@ -710,7 +710,8 @@ function errorLine(io, sub, code, message) {
 /** 参数 / 用法错误：默认 E_USAGE，调用方可给更具体的码（如配置读取失败给 E_CONFIG）。 */
 function argError(io, sub, message, code = 'E_USAGE') {
   errorLine(io, sub, code, message)
-  return 2
+  // 契约 §4：环境错误退 3，其余（用法 / 配置）退 2
+  return code === 'E_ENV' ? 3 : 2
 }
 
 /** 契约 §5 允许的 6 个错误码。 */
@@ -727,6 +728,8 @@ function publicCode(internal, fallback = 'E_STATE') {
   switch (internal) {
     case 'E_CONFIG':
       return 'E_CONFIG'
+    case 'E_INPUT':
+      return 'E_USAGE'
     case 'E_RECORD':
     case 'E_SCHEMA':
     case 'E_IO':

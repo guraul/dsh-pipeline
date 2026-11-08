@@ -44,7 +44,7 @@
 |---|---|---|
 | 0 | 成功 | 全部；`record` / `review publish` 的 `REJECT` 只有带 `--legacy-exit-codes` 才退 0 |
 | 1 | 业务拒绝 | `gate`、`merge`（闸门拒绝 / CI 未过）、`record` 与 `review publish` 的 `REJECT` / `ESCALATE`、`doctor` 漂移、`selftest` 不通过、`shim`/`hooks` 不一致或冲突、`check-all` 有失败 |
-| 2 | 用法错误 | 全部子命令的参数错误；`merge` 的入参 / 配置错误（`E_USAGE` / `E_INPUT` / `E_CONFIG`） |
+| 2 | 用法 / 配置错误 | 全部子命令的参数错误；`merge` 的入参与 `--checks-file` 问题（`E_USAGE` / `E_INPUT` / `E_CONFIG`） |
 | 3 | 环境错误 | `check-all` 找不到 pnpm；`review publish --post-review` 的 gh 调用失败（记录不回滚）；`shim check` 无法枚举入口目录；`merge` 的 gh / git 失败与写跳过审计失败（`E_ENV` / `E_GH` / `E_GIT` / `E_HEAD` / `E_AUDIT`，含数字退出码） |
 
 入口 shim **不得改写退出码**，只透传。
