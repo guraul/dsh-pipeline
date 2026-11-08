@@ -104,8 +104,8 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 |---|---|---|
 | 0 | 成功 | 全部命令；`record` / `review publish` 在 `APPROVE` 或带 `--legacy-exit-codes` 的 `REJECT` 下 |
 | 1 | **业务拒绝** | `gate` / `merge`（闸门拒绝、CI 未过）；`record` / `review publish`（判定 `REJECT`，或判定不可用时的兜底 `ESCALATE`） |
-| 2 | **用法错误** | 全部命令 |
-| 3 | **环境错误** | 全部命令；`merge` 的 gh / git 失败按失败码分类退 3（不是 2） |
+| 2 | **用法 / 配置错误** | 全部命令（入参、配置读取与校验、`--checks-file` 等） |
+| 3 | **环境错误** | 全部命令的 gh / git / 写盘 / 读盘失败与未捕获异常（`merge`、`gate`、`task`、`pr`、`status`、`lock`、`record`、`shim`、`hooks`、`check-all` 都按此） |
 
 **`record` / `review publish` 的判定与退出码**：`REJECT` → **1**（记录照常落盘——落盘成功不代表判定通过）；判定不可用（解析失败 / 提交不匹配）→ 兜底 `ESCALATE` → 1；`APPROVE` → 0。
 
@@ -458,3 +458,4 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | 2026-11-07 | §5 的状态行落地：`review prepare\|prompt\|publish` / `record` / `gate` 统一用 `审核: `，`deploy init\|check` 用 `构建: `，`merge` 的进度行本就是阶段式；其余命令保留子命令前缀。§3.3 目标只剩「错误行带错误码」 |
 | 2026-11-07 | §5 的错误行落地：统一走 `argError` / `errorLine`，格式 `dsh-pipeline: <子命令>: <错误码>: <说明>`，错误码收为 6 个（E_USAGE / E_CONFIG / E_RECORD / E_PARSE / E_ENV / E_STATE）；警告行不带码。§3.3 目标清单清零 |
 | 2026-11-08 | `merge` 的退出码按失败码分类（契约 §4 口径不变、实现对齐）：用法/配置 → 2，gh / git / 读不到 head → 3，闸门拒绝 / CI 未过 / 记录与状态问题 → 1；此前 gh 失败被报成 2 |
+| 2026-11-08 | 退出码口径统一：环境错误（gh / git / 写盘 / 读盘 / 未捕获异常）全命令退 3，入参 / 配置退 2，业务拒绝退 1；`E_REPO` 拆成 `E_CONFIG`（配置读不出）与 `E_ENV`（origin 读不出） |

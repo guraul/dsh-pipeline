@@ -256,7 +256,7 @@ lock 用法:
   dsh-pipeline lock check --root <dir>   比对装包与锁：一致→0；不一致/格式非法/旧版本包→1；
                                          锁不存在或未装包→跳过（0）。与 selftest --lock 同一实现
   --root <dir>       仓库根目录（必填；不猜当前目录）
-  退出码: 0 一致或跳过 / 1 不一致、格式非法或旧版本包 / 2 用法错误或未装包
+  退出码: 0 一致或跳过 / 1 不一致、格式非法或旧版本包 / 2 用法错误 / 3 未装包或写盘失败
 
 task 用法:
   dsh-pipeline task <issue号> [--slug <slug>] [--root <dir>] [--worktrees-dir <dir>]
@@ -741,6 +741,12 @@ function publicCode(internal, fallback = 'E_STATE') {
     case 'E_GH':
     case 'E_GIT':
     case 'E_HEAD':
+    case 'E_PUSH':
+    case 'E_PR':
+    case 'E_REPO':
+    case 'E_FETCH':
+    case 'E_WORKTREE':
+    case 'E_ROOT':
       return 'E_ENV'
     default:
       // E_CI（CI 真的没过）/ E_VERDICT / E_EXPIRED / E_SHA_MISMATCH / E_PR_MISMATCH / E_INPUT / E_POLICY /
@@ -832,7 +838,8 @@ function runMerge(argv, deps, io) {
  */
 function flowExitCode(code) {
   if (typeof code === 'number' || code === null) return 3
-  if (['E_GIT', 'E_REPO', 'E_PUSH', 'E_PR', 'E_ENV', 'E_GH'].includes(code)) return 3
+  const env = ['E_GIT', 'E_REPO', 'E_PUSH', 'E_PR', 'E_ENV', 'E_GH', 'E_FETCH', 'E_WORKTREE', 'E_ROOT']
+  if (env.includes(code)) return 3
   return 2
 }
 
@@ -1135,7 +1142,7 @@ function runRecord(argv, deps, io) {
     return 0
   } catch (error) {
     errorLine(io, 'record', 'E_ENV', `写入失败: ${messageOf(error)}`)
-    return 2
+    return 3 // 写盘失败是环境错误（契约 §4）
   }
 }
 
@@ -2131,8 +2138,8 @@ function runHooks(argv, deps, io) {
       runner: deps.runner,
     })
     if (!result.ok) {
-      errorLine(io, 'hooks', 'E_ENV', result.error)
-      return result.code
+      errorLine(io, 'hooks', result.code === 1 ? 'E_STATE' : 'E_ENV', result.error)
+      return result.code === 2 ? 3 : result.code
     }
     io.out(`hooks: ${result.status === 'updated' ? '已更新' : '已安装'} ${result.path}`)
     return 0
@@ -2140,8 +2147,8 @@ function runHooks(argv, deps, io) {
 
   const result = checkHook(root, { runner: deps.runner })
   if (!result.ok) {
-    errorLine(io, 'hooks', 'E_ENV', result.error)
-    return result.code
+    errorLine(io, 'hooks', result.code === 1 ? 'E_STATE' : 'E_ENV', result.error)
+    return result.code === 2 ? 3 : result.code
   }
   io.out(`hooks: 钩子与本包一致: ${result.path}`)
   return 0
@@ -2521,7 +2528,7 @@ function expandHome(path) {
 
 /**
  * task：issue 号是位置参数（唯一一个），其余走 --root / --worktrees-dir。
- * 参数错误一律 2，流程失败也一律 2——task 没有「闸门拒绝」这种中间态。
+ * 入参类失败退 2；git / gh / 目录等环境失败退 3（契约 §4）——task 没有「闸门拒绝」这种中间态。
  */
 function runTask(argv, deps, io) {
   const [first, ...rest] = argv

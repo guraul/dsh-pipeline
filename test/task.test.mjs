@@ -143,7 +143,7 @@ test('task: 目标路径存在但不是本仓 worktree 时退出 2', () => {
   assert.equal(calls.some((call) => sub(call.args)[0] === 'fetch'), false)
 })
 
-test('task: fetch 连续失败重试 3 次后退出 2', () => {
+test('task: fetch 连续失败重试 3 次后退出 3（环境错误）', () => {
   const root = tmp()
   withRepo(root)
   let sleeps = 0
@@ -161,7 +161,7 @@ test('task: fetch 连续失败重试 3 次后退出 2', () => {
     },
   })
 
-  assert.equal(code, 2)
+  assert.equal(code, 3)
   assert.match(io.state.err, /origin fetch 3 次均失败/)
   assert.equal(calls.filter((call) => sub(call.args)[0] === 'fetch').length, 3)
   assert.equal(sleeps, 2)

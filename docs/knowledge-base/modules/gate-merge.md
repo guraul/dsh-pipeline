@@ -41,9 +41,9 @@
 
 在调 `evaluateGate` 之前多做三项 CLI 层检查：
 
-1. `--no-review`：写跳过审计（`.dsh-web/reviews/skips/<ts>-<pr>.json`），打印警告到 stderr，返回 0；写审计失败退 2；
+1. `--no-review`：写跳过审计（`.dsh-web/reviews/skips/<ts>-<pr>.json`），打印警告到 stderr，返回 0；写审计失败退 **3**（环境错误）；
 2. 没给 `--record` 且没声明 `--no-review`：**fail-closed** 退 1（`dsh-pipeline: gate: E_RECORD: 未提供审核记录，且未声明 --no-review，按失败关闭处理`）；
-3. 记录属于哪个 PR：`record.pr !== --pr` 退 1；`head-sha` 未给时用 `git HEAD`（取不到退 2）。
+3. 记录属于哪个 PR：`record.pr !== --pr` 退 1；`head-sha` 未给时用 `git HEAD`（取不到退 **3**，环境错误）。
 
 ## 合并（`runMerge`）
 
@@ -97,7 +97,7 @@ mergePolicy({ highRiskAppend })  // → { patterns, hit(files, changedLines, {di
 - glob 只实现 `**`（跨目录）、`*`（单层）、`?`（单字符）；路径先 `normalizePath`（反斜杠转 `/`、去 `./`、合并 `//`），否则同一路径换个写法就能绕过；
 - `dependencyChange` 用正则判断 diff 里是否增删了 `"dependencies"` / `"devDependencies"` / `"optionalDependencies"` 段。
 
-`record` 子命令负责**计算** `policy` 并写进记录；`gate` 只**读取** `record.policy.hit`。这是两段式：策略算不出来时 `record` 直接退 2（宁可失败，也不写一条 `policy` 缺失的记录）。
+`record` 子命令负责**计算** `policy` 并写进记录；`gate` 只**读取** `record.policy.hit`。这是两段式：策略算不出来时 `record` 直接退 2（配置类；宁可失败，也不写一条 `policy` 缺失的记录）。
 
 ## 依赖
 
