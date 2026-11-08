@@ -130,7 +130,7 @@ test('pr: PR 已存在时只打印链接，不重推不新建', () => {
   assert.equal(calls.some((call) => sub(call.args)[0] === 'pr' && sub(call.args)[1] === 'create'), false)
 })
 
-test('pr: push 失败时退出 2，且不创建 PR', () => {
+test('pr: push 失败时退出 3（环境错误），且不创建 PR', () => {
   const root = tmp()
   withRepo(root)
   const { runner, calls } = makeRunner({
@@ -138,7 +138,7 @@ test('pr: push 失败时退出 2，且不创建 PR', () => {
   })
   const io = makeIO()
 
-  assert.equal(run(['pr', '--root', root], io, runner), 2)
+  assert.equal(run(['pr', '--root', root], io, runner), 3)
   assert.match(io.state.err, /推送 task\/12-add-login 失败/)
   assert.equal(calls.some((call) => sub(call.args)[0] === 'pr' && sub(call.args)[1] === 'create'), false)
 })

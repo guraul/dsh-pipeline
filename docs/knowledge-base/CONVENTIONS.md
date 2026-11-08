@@ -41,7 +41,7 @@
 | 3 | README 的「本仓高风险只列了 `.github/**`」易被误读 | **已修（本 PR）** | 改为「配置只**追加**了 `.github/**`，而 `lib/policy.mjs` 的默认清单恒生效」——改 `AGENTS.md`、`.gitignore` 等同样属高风险 |
 | 4 | `deploy.yml` 只适配 Expo 类仓 | **已修（#67）** | 新增 `quality_cmd` / `build_cmd` / `assemble` 三个 input，均有默认值（老 caller 零改动）；缺省构建命令仍是 Expo Web 导出，非 Expo 仓要显式传 |
 | 5 | `.DS_Store` 未进 `.gitignore` | **已修（本 PR）** | 已加一行；此前 `git status` 常年脏一条 |
-| 6 | 退出码口径不统一（契约 §4 已记录为现状差异） | 现存 | `record` / `review publish` 解析出 `REJECT` 退 0；`review prepare` 的 gh 失败用 2（不是 3）。统一属契约变更，要同批改消费方 |
+| 6 | 退出码口径不统一（契约 §4 已记录为现状差异） | **已修** | 环境错误（gh / git / 写盘 / 未捕获异常）全命令统一退 3；`review prepare` 的 gh 失败、`task` / `pr` 的流程失败、`status` / `lock` 的 IO 失败都按码分档。`record` / `review publish` 的 `REJECT` 退 1（`--legacy-exit-codes` 可回退 0） |
 | 7 | L2 入口层未统一 | 现存 | `agent-mobile`、`homebase` 是手写转发壳，`self-dsh-plugins` 仍用自有实现（多 `--facts` / `--include` / 提示词生成）；`diff -r scripts/pipeline` 尚未为空 |
 | 8 | `pipeline.lock.json` 未实现 | **已修（issue #86 / PR #87）** | 新增 `lock write|check` 与 `selftest --lock`：锁由 `lock write` 生成、逐字节校验装包与锁；消费仓接入 CI 仍待做（本仓 `ci.yml` 只跑测试） |
 | 9 | CI 覆盖不到配置 / shim / 跨仓漂移 | 现存 | `ci.yml` 只跑 `node --test`；2026-11-04 的配置多字段事故 CI 测不出来，靠本地 `selftest --config` 与 `doctor` |

@@ -826,6 +826,17 @@ function runMerge(argv, deps, io) {
 }
 
 /**
+ * task / pr 的流程退出码（契约 §4）：入参类 2、环境类 3。
+ * 这两个命令的失败码比 merge 多（E_BRANCH / E_DIRTY / E_ISSUE / E_WORKTREE…），
+ * 其中只有 gh / git / 仓库不可读算环境错误。
+ */
+function flowExitCode(code) {
+  if (typeof code === 'number' || code === null) return 3
+  if (['E_GIT', 'E_REPO', 'E_PUSH', 'E_PR', 'E_ENV', 'E_GH'].includes(code)) return 3
+  return 2
+}
+
+/**
  * merge 的退出码（契约 §4）：按失败码分类，不按「第几步」猜。
  * - 2 用法 / 配置：E_USAGE / E_INPUT / E_CONFIG
  * - 3 环境：数字码 / null（gh、git 失败）、E_ENV / E_GH / E_GIT / E_HEAD / E_AUDIT
@@ -1878,7 +1889,7 @@ function runLock(argv, deps, io) {
     return 0
   } catch (error) {
     errorLine(io, 'lock', 'E_ENV', `写入失败: ${messageOf(error)}`)
-    return 2
+    return 3 // 写盘失败是环境错误（契约 §4）
   }
 }
 
@@ -2449,7 +2460,7 @@ function runStatus(argv, deps, io) {
     collected = collectRecords(root)
   } catch (error) {
     errorLine(io, 'status', 'E_ENV', `读取审核记录失败: ${messageOf(error)}`)
-    return 2
+    return 3 // 环境错误（契约 §4）
   }
 
   let latest = null
@@ -2567,8 +2578,8 @@ function runTask(argv, deps, io) {
     exists: deps.exists,
   })
   if (!result.ok) {
-    errorLine(io, 'task', 'E_ENV', result.error)
-    return 2
+    errorLine(io, 'task', publicCode(result.code), result.error)
+    return flowExitCode(result.code)
   }
   result.lines.forEach((line, index) => io.out(index === 0 ? `task: ${line}` : line))
   return 0
@@ -2592,8 +2603,8 @@ function runPr(argv, deps, io) {
     runner: deps.runner,
   })
   if (!result.ok) {
-    errorLine(io, 'pr', 'E_ENV', result.error)
-    return 2
+    errorLine(io, 'pr', publicCode(result.code), result.error)
+    return flowExitCode(result.code)
   }
   result.lines.forEach((line, index) => io.out(index === 0 ? `pr: ${line}` : line))
   return 0
@@ -2650,7 +2661,7 @@ export function runCli(argv, deps = {}) {
     return runStatus(rest, deps, io)
   } catch (error) {
     errorLine(io, first, 'E_ENV', messageOf(error))
-    return 2
+    return 3 // 未捕获异常按环境错误处理（契约 §4）
   }
 }
 
