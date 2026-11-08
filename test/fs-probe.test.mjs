@@ -228,3 +228,45 @@ test('lock：--root 不可读 → 退 3（不报「目录不存在」）', (t) =
   assert.equal(result.code, 3)
   assert.match(result.err, /dsh-pipeline: lock: E_ENV: /)
 })
+
+test('check-all：--packages 指向不可读的包目录 → 退 3', (t) => {
+  const root = tmp()
+  const dir = join(root, 'pkg-c')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'package.json'), '{"name":"c"}', 'utf8')
+  t.after(() => {
+    try {
+      chmodSync(dir, 0o755)
+    } catch {
+      // 已清理
+    }
+    rmSync(root, { recursive: true, force: true })
+  })
+  if (skipAsRoot(t)) return
+  chmodSync(dir, 0o000)
+
+  const result = run(['check-all', '--root', root, '--packages', 'pkg-c'])
+  assert.equal(result.code, 3)
+  assert.match(result.err, /dsh-pipeline: check-all: E_ENV: /)
+})
+
+test('gate：记录文件读不出来 → 退 3（缺记录才是 1）', (t) => {
+  const root = tmp()
+  mkdirSync(join(root, '.dsh-web', 'reviews'), { recursive: true })
+  const record = join(root, '.dsh-web', 'reviews', '7-a.json')
+  writeFileSync(record, '{}', 'utf8')
+  t.after(() => {
+    try {
+      chmodSync(record, 0o644)
+    } catch {
+      // 已清理
+    }
+    rmSync(root, { recursive: true, force: true })
+  })
+  if (skipAsRoot(t)) return
+  chmodSync(record, 0o000)
+
+  const result = run(['gate', '--pr', '7', '--root', root, '--record', record, '--head-sha', 'a'.repeat(40)])
+  assert.equal(result.code, 3)
+  assert.match(result.err, /dsh-pipeline: gate: E_ENV: /)
+})

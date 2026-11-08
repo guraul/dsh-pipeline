@@ -16,7 +16,7 @@
 | `review prompt` | 由请求 JSON 渲染审核提示词（不发外部命令） | `--request`(必填，无缺省)、`--out`、`--role` | `runReviewPrompt` → `lib/review.mjs` `buildPrompt` | 0 / 2 参数或配置 / 3 配置读不出来 |
 | `review publish` | 把判定落成记录；可选发 GitHub review | `--pr`、`--response`(必填)、`--request`、`--round`、`--root`、`--model`、`--provider`、`--form`、`--post-review`、`--dry-run`、`--legacy-exit-codes` | `runReviewPublish` →（复用）`runRecord` + `sendReview` | 0 APPROVE（或带 `--legacy-exit-codes` 的 REJECT）/ 1 REJECT 或 ESCALATE / 2 参数与配置 / 3 发 review 失败 |
 | `record` | 只落盘判定记录（供外部流程使用） | `--request`、`--response`(必填)、`--findings`、`--round`、`--root`、`--model`、`--provider`、`--form`、`--duration-ms`、`--name`、`--json` | `runRecord` | 0 / 1 ESCALATE 或 REJECT（`--legacy-exit-codes` 才 0）/ 2 前置校验 / 3 写盘失败 |
-| `gate` | 审核闸门检查 | `--pr`、`--root`(均必填)、`--record`、`--head-sha`、`--no-review`、`--reason` | `runGate` → `decideGate` → `lib/gate.mjs` | 0 / 1 闸门拒绝 / 2 参数或配置 / 3 环境（读 git HEAD、读配置或写跳过审计失败） |
+| `gate` | 审核闸门检查 | `--pr`、`--root`(均必填)、`--record`、`--head-sha`、`--no-review`、`--reason` | `runGate` → `decideGate` → `lib/gate.mjs` | 0 / 1 闸门拒绝或记录缺失 / 2 参数或配置 / 3 环境（读 git HEAD、读配置、记录读不出来或写跳过审计失败） |
 | `merge` | 闸门通过后 squash 合并并清理现场 | 同 `gate`，另加 `--check-only`、`--checks-file`、`--force` | `runMerge` → `lib/merge.mjs` `runMerge` | 0 / 1 闸门或 CI 拒绝 / 2 用法或配置 / 3 gh、git 等环境失败 |
 | `status` | 审核记录概况 | `--root`（缺省主工作区） | `runStatus` | 0 / 2 参数 / 3 读记录失败 |
 | `doctor` | 多仓「装的共享包是否同一构建」；可选 profile 体检 | `--repo a,b`、`--json`、`--expect <sha>`、`--profile <dir>` | `runDoctor` → `lib/doctor.mjs` / `lib/profile-check.mjs` | 0 / 1 漂移或体检失败 / 2 |
@@ -25,7 +25,7 @@
 | `shim` | 生成 / 校验入口 shim（契约 §8） | `install [--root] [--force]`、`check [--root]`（同时反向扫描目录里的私有文件） | `runShim` → `lib/shim.mjs` | 0 / 1 冲突、不一致或私有文件 / 2 / 3 无法枚举目录 |
 | `hooks` | 安装 / 校验 pre-push 直推拦截钩子 | `install [--root] [--force] [--allow-main]`、`check [--root]` | `runHooks` → `lib/hooks.mjs` | 0 / 1 未装、不一致、拒绝覆盖 / 2 用法 / 3 git 或读盘失败 |
 | `check-all` | 逐包跑 test / check / typecheck 并汇总 | `--root`、`--packages a,b,c`、`--json` | `runCheckAllCommand` → `lib/check-all.mjs` | 0 / 1 有失败 / 2 用法或配置 / 3 找不到 pnpm、读目录或 package.json 失败 |
-| `deploy` | 生成 / 校验 caller workflow 骨架（契约 §10） | `init --root <dir> [--write] [--rollback]`、`check --root <dir>` | `runDeploy` → `lib/deploy.mjs` | 0（含回滚 caller 缺失 / 手写跳过）/ 1 不一致、部署 caller 缺标记或拒绝覆盖 / 2 |
+| `deploy` | 生成 / 校验 caller workflow 骨架（契约 §10） | `init --root <dir> [--write] [--rollback]`、`check --root <dir>` | `runDeploy` → `lib/deploy.mjs` | 0（含回滚 caller 缺失 / 手写跳过）/ 1 不一致、部署 caller 缺标记或拒绝覆盖 / 2 / 3 读取已有文件失败 |
 
 ### 输出约定（契约 §5）
 

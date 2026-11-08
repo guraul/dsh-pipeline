@@ -1227,7 +1227,7 @@ function runReviewPrepare(argv, deps, io) {
   if (options.facts !== undefined) {
     if (!nonEmpty(options.facts)) return argError(io, sub, '--facts 必须是非空文件路径')
     const read = readEvidence(options.facts, '--facts')
-    if (read.error) return argError(io, sub, read.error)
+    if (read.error) return argError(io, sub, read.error, read.ioError ? 'E_ENV' : 'E_USAGE')
     facts = read.text
   }
 
@@ -1243,7 +1243,7 @@ function runReviewPrepare(argv, deps, io) {
     includes = []
     for (const path of uniquePaths) {
       const read = readEvidence(path, '--include')
-      if (read.error) return argError(io, sub, read.error)
+      if (read.error) return argError(io, sub, read.error, read.ioError ? 'E_ENV' : 'E_USAGE')
       includes.push({ path, content: read.text })
     }
   }
@@ -2397,7 +2397,9 @@ function runDeploy(argv, deps, io) {
     try {
       rollbackExisting = readFileSync(rollbackFile, 'utf8')
     } catch (error) {
-      if (error?.code !== 'ENOENT') return argError(io, 'deploy', `读取 ${DEPLOY_ROLLBACK_FILE} 失败: ${messageOf(error)}`)
+      if (error?.code !== 'ENOENT') {
+        return argError(io, 'deploy', `读取 ${DEPLOY_ROLLBACK_FILE} 失败: ${messageOf(error)}`, 'E_ENV')
+      }
     }
     const rollbackGenerated = rollbackExisting !== null && replaceRegion(rollbackExisting, rollbackSkeleton) !== null
     let writeTargets = targets.slice(0, 1)
