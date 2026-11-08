@@ -70,6 +70,7 @@
 | `hooks install` 的目标路径 | 改回固定 `.git/hooks` | 设了 `core.hooksPath` 的仓会装到 git 不看的位置，且 `check` 还会报"一致"（假绿） |
 | `deploy-web.yml` 的生成区 | 手改生成区、或改完配置不重跑 `deploy init` | `deploy check` 逐字节比对会红；正确做法是改 `.dsh/pipeline.json` 的 `deploy` 段再 `deploy init --write`（标记之后的追加 job 不会被覆盖） |
 | `deploy.yml` 的 `quality_cmd` / `build_cmd` / `assemble` | 删掉默认值 | 不传这三个 input 的老 caller 会当场失败（默认值就是兼容性） |
+| 判断「文件 / 目录存在吗」 | 用 `existsSync` | 它对 `EACCES` / `ELOOP` 等一律返回 `false`，把「读不出来」静默折成「不存在」——该退 3 的环境错误变成跳过。一律用 `lib/fs-probe.mjs` 的 `probePath` / `probeExists`（只把 `ENOENT` / `ENOTDIR` 判 missing） |
 
 ## 5. 易踩的坑
 

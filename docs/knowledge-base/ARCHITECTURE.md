@@ -25,8 +25,9 @@
 │              无 IO、不读时钟；now / 入参由调用方传入，同一输入永远同一结论
 ├─ 编排层 ──── lib/merge.mjs（合并整条流程）· lib/task.mjs · lib/pr.mjs
 │              deps 可注入（gh / git / now / sleep / exists），单测用假依赖断言调用顺序
-├─ 持久层 ──── lib/record.mjs（记录与跳过审计）· lib/config.mjs（配置）
-│              写文件先落 .tmp 再 rename，避免读到半截 JSON
+├─ 持久层 ──── lib/record.mjs（记录与跳过审计）· lib/config.mjs（配置）· lib/fs-probe.mjs（存在性探测）
+│              写文件先落 .tmp 再 rename，避免读到半截 JSON；
+│              判断存在性一律走 probePath（existsSync 会把 EACCES 折成「不存在」）
 └─ 执行封装 ── lib/git.mjs · lib/gh.mjs · lib/check-all.mjs（pnpm）· lib/profile-check.mjs（dsh）
                只暴露具名操作，argv 在内部拼好；一律返回 { ok, code, data, error }，不抛异常
 ```

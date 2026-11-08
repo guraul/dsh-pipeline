@@ -18,13 +18,14 @@
  * 退出码：0 通过 / 1 闸门拒绝或 CI 未过 / 2 参数或配置错误 / 3 环境错误（gh、git、写审计等 IO 失败）。
  * runner 可注入，测试用假 runner 断言实际发出的命令，不碰真实 gh/git。
  */
-import {existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync} from 'node:fs'
+import {mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync} from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { discoverPackages, runCheckAll as runCheckAllFlow } from '../lib/check-all.mjs'
 import { loadConfig } from '../lib/config.mjs'
+import { isIoError, probePath } from '../lib/fs-probe.mjs'
 import {
   DEPLOY_ROLLBACK_FILE,
   DEPLOY_WORKFLOW_FILE,
@@ -185,7 +186,7 @@ selftest 用法:
                      dsh.engines.dsh → dsh.compatibility.dsh → @deepseek-ai/dsh* 的 peer 依赖；
                      无声明→跳过(0)；全部覆盖→0；任一不覆盖→1；不知道当前版本→2
   --dsh-version <v>  仅 --peer：当前 DSH 版本（缺省读 <root>/node_modules 或 <root>/tools/node_modules 下的 @deepseek-ai/dsh）
-  退出码: 0 通过（没有配置文件也退 0）/ 1 检查不通过 / 2 用法错误 / 3 读盘失败（--lock 的锁文件、--repos 的装包目录或 build.json）
+  退出码: 0 通过（没有配置文件也退 0）/ 1 检查不通过 / 2 用法错误 / 3 读盘失败（--config / --shims / --lock / --repos / --peer 的文件或目录读不出来）
 
 shim 用法:
   dsh-pipeline shim install [--root <dir>] [--force]
@@ -225,7 +226,7 @@ check-all 用法:
                      （退出码与人读模式一致）
   每项一行 <包目录> | <检查> | <结果>，末行 check-all: N 个包，X 通过 / Y 失败 / Z 跳过；
   缺 node_modules 的包三项都记「跳过（未安装依赖）」，不算失败；包目录不存在记失败。
-  退出码: 0 全部通过（含全跳过）/ 1 有失败 / 2 用法错误 / 3 找不到 pnpm
+  退出码: 0 全部通过（含全跳过）/ 1 有失败 / 2 用法错误 / 3 找不到 pnpm、读目录或 package.json 失败
 
 deploy 用法:
   dsh-pipeline deploy init --root <dir> [--write] [--rollback]
@@ -249,7 +250,7 @@ deploy 用法:
   部署 caller 不存在提示先跑 deploy init（退 1）。
   --root <dir>       仓库根目录（必填）
   退出码: 0 一致（含回滚 caller 缺失 / 手写跳过）/ 1 不一致、部署 caller 缺标记或拒绝覆盖 /
-          2 用法或配置错误
+          2 用法或配置错误 / 3 读取已有文件失败
 
 lock 用法:
   dsh-pipeline lock write --root <dir>   把当前装包的 build.json 写进 <dir>/.dsh/pipeline.lock.json
@@ -554,10 +555,17 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
   try {
     candidate = readRecord(record)
   } catch (error) {
+    // 记录缺失 → 业务拒绝（1）；记录读不出来（E_IO）→ 环境错误（3）
+    const ioError = error?.code === 'E_IO'
     return {
-      code: 1,
+      code: ioError ? 3 : 1,
       skipped: false,
-      lines: [{ stream: 'err', text: errorText('gate', publicCode(error?.code, 'E_RECORD'), messageOf(error)) }],
+      lines: [
+        {
+          stream: 'err',
+          text: errorText('gate', ioError ? 'E_ENV' : publicCode(error?.code, 'E_RECORD'), messageOf(error)),
+        },
+      ],
     }
   }
 
@@ -592,10 +600,16 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
   try {
     maxRounds = loadConfig(root).config.review.rounds
   } catch (error) {
+    const ioError = isIoError(error)
     return {
-      code: 2,
+      code: ioError ? 3 : 2,
       skipped: false,
-      lines: [{ stream: 'err', text: errorText('gate', 'E_CONFIG', `读取配置失败: ${messageOf(error)}`) }],
+      lines: [
+        {
+          stream: 'err',
+          text: errorText('gate', ioError ? 'E_ENV' : 'E_CONFIG', `读取配置失败: ${messageOf(error)}`),
+        },
+      ],
     }
   }
 
@@ -1088,8 +1102,10 @@ function runRecord(argv, deps, io) {
     policy = { ...policy, changedLines: { total: lines.total, production: lines.production, testLines: lines.testLines } }
   } catch (error) {
     // 策略算不出来就写不了可信记录：宁可失败，也不写一条 policy 缺失的记录。
-    errorLine(io, 'record', 'E_CONFIG', `高风险判定失败: ${messageOf(error)}`)
-    return 2
+    // 读盘失败（EACCES 等）是环境错误，配置写错才是 E_CONFIG
+    const ioError = isIoError(error)
+    errorLine(io, 'record', ioError ? 'E_ENV' : 'E_CONFIG', `高风险判定失败: ${messageOf(error)}`)
+    return ioError ? 3 : 2
   }
 
   const record = {
@@ -1201,8 +1217,9 @@ function runReviewPrepare(argv, deps, io) {
         return { error: `${label} 指定的文件内容为空: ${target}` }
       }
       return { text }
-    } catch {
-      return { error: `${label} 指定的文件读不到: ${target}` }
+    } catch (error) {
+      // 读不出来（权限 / IO）是环境错误；文件不存在属参数错误
+      return { error: `${label} 指定的文件读不到: ${target}`, ioError: isIoError(error) }
     }
   }
 
@@ -1210,7 +1227,7 @@ function runReviewPrepare(argv, deps, io) {
   if (options.facts !== undefined) {
     if (!nonEmpty(options.facts)) return argError(io, sub, '--facts 必须是非空文件路径')
     const read = readEvidence(options.facts, '--facts')
-    if (read.error) return argError(io, sub, read.error)
+    if (read.error) return argError(io, sub, read.error, read.ioError ? 'E_ENV' : 'E_USAGE')
     facts = read.text
   }
 
@@ -1226,7 +1243,7 @@ function runReviewPrepare(argv, deps, io) {
     includes = []
     for (const path of uniquePaths) {
       const read = readEvidence(path, '--include')
-      if (read.error) return argError(io, sub, read.error)
+      if (read.error) return argError(io, sub, read.error, read.ioError ? 'E_ENV' : 'E_USAGE')
       includes.push({ path, content: read.text })
     }
   }
@@ -1235,7 +1252,7 @@ function runReviewPrepare(argv, deps, io) {
   try {
     config = loadConfig(root).config
   } catch (error) {
-    return argError(io, sub, `读取配置失败: ${messageOf(error)}`, 'E_CONFIG')
+    return argError(io, sub, `读取配置失败: ${messageOf(error)}`, isIoError(error) ? 'E_ENV' : 'E_CONFIG')
   }
   const repo = config.repo
   if (typeof repo !== 'string' || repo.length === 0) {
@@ -1542,8 +1559,9 @@ function sendReview({ root, pr, headSha, io, runner }) {
   try {
     config = loadConfig(root).config
   } catch (error) {
-    errorLine(io, 'review publish', 'E_CONFIG', `读取配置失败: ${messageOf(error)}（记录已写入，review 未发出）`)
-    return 2
+    const ioError = isIoError(error)
+    errorLine(io, 'review publish', ioError ? 'E_ENV' : 'E_CONFIG', `读取配置失败: ${messageOf(error)}（记录已写入，review 未发出）`)
+    return ioError ? 3 : 2
   }
   const repo = config.repo
   if (!nonEmpty(repo)) {
@@ -1666,7 +1684,8 @@ function runReviewPrompt(argv, deps, io) {
   try {
     config = loadConfig(resolveReviewRoot(undefined, deps)).config
   } catch (error) {
-    return argError(io, sub, messageOf(error))
+    // 配置读不出来是环境错误；配置写错才是 E_CONFIG
+    return argError(io, sub, messageOf(error), isIoError(error) ? 'E_ENV' : 'E_CONFIG')
   }
 
   let role = {}
@@ -1802,6 +1821,15 @@ function runDoctor(argv, deps, io) {
     }
   }
 
+  // 读盘失败（装包目录 / package.json 不可读）是环境错误：退 3，不混进「构建不一致」的 1
+  const ioErrors = rows.filter((row) => typeof row.ioError === 'string')
+  if (ioErrors.length > 0) {
+    for (const row of ioErrors) {
+      errorLine(io, 'doctor', 'E_ENV', `${row.root}: 读取已装包失败: ${row.ioError}`)
+    }
+    return 3
+  }
+
   // 退出码在两种输出模式之间必须一致：CI 常用 --json，不能因为换了输出格式就当成功
   let failed = false
   if (allSource) {
@@ -1881,13 +1909,10 @@ function runLock(argv, deps, io) {
   const root = parsed.options.root
 
   // 路径打错不能静默退 0（「无锁」+「未装包」两个跳过会叠成假绿），与 deploy check 一样报 2
-  let rootStat
-  try {
-    rootStat = statSync(root)
-  } catch {
-    return argError(io, 'lock', `目录不存在: ${root}`)
-  }
-  if (!rootStat.isDirectory()) return argError(io, 'lock', `不是目录: ${root}`)
+  const rootProbe = probePath(root)
+  if (rootProbe.kind === 'io-error') return argError(io, 'lock', `读取目录失败: ${rootProbe.error}`, 'E_ENV')
+  if (rootProbe.kind === 'missing') return argError(io, 'lock', `目录不存在: ${root}`)
+  if (!rootProbe.stat.isDirectory()) return argError(io, 'lock', `不是目录: ${root}`)
 
   if (action === 'check') {
     const result = checkLock(root)
@@ -1977,13 +2002,11 @@ function runSelftest(argv, deps, io) {
   // --peer 要先知道「当前 DSH 版本」：显式参数优先，其次读仓里装的 @deepseek-ai/dsh
   let dshVersion
   if (checks.includes('peer')) {
-    let rootStat = null
-    try {
-      rootStat = statSync(root)
-    } catch {
-      rootStat = null
+    const rootProbe = probePath(root)
+    if (rootProbe.kind === 'io-error') {
+      return argError(io, 'selftest', `读取 --root 失败: ${rootProbe.error}`, 'E_ENV')
     }
-    if (rootStat === null || !rootStat.isDirectory()) {
+    if (rootProbe.kind === 'missing' || !rootProbe.stat.isDirectory()) {
       return argError(io, 'selftest', `--root 不是目录: ${root}`)
     }
     const explicit = options['dsh-version']
@@ -2219,13 +2242,12 @@ function runCheckAllCommand(argv, deps, io) {
   }
 
   const root = nonEmpty(options.root) ? options.root : nonEmpty(deps.cwd) ? deps.cwd : process.cwd()
-  let rootStat
-  try {
-    rootStat = statSync(root)
-  } catch {
-    return argError(io, 'check-all', `目录不存在: ${root}`)
+  const rootProbe = probePath(root)
+  if (rootProbe.kind === 'io-error') {
+    return argError(io, 'check-all', `读取目录失败: ${rootProbe.error}`, 'E_ENV')
   }
-  if (!rootStat.isDirectory()) return argError(io, 'check-all', `不是目录: ${root}`)
+  if (rootProbe.kind === 'missing') return argError(io, 'check-all', `目录不存在: ${root}`)
+  if (!rootProbe.stat.isDirectory()) return argError(io, 'check-all', `不是目录: ${root}`)
 
   if (names === undefined) {
     // flag 没给才读配置：--packages 覆盖 checks.packages，读不了 / 不合规当场退 2。
@@ -2233,7 +2255,7 @@ function runCheckAllCommand(argv, deps, io) {
     try {
       config = loadConfig(root).config
     } catch (error) {
-      return argError(io, 'check-all', `读取配置失败: ${messageOf(error)}`, 'E_CONFIG')
+      return argError(io, 'check-all', `读取配置失败: ${messageOf(error)}`, isIoError(error) ? 'E_ENV' : 'E_CONFIG')
     }
     const checks = config.checks
     const configured = isPlainObject(checks) && Array.isArray(checks.packages) ? checks.packages : []
@@ -2243,7 +2265,8 @@ function runCheckAllCommand(argv, deps, io) {
       try {
         names = discoverPackages(root)
       } catch (error) {
-        return argError(io, 'check-all', `读取目录失败: ${messageOf(error)}`)
+        // 读目录 / 读 package.json 失败都是环境错误（契约 §4）
+        return argError(io, 'check-all', `读取目录失败: ${messageOf(error)}`, 'E_ENV')
       }
       const exclude = isPlainObject(checks) && Array.isArray(checks.exclude) ? new Set(checks.exclude) : null
       if (exclude !== null) names = names.filter((name) => !exclude.has(name))
@@ -2319,7 +2342,7 @@ function runDeploy(argv, deps, io) {
   try {
     config = loadConfig(options.root).config
   } catch (error) {
-    return argError(io, 'deploy', `读取配置失败: ${messageOf(error)}`, 'E_CONFIG')
+    return argError(io, 'deploy', `读取配置失败: ${messageOf(error)}`, isIoError(error) ? 'E_ENV' : 'E_CONFIG')
   }
   if (!isPlainObject(config.deploy)) {
     return argError(io, 'deploy', '配置缺少 deploy 段（契约 §7.1），无法生成 / 校验部署骨架', 'E_CONFIG')
@@ -2374,7 +2397,9 @@ function runDeploy(argv, deps, io) {
     try {
       rollbackExisting = readFileSync(rollbackFile, 'utf8')
     } catch (error) {
-      if (error?.code !== 'ENOENT') return argError(io, 'deploy', `读取 ${DEPLOY_ROLLBACK_FILE} 失败: ${messageOf(error)}`)
+      if (error?.code !== 'ENOENT') {
+        return argError(io, 'deploy', `读取 ${DEPLOY_ROLLBACK_FILE} 失败: ${messageOf(error)}`, 'E_ENV')
+      }
     }
     const rollbackGenerated = rollbackExisting !== null && replaceRegion(rollbackExisting, rollbackSkeleton) !== null
     let writeTargets = targets.slice(0, 1)
@@ -2392,7 +2417,7 @@ function runDeploy(argv, deps, io) {
       try {
         existing = readFileSync(file, 'utf8')
       } catch (error) {
-        if (error?.code !== 'ENOENT') return argError(io, 'deploy', `读取 ${target.file} 失败: ${messageOf(error)}`)
+        if (error?.code !== 'ENOENT') return argError(io, 'deploy', `读取 ${target.file} 失败: ${messageOf(error)}`, 'E_ENV')
       }
       const merged = existing === null ? null : replaceRegion(existing, target.skeleton)
       if (existing !== null && merged === null) {
@@ -2431,7 +2456,7 @@ function runDeploy(argv, deps, io) {
         // 回滚 caller 允许尚未接入（迁移期）：静默跳过，不改变既有输出契约
         continue
       }
-      return argError(io, 'deploy', `读取 ${target.file} 失败: ${messageOf(error)}`)
+      return argError(io, 'deploy', `读取 ${target.file} 失败: ${messageOf(error)}`, 'E_ENV')
     }
 
     const extracted = extractRegion(content)
@@ -2598,7 +2623,7 @@ function runTask(argv, deps, io) {
     try {
       config = loadConfig(configRoot).config
     } catch (error) {
-      return argError(io, 'task', `读取配置失败: ${messageOf(error)}`, 'E_CONFIG')
+      return argError(io, 'task', `读取配置失败: ${messageOf(error)}`, isIoError(error) ? 'E_ENV' : 'E_CONFIG')
     }
     const configured = config.worktreesDir
     if (configured !== undefined && configured !== null) {

@@ -13,19 +13,19 @@
 | `task` | 从 issue 建 `task/<号>-<slug>` 分支与 worktree | `<issue号>`（位置参数）、`--slug`、`--root`、`--worktrees-dir` | `bin/cli.mjs` `runTask` → `lib/task.mjs` `runTask` | 0 成功或幂等 / 2 入参类失败 / 3 git 或目录失败（`E_GIT` / `E_FETCH` / `E_WORKTREE` / `E_ROOT` / `E_REPO`） |
 | `pr` | 推送当前任务分支并创建 PR | `--issue`、`--root` | `runPr` → `lib/pr.mjs` `runPr` | 0 / 2 入参类失败（分支名、工作区脏、`--issue` 冲突）/ 3 gh 或 git 失败 |
 | `review prepare` | 读 PR 的 head / 改动文件 / diff，写审核请求 | `--pr`(必填)、`--issue`、`--root`、`--model`、`--round`、`--out`、`--facts`、`--include` | `runReviewPrepare` | 0 / 2 参数 / 3 读不到 PR 或 diff（gh 失败） |
-| `review prompt` | 由请求 JSON 渲染审核提示词（不发外部命令） | `--request`(必填，无缺省)、`--out`、`--role` | `runReviewPrompt` → `lib/review.mjs` `buildPrompt` | 0 / 2 |
+| `review prompt` | 由请求 JSON 渲染审核提示词（不发外部命令） | `--request`(必填，无缺省)、`--out`、`--role` | `runReviewPrompt` → `lib/review.mjs` `buildPrompt` | 0 / 2 参数或配置 / 3 配置读不出来 |
 | `review publish` | 把判定落成记录；可选发 GitHub review | `--pr`、`--response`(必填)、`--request`、`--round`、`--root`、`--model`、`--provider`、`--form`、`--post-review`、`--dry-run`、`--legacy-exit-codes` | `runReviewPublish` →（复用）`runRecord` + `sendReview` | 0 APPROVE（或带 `--legacy-exit-codes` 的 REJECT）/ 1 REJECT 或 ESCALATE / 2 参数与配置 / 3 发 review 失败 |
 | `record` | 只落盘判定记录（供外部流程使用） | `--request`、`--response`(必填)、`--findings`、`--round`、`--root`、`--model`、`--provider`、`--form`、`--duration-ms`、`--name`、`--json` | `runRecord` | 0 / 1 ESCALATE 或 REJECT（`--legacy-exit-codes` 才 0）/ 2 前置校验 / 3 写盘失败 |
-| `gate` | 审核闸门检查 | `--pr`、`--root`(均必填)、`--record`、`--head-sha`、`--no-review`、`--reason` | `runGate` → `decideGate` → `lib/gate.mjs` | 0 / 1 闸门拒绝 / 2 参数或配置 / 3 环境（读 git HEAD 或写跳过审计失败） |
+| `gate` | 审核闸门检查 | `--pr`、`--root`(均必填)、`--record`、`--head-sha`、`--no-review`、`--reason` | `runGate` → `decideGate` → `lib/gate.mjs` | 0 / 1 闸门拒绝或记录缺失 / 2 参数或配置 / 3 环境（读 git HEAD、读配置、记录读不出来或写跳过审计失败） |
 | `merge` | 闸门通过后 squash 合并并清理现场 | 同 `gate`，另加 `--check-only`、`--checks-file`、`--force` | `runMerge` → `lib/merge.mjs` `runMerge` | 0 / 1 闸门或 CI 拒绝 / 2 用法或配置 / 3 gh、git 等环境失败 |
 | `status` | 审核记录概况 | `--root`（缺省主工作区） | `runStatus` | 0 / 2 参数 / 3 读记录失败 |
 | `doctor` | 多仓「装的共享包是否同一构建」；可选 profile 体检 | `--repo a,b`、`--json`、`--expect <sha>`、`--profile <dir>` | `runDoctor` → `lib/doctor.mjs` / `lib/profile-check.mjs` | 0 / 1 漂移或体检失败 / 2 |
-| `selftest` | 一致性自检（契约 §9） | `--shims`、`--config`、`--lock`、`--peer`、`--exit-codes`、`--fast`、`--repos a,b`、`--json`、`--root`、`--dsh-version` | `runSelftest` → `lib/selftest.mjs` | 0 / 1 检查不通过 / 2 用法（`--peer` 不知道版本也 2）/ 3 读盘失败（`--lock` 的锁文件、`--repos` 的 `build.json`） |
+| `selftest` | 一致性自检（契约 §9） | `--shims`、`--config`、`--lock`、`--peer`、`--exit-codes`、`--fast`、`--repos a,b`、`--json`、`--root`、`--dsh-version` | `runSelftest` → `lib/selftest.mjs` | 0 / 1 检查不通过 / 2 用法（`--peer` 不知道版本也 2）/ 3 读盘失败（`--config` / `--shims` / `--lock` / `--repos` / `--peer` 的文件或目录读不出来） |
 | `lock` | 写入 / 核对 `.dsh/pipeline.lock.json`（契约 §7.2） | `write --root <dir>`、`check --root <dir>` | `runLock` → `lib/lock.mjs` | 0 一致或跳过 / 1 不一致、格式非法或旧版本包 / 2 用法错误或未装包 / 3 读盘或写盘失败 |
 | `shim` | 生成 / 校验入口 shim（契约 §8） | `install [--root] [--force]`、`check [--root]`（同时反向扫描目录里的私有文件） | `runShim` → `lib/shim.mjs` | 0 / 1 冲突、不一致或私有文件 / 2 / 3 无法枚举目录 |
 | `hooks` | 安装 / 校验 pre-push 直推拦截钩子 | `install [--root] [--force] [--allow-main]`、`check [--root]` | `runHooks` → `lib/hooks.mjs` | 0 / 1 未装、不一致、拒绝覆盖 / 2 用法 / 3 git 或读盘失败 |
-| `check-all` | 逐包跑 test / check / typecheck 并汇总 | `--root`、`--packages a,b,c`、`--json` | `runCheckAllCommand` → `lib/check-all.mjs` | 0 / 1 有失败 / 2 / 3 找不到 pnpm |
-| `deploy` | 生成 / 校验 caller workflow 骨架（契约 §10） | `init --root <dir> [--write] [--rollback]`、`check --root <dir>` | `runDeploy` → `lib/deploy.mjs` | 0（含回滚 caller 缺失 / 手写跳过）/ 1 不一致、部署 caller 缺标记或拒绝覆盖 / 2 |
+| `check-all` | 逐包跑 test / check / typecheck 并汇总 | `--root`、`--packages a,b,c`、`--json` | `runCheckAllCommand` → `lib/check-all.mjs` | 0 / 1 有失败 / 2 用法或配置 / 3 找不到 pnpm、读目录或 package.json 失败 |
+| `deploy` | 生成 / 校验 caller workflow 骨架（契约 §10） | `init --root <dir> [--write] [--rollback]`、`check --root <dir>` | `runDeploy` → `lib/deploy.mjs` | 0（含回滚 caller 缺失 / 手写跳过）/ 1 不一致、部署 caller 缺标记或拒绝覆盖 / 2 / 3 读取已有文件失败 |
 
 ### 输出约定（契约 §5）
 
@@ -45,7 +45,7 @@
 | 0 | 成功 | 全部；`record` / `review publish` 的 `REJECT` 只有带 `--legacy-exit-codes` 才退 0 |
 | 1 | 业务拒绝 | `gate`、`merge`（闸门拒绝 / CI 未过）、`record` 与 `review publish` 的 `REJECT` / `ESCALATE`、`doctor` 漂移、`selftest` 不通过、`shim`/`hooks` 不一致或冲突、`check-all` 有失败 |
 | 2 | 用法 / 配置错误 | 全部子命令的参数错误；`merge` 的入参与 `--checks-file` 问题（`E_USAGE` / `E_INPUT` / `E_CONFIG`） |
-| 3 | 环境错误 | 全部命令的 gh / git / 写盘 / 读盘失败与未捕获异常：`check-all` 找不到 pnpm；`review publish --post-review` 的 gh 调用失败；`shim check` 无法枚举目录；`merge` 的 gh / git 失败与写跳过审计失败；`gate` 读 git HEAD；`task` / `pr` 的 git / gh 失败；`status` 读记录、`lock` 写锁、`record` 写盘 |
+| 3 | 环境错误 | 全部命令的 gh / git / 写盘 / 读盘失败与未捕获异常：`check-all` 找不到 pnpm 或读目录失败；`selftest` 各检查项读盘失败；`review publish --post-review` 的 gh 调用失败；`shim check` 无法枚举目录；`merge` 的 gh / git 失败与写跳过审计失败；`gate` 读 git HEAD；`task` / `pr` 的 git / gh 失败；`status` 读记录、`lock` 写锁、`record` 写盘 |
 
 入口 shim **不得改写退出码**，只透传。
 
