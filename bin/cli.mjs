@@ -175,7 +175,7 @@ selftest 用法:
   --repos <a,b,c>    比对多个仓装的共享包是不是同一构建（读各自 build.json 的 gitSha/builtAt）。
                      绝对路径直接用、相对路径按 --root（缺省当前目录）解析、前导 ~/ 展开成家目录；
                      目录不存在或未装包的仓跳过并列出，可比对的仓不足 2 个则跳过退出 0；
-                     build.json 读不出来（权限 / IO）不算跳过，退 3；
+                     装包目录或 build.json 读不出来（权限 / IO）不算跳过，退 3；
                      与 --shims / --config / --lock / --peer / --exit-codes / --fast 互斥
   --json             输出 {"ok":true|false,"root":"…","checks":[{"name":"…","ok":…,"detail":"…"}]}；
                      带 --repos 时改为 {"ok":…,"baseline":"…","repos":[{"path","sha","builtAt","ok"}],"skipped":[{"path","reason","ioError"?}]}
@@ -185,7 +185,7 @@ selftest 用法:
                      dsh.engines.dsh → dsh.compatibility.dsh → @deepseek-ai/dsh* 的 peer 依赖；
                      无声明→跳过(0)；全部覆盖→0；任一不覆盖→1；不知道当前版本→2
   --dsh-version <v>  仅 --peer：当前 DSH 版本（缺省读 <root>/node_modules 或 <root>/tools/node_modules 下的 @deepseek-ai/dsh）
-  退出码: 0 通过（没有配置文件也退 0）/ 1 检查不通过 / 2 用法错误 / 3 读盘失败（--lock 的锁文件、--repos 的 build.json）
+  退出码: 0 通过（没有配置文件也退 0）/ 1 检查不通过 / 2 用法错误 / 3 读盘失败（--lock 的锁文件、--repos 的装包目录或 build.json）
 
 shim 用法:
   dsh-pipeline shim install [--root <dir>] [--force]
@@ -2064,8 +2064,10 @@ function runReposCheck(raw, options, deps, io) {
 
   if (result.ioError) {
     // 读盘失败是环境错误：退 3，不要混进「构建不一致」的 1
-    const bad = result.skipped.filter((item) => item.ioError === true).map((item) => item.path)
-    errorLine(io, 'selftest', 'E_ENV', `读不到已装包的 build.json: ${bad.join(', ')}`)
+    const bad = result.skipped
+      .filter((item) => item.ioError === true)
+      .map((item) => `${item.path}（${item.reason}）`)
+    errorLine(io, 'selftest', 'E_ENV', `读不到装包目录或 build.json: ${bad.join('; ')}`)
     return 3
   }
   if (!result.ok) {
