@@ -204,3 +204,26 @@ test('--check 与 --force 同用退 2', () => {
     cleanup(root)
   }
 })
+
+test('--root 不存在或不是目录退 2，且不创建目录树', () => {
+  const missing = join(tmpdir(), `dsh-init-missing-${process.pid}-${Date.now()}`)
+  const file = join(tmpdir(), `dsh-init-file-${process.pid}-${Date.now()}`)
+  try {
+    const result = run(['init', '--root', missing])
+    assert.equal(result.code, 2)
+    assert.match(result.err, /E_USAGE/)
+    assert.equal(existsSync(missing), false, '不能替调用方创建目录树')
+
+    const checked = run(['init', '--check', '--root', missing])
+    assert.equal(checked.code, 2)
+    assert.equal(existsSync(missing), false)
+
+    writeFileSync(file, 'x')
+    const asFile = run(['init', '--root', file])
+    assert.equal(asFile.code, 2)
+    assert.match(asFile.err, /不是目录/)
+  } finally {
+    rmSync(missing, { recursive: true, force: true })
+    rmSync(file, { force: true })
+  }
+})

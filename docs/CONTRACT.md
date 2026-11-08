@@ -83,7 +83,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | `shim install\|check` | 生成 / 校验入口 shim | 现行 |
 | `hooks install\|check` | 安装 / 校验 pre-push 直推拦截钩子 | 现行 |
 | `deploy init\|check` | 生成 / 校验 caller workflow 骨架：`deploy-web.yml`（生成区 = `name` / `on` / `concurrency` + 单 job 的 `uses`+`with`+`secrets`，`with:` 含按 artifact 推导的 `mode` 与 `assemble`）；`--write --rollback` 连带生成 / 更新 `rollback-web.yml`（`workflow_dispatch` + `rollback.yml` 同一 pin，见 §10）。**回滚文件已是生成物时，只跑 `--write` 也会刷新它**（不用每次记着加 `--rollback`）；它是手写文件时跳过并提示（显式 `--rollback` 才拒绝覆盖）。`check` 逐字节比对：部署 caller 必须存在且一致（缺标记退 1），回滚 caller 是生成物才校验——**不存在或手写（缺标记）都跳过并退 0**（手写时 stderr 提示「要接管请删除它再跑 `deploy init --write --rollback`」），因此 CI 不能强制回滚 caller 被接管；标记之后允许各仓追加自己的后置 job | **现行** |
-| `init` | 新仓库一键接入：生成 `.dsh/pipeline.json` 最小配置（`repo` 从 origin 推导、`checks.packages` 从 `workspaces` 展开）、入口 shim、pre-push 钩子、`docs/pipeline/` 骨架（README + review-loop，生成区用标记包裹、标记外可追加）；`--check` 只读校验四件套，缺项退 1；已存在的配置与无标记文档不覆盖（`--force` 才接管） | **现行** |
+| `init` | 新仓库一键接入：生成 `.dsh/pipeline.json` 最小配置（`repo` 从 origin 推导、`checks.packages` 从 `workspaces` 展开）、入口 shim、pre-push 钩子、`docs/pipeline/` 骨架（README + review-loop，生成区用标记包裹、标记外可追加）；`--check` 只读校验四件套，缺项退 1；已存在的配置与无标记文档不覆盖（`--force` 才接管）；`--root` 不存在或不是目录退 2（不替调用方建目录树） | **现行** |
 
 新增子命令属于**契约变更**，必须同时更新本文件与 §3.3。
 
