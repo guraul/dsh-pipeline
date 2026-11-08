@@ -14,7 +14,7 @@
 | **审核记录** | `<root>/.dsh-web/reviews/<pr>-<head_sha>.json` | `record`、`review publish` | `gate`、`merge`、`status`、`review publish --post-review`（读回） | 否 |
 | 分片记录 | `<root>/.dsh-web/reviews/<name>`（`record --name` 自定义） | `record --name` | 调用方 | 否 |
 | 跳过审计 | `<root>/.dsh-web/reviews/skips/<ts>-<pr>.json` | `gate` / `merge --no-review --reason` | 人（追溯） | 否 |
-| 仓库配置 | `<root>/.dsh/pipeline.json` | 人 / `init`（仅首次生成，已存在不覆盖） | 全部子命令（`loadConfig`） | **是** |
+| 仓库配置 | `<root>/.dsh/pipeline.json` | 人 / `init`（仅首次生成；已存在不覆盖，`--force` 才覆盖） | 全部子命令（`loadConfig`） | **是** |
 | 构建标识 | `<包>/build.json` | `scripts/pack.sh`（打包时写，打包后删） | `doctor`、`selftest --repos`、`--version` | 否 |
 | 打包产物 | `dist/<name>-<ver>.tgz`、`dist/latest.tgz` | `scripts/pack.sh` | 消费仓 `file:` 依赖 | 否 |
 | 入口 shim | `<root>/scripts/pipeline/{pipeline,new-task,open-pr,merge-pr,review,status}.sh` | `shim install` / `init` | 人 / CI | **是** |

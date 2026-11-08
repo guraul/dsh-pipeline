@@ -1895,7 +1895,7 @@ function buildMatchesExpected(actual, expected) {
 }
 
 /**
- * 根目录口径（record / review / selftest / shim / hooks / status 共用）：显式 --root 直接用；
+ * 根目录口径（record / review / selftest / shim / hooks / init / status 共用）：显式 --root 直接用；
  * 缺省先定位主工作区——审核记录与请求只该落在主仓（契约 §6），在 task worktree 里跑也一样，
  * 否则 merge 删掉 worktree 时记录跟着没了；git 定位不到（非仓库 / git 失败）时退回当前目录。
  */

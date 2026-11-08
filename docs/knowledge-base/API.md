@@ -87,7 +87,7 @@ dsh-pipeline deploy check --root <消费仓>
 | `lib/gh.mjs` | `prView`, `prChecks`, `prDiff`, `prMerge`, `prComment`, `prReview`, `prList`, `issueView`, `prViewByBranch`, `prCreate`, `currentUser`, `MERGE_STRATEGY` | gh 具名操作（`currentUser` 供 `review.identity.account` 校验） |
 | `lib/shim.mjs` | `renderShim`, `installShims`, `checkShims`, `SHIM_ENTRIES`, `SHIM_DIR` | 入口生成与比对 |
 | `lib/hooks.mjs` | `renderHook`, `installHook`, `checkHook`, `HOOK_MARKER` | pre-push 钩子 |
-| `lib/selftest.mjs` | `runChecks`, `checkConfig`, `checkShimsEntry`, `checkRepos`, `checkInit`, `DONE_CHECKS`, `PENDING_CHECKS` | 一致性门禁 |
+| `lib/selftest.mjs` | `runChecks`, `checkConfig`, `checkShimsEntry`, `checkRepos`, `checkInit`, `checkExitCodes`, `DONE_CHECKS`, `PENDING_CHECKS` | 一致性门禁 |
 | `lib/init.mjs` | `runInit`, `discoverWorkspacePackages`, `renderConfig`, `installConfig`, `checkConfigFile`, `renderDoc`, `renderDocRegion`, `installDocs`, `checkDocs`, `DOCS_DIR`, `DOC_FILES`, `DOC_REGION_BEGIN`, `DOC_REGION_END` | 一键接入（四件套） |
 | `lib/region.mjs` | `extractRegion`, `replaceRegion`, `firstDifference` | 生成区通用操作（deploy / init 共用） |
 | `lib/check-all.mjs` | `discoverPackages`, `runCheckAll` | 批量检查 |
