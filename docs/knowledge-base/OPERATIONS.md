@@ -1,6 +1,6 @@
 # 构建与运维
 
-**最后更新**：2026-11-08 · 对应提交 `18289d5`
+**最后更新**：2026-11-08 · 对应提交 `cccfe84`
 
 ## 1. 环境变量清单
 
@@ -39,7 +39,7 @@ node bin/cli.mjs --version
 | 夹具 | `test/fixtures/plugin-record.json`（**真实运行产出**，防字段漂移，不要手改） |
 | 特点 | 大量用例注入假 `runner` 断言"实际发出的命令"；`test/contract.test.mjs` 用真实子进程 + 假 gh/git 验证「闸门不通过时一条 gh 命令都不发」；`test/gitignore.test.mjs` 用真实 `git check-ignore` |
 
-按模块看测试分布（同名前缀）：`gate`、`merge`、`policy`、`record`（+ `record-name`）、`review`（+ `review-cmd`）、`roles`、`config`、`task`（+ `task-worktree`）、`pr`、`git`、`gh`、`shim`、`hooks`、`selftest`、`check-all`、`doctor`、`contract`（+ `contract-format`）、`cli`、`post-review`、`gitignore`。
+按模块看测试分布（同名前缀）：`gate`、`merge`、`policy`、`record`（+ `record-name`）、`review`（+ `review-cmd`）、`roles`、`config`、`task`（+ `task-worktree`）、`pr`、`git`、`gh`、`shim`、`hooks`、`selftest`、`init`、`check-all`、`doctor`、`contract`（+ `contract-format`）、`cli`、`post-review`、`gitignore`。
 
 ## 4. 打包（发给消费仓的唯一方式）
 
@@ -96,6 +96,8 @@ node bin/cli.mjs doctor --repo <仓A>,<仓B> --expect <gitSha7>   # 验收：各
 dsh-pipeline deploy init  --root <仓>           # 只打印骨架
 dsh-pipeline deploy init  --root <仓> --write   # 写入 .github/workflows/deploy-web.yml（只替换生成区）
 dsh-pipeline deploy check --root <仓>           # 生成区逐字节比对；不一致打第一处差异并退 1
+dsh-pipeline init --root <仓>                   # 新仓接入：配置 + shim + hooks + docs 骨架（幂等）
+dsh-pipeline init --check --root <仓>           # 只读校验四件套，缺项逐条报并退 1
 ```
 
 前置条件：该仓 `.dsh/pipeline.json` 有 `deploy` 段；且必须在**已安装本包**的环境里跑（`uses` 要 pin `build.json` 的 gitSha，源码运行会退 2）。字段与语义见 `modules/deploy.md`。

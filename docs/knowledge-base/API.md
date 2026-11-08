@@ -1,12 +1,12 @@
 # 接口清单
 
-**最后更新**：2026-11-08 · 对应提交 `18289d5`
+**最后更新**：2026-11-08 · 对应提交 `cccfe84`
 
 本包没有 HTTP 接口。对外接口分两类：**CLI 子命令**（人 / 脚本 / 消费仓 shim 调用）与 **lib 导出**（测试与被后续子命令复用）。规则来源是 `docs/CONTRACT.md` §3–§5。
 
 ## 1. CLI 子命令全集
 
-`dsh-pipeline <子命令> [选项]`；`-h/--help`、`-v/--version` 为全局选项。已实现 14 个，`SUBCOMMANDS` 与 `IMPLEMENTED` 两个集合一致（顶层 `prepare` 占位已删除，调它现在报「未知子命令」退 2）。
+`dsh-pipeline <子命令> [选项]`；`-h/--help`、`-v/--version` 为全局选项。已实现 15 个，`SUBCOMMANDS` 与 `IMPLEMENTED` 两个集合一致（顶层 `prepare` 占位已删除，调它现在报「未知子命令」退 2）。
 
 | 子命令 | 作用 | 关键选项 | 处理函数 | 退出码 |
 |---|---|---|---|---|
@@ -25,6 +25,7 @@
 | `shim` | 生成 / 校验入口 shim（契约 §8） | `install [--root] [--force]`、`check [--root]`（同时反向扫描目录里的私有文件） | `runShim` → `lib/shim.mjs` | 0 / 1 冲突、不一致或私有文件 / 2 / 3 无法枚举目录 |
 | `hooks` | 安装 / 校验 pre-push 直推拦截钩子 | `install [--root] [--force] [--allow-main]`、`check [--root]` | `runHooks` → `lib/hooks.mjs` | 0 / 1 未装、不一致、拒绝覆盖 / 2 用法 / 3 git 或读盘失败 |
 | `check-all` | 逐包跑 test / check / typecheck 并汇总 | `--root`、`--packages a,b,c`、`--json` | `runCheckAllCommand` → `lib/check-all.mjs` | 0 / 1 有失败 / 2 用法或配置 / 3 找不到 pnpm、读目录或 package.json 失败 |
+| `init` | 新仓库一键接入：生成配置 + 入口 shim + pre-push 钩子 + `docs/pipeline` 骨架（契约 §3.2） | `--root`、`--check`、`--force`、`--repo <owner/name>` | `runInitCommand` → `lib/init.mjs` `runInit` | 0 成功或齐备 / 1 缺项、冲突或拒绝覆盖 / 2 用法与配置 / 3 git、读盘或写盘失败 |
 | `deploy` | 生成 / 校验 caller workflow 骨架（契约 §10） | `init --root <dir> [--write] [--rollback]`、`check --root <dir>` | `runDeploy` → `lib/deploy.mjs` | 0（含回滚 caller 缺失 / 手写跳过）/ 1 不一致、部署 caller 缺标记或拒绝覆盖 / 2 / 3 读取已有文件失败 |
 
 ### 输出约定（契约 §5）

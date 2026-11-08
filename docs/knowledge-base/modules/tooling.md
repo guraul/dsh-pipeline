@@ -1,6 +1,6 @@
-# 模块：一致性工具（selftest / shim / hooks / check-all / doctor / build-info）
+# 模块：接入与一致性工具（init / selftest / shim / hooks / check-all / doctor / build-info）
 
-**最后更新**：2026-11-07 · 对应提交 `6c4ed32`
+**最后更新**：2026-11-08 · 对应提交 `cccfe84`
 
 这一组命令的共同点：**只读检查优先、能修才写、判据是"渲染后逐字节比对"而不是"看起来像"**。它们替代了各仓过去手写的 `build-check.sh` / `review-loop-check.sh` 之类脚本。
 
@@ -8,7 +8,9 @@
 
 | 文件 | 职责 |
 |---|---|
-| `lib/selftest.mjs` | `--shims` / `--config` / `--lock` / `--peer` / `--exit-codes`（+ `--repos`）检查实现 |
+| `lib/init.mjs` | `init` 的编排：最小配置、docs 骨架、`--check` 四件套检测（复用 shim / hooks） |
+| `lib/region.mjs` | 生成区通用操作（提取 / 替换 / 首处差异），deploy 与 init 共用 |
+| `lib/selftest.mjs` | `--shims` / `--config` / `--lock` / `--peer` / `--exit-codes` / `--init`（+ `--repos`）检查实现 |
 | `lib/shim.mjs` | 模板渲染（`{{VERSION}}` / `{{CMD}}`）、6 入口定义、`install` 写入判定、`check` 逐字节比对 |
 | `templates/shim.sh` | shim 的唯一模板 |
 | `lib/hooks.mjs` | pre-push 钩子正文（含标记行）、目标路径推算、`install` / `check` |
@@ -55,6 +57,27 @@ dsh-pipeline lock check --root <仓>   # 与 selftest --lock 同一实现
 | 失败 | 旧版本包（无法证明）→ 1；锁与装包不一致 → 1（detail 同时给两边的值）；锁格式非法 → 1 |
 | 路径错 | `--root` 不存在或不是目录 → 退 2（不是静默跳过） |
 | 不手改 | 手工编辑绕过校验；`+dirty` 之类打包态信息不进锁（`formatExpect` 只取 sha7 + builtAt）；锁里写 40 位全 sha 也算格式错 |
+
+## `init`
+
+```bash
+dsh-pipeline init [--root <dir>] [--repo <owner/name>] [--force]
+dsh-pipeline init --check [--root <dir>]
+```
+
+一次生成四件套（契约 §3.2）：
+
+| 项 | 生成 / 校验 |
+|---|---|
+| `.dsh/pipeline.json` | 不存在才写最小配置（`repo` 从 origin 推导、`checks.packages` 从 `workspaces` 展开）；已存在不覆盖，存在但非法退 2 |
+| `scripts/pipeline/*.sh` | 复用 `installShims`（与 `shim install` 同一实现） |
+| pre-push 钩子 | 复用 `installHook`（与 `hooks install` 同一实现） |
+| `docs/pipeline/`（README + review-loop） | 模板在 `templates/pipeline-docs/`，生成区用 HTML 注释标记包裹；标记之外可追加，重跑只替换生成区；无标记的手写文件拒绝覆盖（`--force` 才接管） |
+
+- **幂等**：二次 `init` 不改动任何文件（配置跳过、shim 相同跳过、钩子 unchanged、docs 生成区相同跳过）。
+- **`--check`**：只读，逐项 `✓ / ✗`；缺任一项退 1。与 `selftest --init` 同一判据（`checkInit` 复用 `checkConfigFile` / `checkShims` / `checkHook` / `checkDocs`）。
+- **不并入 `--fast`**：pre-push 只跑 `--shims --config`；消费仓尚未接入 docs 骨架时，不应让 pre-push 因缺它而红。
+- **repo 推导**：`--repo` 优先，其次 `git remote get-url origin`；都拿不到就省略该字段（下游命令需要时自己报错，不猜）。
 
 ## `shim`
 
@@ -153,7 +176,7 @@ dsh-pipeline doctor [--repo a,b] [--json] [--expect <sha>] [--profile <dir>]
 
 ## 依赖
 
-`selftest` → `config` + `shim`；`shim` → `templates/shim.sh` + `record.mjs`（`PACKAGE_VERSION`）；`hooks` → `git.mjs`；`check-all` → `node:child_process`；`doctor` → `build-info` 语义（自己读 JSON）；`profile-check` → `node:child_process`。
+`init` → `shim` + `hooks` + `config` + `region`；`selftest` → `config` + `shim` + `init`；`shim` → `templates/shim.sh` + `record.mjs`（`PACKAGE_VERSION`）；`hooks` → `git.mjs`；`check-all` → `node:child_process`；`doctor` → `build-info` 语义（自己读 JSON）；`profile-check` → `node:child_process`。
 
 ## 修改本模块的注意事项
 
@@ -166,4 +189,4 @@ dsh-pipeline doctor [--repo a,b] [--json] [--expect <sha>] [--profile <dir>]
 
 ## 相关测试
 
-`test/selftest.test.mjs`、`test/shim.test.mjs`、`test/hooks.test.mjs`、`test/check-all.test.mjs`、`test/doctor.test.mjs`、`test/config.test.mjs`、`test/gitignore.test.mjs`。
+`test/init.test.mjs`、`test/selftest.test.mjs`、`test/shim.test.mjs`、`test/hooks.test.mjs`、`test/check-all.test.mjs`、`test/doctor.test.mjs`、`test/config.test.mjs`、`test/gitignore.test.mjs`。

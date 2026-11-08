@@ -24,7 +24,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { discoverPackages, runCheckAll as runCheckAllFlow } from '../lib/check-all.mjs'
-import { loadConfig } from '../lib/config.mjs'
+import { REPO_PATTERN, loadConfig } from '../lib/config.mjs'
 import { isIoError, probePath } from '../lib/fs-probe.mjs'
 import {
   DEPLOY_ROLLBACK_FILE,
@@ -43,6 +43,7 @@ import { verifyDistFreshness } from '../lib/dist-freshness.mjs'
 import { evaluateGate } from '../lib/gate.mjs'
 import { currentUser, issueView, prChecks, prDiff, prMerge, prView } from '../lib/gh.mjs'
 import { checkHook, installHook } from '../lib/hooks.mjs'
+import { runInit as runInitFlow } from '../lib/init.mjs'
 import {
   branchShow,
   checkout,
@@ -108,6 +109,7 @@ const IMPLEMENTED = new Set([
   'doctor',
   'gate',
   'hooks',
+  'init',
   'lock',
   'merge',
   'record',
@@ -132,6 +134,7 @@ const SUBCOMMANDS = [
   'shim',
   'check-all',
   'hooks',
+  'init',
   'deploy',
 ]
 
@@ -152,9 +155,10 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
                      dsh --dump-config 可见性（dsh 不可用时跳过不算失败）、cordis.patch.yml、
                      审核记录目录可写；逐项 ✓/✗，任一 ✗ 退出 1。不给该 flag 则只比构建，
                      行为与现状一致
-  selftest   一致性自检（契约 §9；--shims / --config / --lock / --peer / --exit-codes / --repos 均已实现）
+  selftest   一致性自检（契约 §9；--shims / --config / --lock / --peer / --exit-codes / --init / --repos 均已实现）
   shim       生成 / 校验入口 shim（契约 §8）
   hooks      安装 / 校验 pre-push 直推拦截钩子
+  init       新仓库一键接入：生成配置 + 入口 shim + pre-push 钩子 + docs/pipeline 骨架
   check-all  逐包跑 test / check / typecheck 并汇总（缺 node_modules 跳过不算失败）
   deploy     生成 / 校验部署 caller workflow 骨架（契约 §10）
   lock       写入 / 核对 .dsh/pipeline.lock.json（契约 §7.2）
@@ -163,7 +167,7 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
   review     生成审核请求（prepare）、审核提示词（prompt）并把判定落成记录（publish）
 
 selftest 用法:
-  dsh-pipeline selftest [--shims] [--config] [--lock] [--peer] [--exit-codes] [--fast | --repos <a,b,c>] [--json] [--root <dir>]
+  dsh-pipeline selftest [--shims] [--config] [--lock] [--peer] [--exit-codes] [--init] [--fast | --repos <a,b,c>] [--json] [--root <dir>]
   --shims            6 个入口 == 按当前包版本渲染后的模板（<root>/scripts/pipeline 不存在即失败）
   --config           校验 <root>/.dsh/pipeline.json：能被 schema 接受、没有未声明字段
   --lock             核对装包与 .dsh/pipeline.lock.json 的 expect（契约 §7.2）：一致→0；
@@ -173,11 +177,14 @@ selftest 用法:
                      任一不符退出 1，detail 指出哪条不符
   --fast             等价于 --shims --config（契约 §9 的 pre-push 用法；--lock / --peer / --exit-codes 会被忽略，
                      --repos 与 --fast 互斥、组合即退 2）
+  --init             四件套接入检测（契约 §9）：配置能过 schema、6 个入口与模板一致、
+                     pre-push 钩子已装且可执行、docs/pipeline 生成区一致；缺任一项退 1。
+                     不并入 --fast：消费仓尚未接入时，pre-push 不应因缺 docs 骨架而红
   --repos <a,b,c>    比对多个仓装的共享包是不是同一构建（读各自 build.json 的 gitSha/builtAt）。
                      绝对路径直接用、相对路径按 --root（缺省当前目录）解析、前导 ~/ 展开成家目录；
                      目录不存在或未装包的仓跳过并列出，可比对的仓不足 2 个则跳过退出 0；
                      装包目录或 build.json 读不出来（权限 / IO）不算跳过，退 3；
-                     与 --shims / --config / --lock / --peer / --exit-codes / --fast 互斥
+                     与 --shims / --config / --lock / --peer / --exit-codes / --init / --fast 互斥
   --json             输出 {"ok":true|false,"root":"…","checks":[{"name":"…","ok":…,"detail":"…"}]}；
                      带 --repos 时改为 {"ok":…,"baseline":"…","repos":[{"path","sha","builtAt","ok"}],"skipped":[{"path","reason","ioError"?}]}
                      （退出码与人读模式一致）
@@ -214,6 +221,20 @@ hooks 用法:
   校验已装钩子与本包当前版本生成的内容一致；未装退出 1 并提示 hooks install。
   --root <dir>       仓库根目录（缺省主工作区；git 定位不到时退回当前目录）
   退出码: 0 一致 / 1 未装、不一致或拒绝覆盖 / 2 用法错误 / 3 git 或读盘失败
+
+init 用法:
+  dsh-pipeline init [--root <dir>] [--repo <owner/name>] [--force]
+  一次生成四件套：.dsh/pipeline.json（最小配置：repo 从 origin 推导、checks.packages 从
+  workspaces 展开，无声明时回退子目录发现）、scripts/pipeline 入口 shim、pre-push 钩子、docs/pipeline 骨架。
+  幂等：已存在的配置不覆盖；docs 生成区只替换标记之间、标记外内容原样保留；
+  已存在但缺标记的手写文档拒绝覆盖并退 1（确认后加 --force 接管）。
+  --repo <owner/name>  配置里的 repo（缺省从 origin 远端推导；都拿不到就省略该字段）
+  --force              覆盖已存在的配置与无标记的文档（shim / hooks 的冲突也一并覆盖）
+  dsh-pipeline init --check
+  只读校验四件套：配置能过 schema、6 个入口与模板一致、钩子已装且可执行、docs 生成区一致；
+  缺任一项逐项打印 ✗ 并退 1（不写盘，不能与 --force 同用）。
+  --root <dir>         仓库根目录（缺省主工作区；git 定位不到时退回当前目录）
+  退出码: 0 成功或齐备 / 1 缺项、冲突或拒绝覆盖 / 2 用法与配置错误 / 3 git、读盘或写盘失败
 
 check-all 用法:
   dsh-pipeline check-all [--root <dir>] [--packages a,b,c] [--json]
@@ -686,6 +707,7 @@ const SELFTEST_BOOL_FLAGS = new Set([
   'lock',
   'peer',
   'exit-codes',
+  'init',
 ])
 const SHIM_INSTALL_VALUE_FLAGS = new Set(['root'])
 const SHIM_INSTALL_BOOL_FLAGS = new Set(['force'])
@@ -695,6 +717,8 @@ const HOOKS_INSTALL_VALUE_FLAGS = new Set(['root'])
 const HOOKS_INSTALL_BOOL_FLAGS = new Set(['force', 'allow-main'])
 const HOOKS_CHECK_VALUE_FLAGS = new Set(['root'])
 const HOOKS_CHECK_BOOL_FLAGS = new Set()
+const INIT_VALUE_FLAGS = new Set(['root', 'repo'])
+const INIT_BOOL_FLAGS = new Set(['check', 'force'])
 const LOCK_VALUE_FLAGS = new Set(['root'])
 const LOCK_BOOL_FLAGS = new Set()
 const CHECK_ALL_VALUE_FLAGS = new Set(['root', 'packages'])
@@ -1972,8 +1996,8 @@ function runSelftest(argv, deps, io) {
   // --repos 是独立模式（自己的输出形态与退出码语义），不掺进检查项那一组
   if (options.repos !== undefined) {
     if (!nonEmpty(options.repos)) return argError(io, 'selftest', '--repos 必须是非空的逗号分隔路径')
-    if (options.shims === true || options.config === true || options.fast === true || options.lock === true || options.peer === true || options['exit-codes'] === true) {
-      return argError(io, 'selftest', '--repos 不能与 --shims / --config / --lock / --peer / --exit-codes / --fast 同时使用')
+    if (options.shims === true || options.config === true || options.fast === true || options.lock === true || options.peer === true || options['exit-codes'] === true || options.init === true) {
+      return argError(io, 'selftest', '--repos 不能与 --shims / --config / --lock / --peer / --exit-codes / --init / --fast 同时使用')
     }
     return runReposCheck(String(options.repos), options, deps, io)
   }
@@ -1988,12 +2012,13 @@ function runSelftest(argv, deps, io) {
           ...(options.lock === true ? ['lock'] : []),
           ...(options.peer === true ? ['peer'] : []),
           ...(options['exit-codes'] === true ? ['exit-codes'] : []),
+          ...(options.init === true ? ['init'] : []),
         ]
   if (checks.length === 0) {
     return argError(
       io,
       'selftest',
-      '未指定检查项（当前可用 --shims / --config / --lock / --peer / --exit-codes / --fast / --repos）',
+      '未指定检查项（当前可用 --shims / --config / --lock / --peer / --exit-codes / --init / --fast / --repos）',
     )
   }
 
@@ -2220,6 +2245,52 @@ function runHooks(argv, deps, io) {
  * 自动发现 <root> 下含 package.json 的子目录并按 checks.exclude 过滤。
  * 退出码：0 全部通过（含全跳过）/ 1 有失败 / 2 用法错误 / 3 找不到 pnpm。
  */
+/**
+ * init：新仓库一键接入交付流程（契约 §3.2）。
+ *
+ * 生成 / 校验四件套：`.dsh/pipeline.json`、入口 shim、pre-push 钩子、`docs/pipeline/` 骨架。
+ * 生成逻辑全在 lib/init.mjs（复用 shim / hooks 的既有实现），这里只做参数解析与输出。
+ * 退出码：0 成功或齐备 / 1 缺项、冲突或拒绝覆盖 / 2 用法与配置错误 / 3 git、读盘或写盘失败。
+ */
+function runInitCommand(argv, deps, io) {
+  const parsed = parseArgs(argv, INIT_VALUE_FLAGS, INIT_BOOL_FLAGS)
+  if (parsed.error) return argError(io, 'init', parsed.error)
+  const options = parsed.options
+  if (options.root !== undefined && !nonEmpty(options.root)) {
+    return argError(io, 'init', '--root 必须是非空目录路径')
+  }
+  if (options.check === true && options.force === true) {
+    return argError(io, 'init', '--check 与 --force 不能同时使用（校验不写盘）')
+  }
+  if (options.repo !== undefined && (typeof options.repo !== 'string' || !REPO_PATTERN.test(options.repo))) {
+    return argError(io, 'init', '--repo 必须是 owner/name')
+  }
+  const root = resolveMainWorktreeRoot(options.root, deps)
+  const checking = options.check === true
+  const result = runInitFlow(root, {
+    check: checking,
+    force: options.force === true,
+    repo: options.repo,
+    runner: deps.runner,
+  })
+
+  for (const row of result.rows) {
+    if (checking) {
+      io.out(`${row.status === 'ok' ? '✓' : '✗'} ${row.name}${row.detail ? `: ${row.detail}` : ''}`)
+    } else if (row.status === 'written') {
+      io.out(`写入: ${row.name}（${row.detail}）`)
+    } else {
+      io.out(`跳过: ${row.name}（已存在且一致）`)
+    }
+  }
+  for (const error of result.errors) errorLine(io, 'init', error.code, error.text)
+  if (result.ok) {
+    io.out(checking ? 'init: 四件套齐备' : 'init: 四件套就位（配置 / shim / hooks / docs）')
+    return 0
+  }
+  return result.code
+}
+
 function runCheckAllCommand(argv, deps, io) {
   const parsed = parseArgs(argv, CHECK_ALL_VALUE_FLAGS, CHECK_ALL_BOOL_FLAGS)
   if (parsed.error) return argError(io, 'check-all', parsed.error)
@@ -2725,6 +2796,7 @@ export function runCli(argv, deps = {}) {
     if (first === 'lock') return runLock(rest, deps, io)
     if (first === 'shim') return runShim(rest, deps, io)
     if (first === 'hooks') return runHooks(rest, deps, io)
+    if (first === 'init') return runInitCommand(rest, deps, io)
     if (first === 'check-all') return runCheckAllCommand(rest, deps, io)
     if (first === 'deploy') return runDeploy(rest, deps, io)
     return runStatus(rest, deps, io)

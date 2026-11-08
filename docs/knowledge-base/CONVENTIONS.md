@@ -1,6 +1,6 @@
 # 约定与陷阱
 
-**最后更新**：2026-11-08 · 对应提交 `18289d5`
+**最后更新**：2026-11-08 · 对应提交 `cccfe84`
 
 ## 1. 代码风格与命名
 
@@ -69,6 +69,7 @@
 | `test/fixtures/plugin-record.json` | 手写或"顺手改" | 防漂移测试失效（夹具必须来自真实运行） |
 | `hooks install` 的目标路径 | 改回固定 `.git/hooks` | 设了 `core.hooksPath` 的仓会装到 git 不看的位置，且 `check` 还会报"一致"（假绿） |
 | `deploy-web.yml` 的生成区 | 手改生成区、或改完配置不重跑 `deploy init` | `deploy check` 逐字节比对会红；正确做法是改 `.dsh/pipeline.json` 的 `deploy` 段再 `deploy init --write`（标记之后的追加 job 不会被覆盖） |
+| `docs/pipeline/*.md` 的生成区 | 手改生成区、或改了 `templates/pipeline-docs/` 不重跑 `init` | `init --check` / `selftest --init` 逐字节比对会红；要定制就写在标记之外，或改模板后重跑 `init` |
 | `deploy.yml` 的 `quality_cmd` / `build_cmd` / `assemble` | 删掉默认值 | 不传这三个 input 的老 caller 会当场失败（默认值就是兼容性） |
 | 判断「文件 / 目录存在吗」 | 用 `existsSync` | 它对 `EACCES` / `ELOOP` 等一律返回 `false`，把「读不出来」静默折成「不存在」——该退 3 的环境错误变成跳过。一律用 `lib/fs-probe.mjs` 的 `probePath` / `probeExists`（只把 `ENOENT` / `ENOTDIR` 判 missing） |
 
@@ -91,6 +92,7 @@
 15. **`deploy init` 重跑只替换生成区**：标记之后的追加 job 原样保留；文件里没有成对标记（手写文件）时，**部署 caller** 拒绝覆盖并退 1——这时要先决定是删掉手写文件还是补标记；**回滚 caller** 是手写文件时跳过并提示、退 0（显式 `--rollback` 才拒绝覆盖），因为它是可选的。
 16. **源码运行不能 `deploy init`**：`uses` 必须 pin 安装包 `build.json` 的 `gitSha`，源码目录没有它 → 退 2。别用假 pin 绕（会让 caller 指到不存在的版本）。
 17. **`resolveDeploy` 的 `null` 是「不写这一行」**：可选项没配就不写进 caller，交给 `deploy.yml` 的默认值；写成空串会把默认值顶掉。
+18. **`init` 幂等的边界**：配置「已存在就不覆盖」，docs「只换生成区」，两者都不碰标记外的手写内容；无标记的 `docs/pipeline/*.md` 视为手写文件，`init` 退 1、`--force` 才接管。
 
 ## 6. 文档与注释的维护约定
 

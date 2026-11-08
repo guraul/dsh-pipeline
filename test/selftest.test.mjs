@@ -406,12 +406,12 @@ test('selftest --repos：与其它检查项互斥 → 2', (t) => {
   makeRepo(base, 'a')
   makeRepo(base, 'b')
 
-  for (const flag of ['--shims', '--config', '--lock', '--peer', '--exit-codes', '--fast']) {
+  for (const flag of ['--shims', '--config', '--lock', '--peer', '--exit-codes', '--init', '--fast']) {
     const result = run(['selftest', '--repos', 'a,b', flag, '--root', base])
     assert.equal(result.code, 2, `${flag} 应退 2`)
     assert.match(
       result.err,
-      /--repos 不能与 --shims \/ --config \/ --lock \/ --peer \/ --exit-codes \/ --fast 同时使用/,
+      /--repos 不能与 --shims \/ --config \/ --lock \/ --peer \/ --exit-codes \/ --init \/ --fast 同时使用/,
     )
     assert.equal(result.out, '')
   }
