@@ -365,7 +365,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | `--lock` | 安装的构建 == `pipeline.lock.json` 的 `expect`（读锁 → 读装包 `build.json` → 比对；锁不存在 / 未装包跳过，旧版本包或不一致失败，见 §7.2；锁文件或 `build.json` 读不出来退 **3**） | 退出 1（读盘失败 3） |
 | `--peer` | 各包的 DSH 版本声明覆盖当前版本（静态比较）：按优先级取 `engines.dsh` → `dsh.engines.dsh` → `dsh.compatibility.dsh` → `@deepseek-ai/dsh*` peer；版本用 `--dsh-version` 或仓内装包；无声明跳过、不知道版本退 2 | 退出 1 |
 | `--exit-codes` | 退出码口径自检：起子进程真跑七条用例——APPROVE 记录过闸门→0；REJECT 记录过闸门、按旧规则审的记录（`E_POLICY_VERSION`）→1；缺必填参数/未知参数/未知子命令→2；入口找不到共享包→3（并断言输出里出现「找不到共享包」）；cwd 钉在临时目录、只有环境错误那条注入 `DSH_PIPELINE_HOME`；任一不符即失败并点名用例 | 退出 1 |
-| `--repos` | 多个仓装的共享包是不是同一构建（读各自 `tools/node_modules/dsh-pipeline/build.json` 的 `gitSha`/`builtAt`，比对 `gitSha`；目录不存在 / 未装包的仓跳过并列出，可比对的仓不足 2 个则跳过退 0；`--json` 给 `{ok,baseline,repos,skipped}`） | 退出 1 |
+| `--repos` | 多个仓装的共享包是不是同一构建（读各自 `tools/node_modules/dsh-pipeline/build.json` 的 `gitSha`/`builtAt`，比对 `gitSha`；目录不存在 / 未装包的仓跳过并列出，可比对的仓不足 2 个则跳过退 0；`build.json` 读不出来退 **3**；`--json` 给 `{ok,baseline,repos,skipped}`） | 退出 1（读盘失败 3） |
 | `--fast` | 只跑 `--shims --config`（pre-push 用，<2 秒） | 退出 1 |
 
 `doctor` 的多仓比对属于本机检查，不进 CI（CI 没有兄弟仓）。

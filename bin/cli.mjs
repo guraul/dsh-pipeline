@@ -185,7 +185,7 @@ selftest 用法:
                      dsh.engines.dsh → dsh.compatibility.dsh → @deepseek-ai/dsh* 的 peer 依赖；
                      无声明→跳过(0)；全部覆盖→0；任一不覆盖→1；不知道当前版本→2
   --dsh-version <v>  仅 --peer：当前 DSH 版本（缺省读 <root>/node_modules 或 <root>/tools/node_modules 下的 @deepseek-ai/dsh）
-  退出码: 0 通过（没有配置文件也退 0）/ 1 检查不通过 / 2 用法错误 / 3 读盘失败（--lock 的锁或 build.json 读不出来）
+  退出码: 0 通过（没有配置文件也退 0）/ 1 检查不通过 / 2 用法错误 / 3 读盘失败（--lock 的锁文件、--repos 的 build.json）
 
 shim 用法:
   dsh-pipeline shim install [--root <dir>] [--force]
@@ -2058,7 +2058,7 @@ function runReposCheck(raw, options, deps, io) {
   } else {
     for (const repo of result.repos) io.out(`${repo.path}\t${repo.sha.slice(0, 7)} ${repo.builtAt}`)
     for (const skip of result.skipped) io.out(`${skip.path}\t跳过（${skip.reason}）`)
-    if (!result.enough) io.out('跳过（可比对的仓不足 2 个）')
+    if (!result.enough && !result.ioError) io.out('跳过（可比对的仓不足 2 个）')
     else if (result.ok) io.out(`构建一致：${result.repos.length} 个仓`)
   }
 

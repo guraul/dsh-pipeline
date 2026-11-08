@@ -20,7 +20,7 @@
 | `merge` | 闸门通过后 squash 合并并清理现场 | 同 `gate`，另加 `--check-only`、`--checks-file`、`--force` | `runMerge` → `lib/merge.mjs` `runMerge` | 0 / 1 闸门或 CI 拒绝 / 2 用法或配置 / 3 gh、git 等环境失败 |
 | `status` | 审核记录概况 | `--root`（缺省主工作区） | `runStatus` | 0 / 2 参数 / 3 读记录失败 |
 | `doctor` | 多仓「装的共享包是否同一构建」；可选 profile 体检 | `--repo a,b`、`--json`、`--expect <sha>`、`--profile <dir>` | `runDoctor` → `lib/doctor.mjs` / `lib/profile-check.mjs` | 0 / 1 漂移或体检失败 / 2 |
-| `selftest` | 一致性自检（契约 §9） | `--shims`、`--config`、`--lock`、`--peer`、`--exit-codes`、`--fast`、`--repos a,b`、`--json`、`--root`、`--dsh-version` | `runSelftest` → `lib/selftest.mjs` | 0 / 1 检查不通过 / 2 用法（`--peer` 不知道版本也 2）/ 3 读盘失败（`--lock` 的 `E_IO`） |
+| `selftest` | 一致性自检（契约 §9） | `--shims`、`--config`、`--lock`、`--peer`、`--exit-codes`、`--fast`、`--repos a,b`、`--json`、`--root`、`--dsh-version` | `runSelftest` → `lib/selftest.mjs` | 0 / 1 检查不通过 / 2 用法（`--peer` 不知道版本也 2）/ 3 读盘失败（`--lock` 的锁文件、`--repos` 的 `build.json`） |
 | `lock` | 写入 / 核对 `.dsh/pipeline.lock.json`（契约 §7.2） | `write --root <dir>`、`check --root <dir>` | `runLock` → `lib/lock.mjs` | 0 一致或跳过 / 1 不一致、格式非法或旧版本包 / 2 用法错误或未装包 / 3 读盘或写盘失败 |
 | `shim` | 生成 / 校验入口 shim（契约 §8） | `install [--root] [--force]`、`check [--root]`（同时反向扫描目录里的私有文件） | `runShim` → `lib/shim.mjs` | 0 / 1 冲突、不一致或私有文件 / 2 / 3 无法枚举目录 |
 | `hooks` | 安装 / 校验 pre-push 直推拦截钩子 | `install [--root] [--force] [--allow-main]`、`check [--root]` | `runHooks` → `lib/hooks.mjs` | 0 / 1 未装、不一致、拒绝覆盖 / 2 用法 / 3 git 或读盘失败 |
