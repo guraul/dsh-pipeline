@@ -330,3 +330,24 @@ test('selftest --lock：锁文件读不出来 → 退 3（与 lock check 同口�
   assert.equal(result.code, 3)
   assert.match(result.err, /dsh-pipeline: selftest: E_ENV: /)
 })
+
+test('lock check：装包目录不可读（目录级 EACCES）→ 退 3，不静默跳过', (t) => {
+  if (process.getuid?.() === 0) return t.skip('root 不受权限位限制')
+  const root = makeRepo()
+  const pkgDir = join(root, 'tools', 'node_modules', 'dsh-pipeline')
+  chmodSync(pkgDir, 0o000)
+  t.after(() => {
+    try {
+      chmodSync(pkgDir, 0o755)
+    } catch {
+      // 已清理就跳过
+    }
+    rmSync(root, { recursive: true, force: true })
+  })
+  mkdirSync(join(root, '.dsh'), { recursive: true })
+  writeFileSync(join(root, '.dsh', 'pipeline.lock.json'), JSON.stringify({ expect: EXPECT }))
+
+  const result = run(['lock', 'check', '--root', root])
+  assert.equal(result.code, 3)
+  assert.match(result.err, /dsh-pipeline: lock: E_ENV: /)
+})
