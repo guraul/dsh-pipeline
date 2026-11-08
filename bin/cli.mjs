@@ -9,7 +9,7 @@
  * review 的 publish 复用 runRecord（与 record 同一条落盘路径），prepare 只编排 gh 读取，
  * --post-review 在落盘成功后把判定发成 GitHub review（幂等，见 sendReview），
  * prompt 只读请求文件与配置（取 review.tier）并复用 buildPrompt（不发外部命令、不写请求）；
- * selftest 只做参数编排与输出，检查逻辑在 lib/selftest.mjs（契约 §9，检查项已全部实现：--shims / --config / --lock / --peer / --exit-codes / --fast / --repos）；
+ * selftest 只做参数编排与输出，检查逻辑在 lib/selftest.mjs（契约 §9，检查项已全部实现：--shims / --config / --lock / --peer / --exit-codes / --init / --fast / --repos）；
  * shim 的渲染 / 写入 / 比对全在 lib/shim.mjs（契约 §8），这里只做动作与参数解析；
  * check-all 的逐包执行与汇总在 lib/check-all.mjs，这里只做包发现与参数解析；
  * deploy 的骨架渲染、生成区提取与逐字节比对全在 lib/deploy.mjs（契约 §10），这里只做动作与参数解析。

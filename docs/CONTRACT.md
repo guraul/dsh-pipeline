@@ -60,7 +60,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 关于 `-C/--root`：包侧只认 `--root <dir>`（`parseArgs` 拒绝非 `--` 形式的位置参数）。**由 shim 负责把 `-C <dir>` 翻译成 `--root <dir>`**，包本身不解析 `-C`。
 
-各子命令的 `--root` 缺省值（**现行**）：`pr` 取当前任务 worktree（提交必须落在被审分支上）；`record` / `review` / `selftest` / `shim` / `hooks` / `status` 缺省定位**主工作区**（同一实现 `resolveMainWorktreeRoot`，见 §6）；`merge` / `gate` **必填** `--root`。`doctor` / `check-all` 按当前目录。
+各子命令的 `--root` 缺省值（**现行**）：`pr` 取当前任务 worktree（提交必须落在被审分支上）；`record` / `review` / `selftest` / `shim` / `hooks` / `init` / `status` 缺省定位**主工作区**（同一实现 `resolveMainWorktreeRoot`，见 §6）；`merge` / `gate` **必填** `--root`。`doctor` / `check-all` 按当前目录。
 
 ### 3.2 包子命令全集
 
@@ -77,7 +77,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | `merge` | 闸门通过后 squash 合并 + 清理 worktree/分支 + 快进 main；`--review-record` 是 `--record` 的兼容别名（旧写法，后续将弃用；两者取值不同则报错） | 现行 |
 | `status` | 审核记录概况，含仓库概览（root/branch/head/worktrees；git 取不到时该段只提示，不影响退出码） | 现行 |
 | `doctor` | 检查仓库装的共享包是否同一构建；`--profile <dir>` 可选：体检 profile 包声明、插件软链有效性、`dsh --dump-config` 可见性（dsh 不可用时跳过）、审核记录目录可写，另含原 review-loop-check.sh 没有的 `cordis.patch.yml` 非空与目录/DSH_HOME 报告两项 | 现行 |
-| `selftest` | 一致性自检（见 §9）：`--shims` / `--config` / `--lock` / `--peer` / `--exit-codes` / `--fast` / `--repos` 全部可用 | 现行 |
+| `selftest` | 一致性自检（见 §9）：`--shims` / `--config` / `--lock` / `--peer` / `--exit-codes` / `--init` / `--fast` / `--repos` 全部可用 | 现行 |
 | `lock write\|check` | 写入 / 核对 `.dsh/pipeline.lock.json`（见 §7.2）；`write` 从装包 `build.json` 取标识，`check` 与 `selftest --lock` 同一实现 | 现行 |
 | `check-all` | 按配置逐包跑声明的检查并汇总 | 现行 |
 | `shim install\|check` | 生成 / 校验入口 shim | 现行 |
@@ -89,7 +89,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 ### 3.3 实现状态（v1.2 校正，2026-11-06）
 
-**已实现**：`task` / `pr` / `review prepare|prompt|publish`（含 `--post-review`）/ `record` / `gate` / `merge` / `status` / `doctor`（含 `--profile`）/ `selftest`（`--shims` / `--config` / `--lock` / `--peer` / `--exit-codes` / `--fast` / `--repos`）/ `lock write|check` / `shim install|check` / `hooks install|check` / `check-all` / `deploy init|check`（`artifact` 支持 `static-dir` 与 `node-standalone`）/ `init`（`--check` / `--force`）。
+**已实现**：`task` / `pr` / `review prepare|prompt|publish`（含 `--post-review`）/ `record` / `gate` / `merge` / `status` / `doctor`（含 `--profile`）/ `selftest`（`--shims` / `--config` / `--lock` / `--peer` / `--exit-codes` / `--init` / `--fast` / `--repos`）/ `lock write|check` / `shim install|check` / `hooks install|check` / `check-all` / `deploy init|check`（`artifact` 支持 `static-dir` 与 `node-standalone`）/ `init`（`--check` / `--force`）。
 
 **配置字段（已进 schema）**：`worktreesDir` 由 `task` 消费——缺省读配置、`--worktrees-dir` 优先；`checks` 由 `check-all` 消费——`--packages` 优先，其次 `checks.packages`（按给定顺序），再否则自动发现并按 `checks.exclude` 过滤；`deploy` 由 `deploy init|check` 消费（字段见 §7.1，部署行为见 §10）；`review` 段的 `tier` / `postReview` / `identity` / `rounds` 全部进 schema 并被消费（见 §7.3）。
 
@@ -133,7 +133,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | 错误行 | stderr，`dsh-pipeline: <子命令>: <错误码>: <说明>` | 同 |
 | 机器模式 | `--json` 输出一个 JSON 对象 | 同 |
 
-**阶段的划分**（契约 §5 的状态行）：`审核` = `review prepare` / `review prompt` / `review publish` / `record` / `gate`；`合并` = `merge`（其进度行 `repo:` / `head:` / `gate:` / `ci:` / `merge:` / `worktree:` / `fetch:` / `ff:` / `branch:` 本身就是阶段式）；`构建` = `deploy init` / `deploy check`。其余命令（`task` / `pr` / `shim` / `hooks` / `lock` / `selftest` / `check-all` / `doctor` / `status`）不在这三个阶段里，保留子命令前缀。
+**阶段的划分**（契约 §5 的状态行）：`审核` = `review prepare` / `review prompt` / `review publish` / `record` / `gate`；`合并` = `merge`（其进度行 `repo:` / `head:` / `gate:` / `ci:` / `merge:` / `worktree:` / `fetch:` / `ff:` / `branch:` 本身就是阶段式）；`构建` = `deploy init` / `deploy check`。其余命令（`task` / `pr` / `shim` / `hooks` / `init` / `lock` / `selftest` / `check-all` / `doctor` / `status`）不在这三个阶段里，保留子命令前缀。
 
 **错误码**只有 6 个（`argError` / `errorLine` 两个出口统一渲染，见 §5 的错误行）：
 
@@ -367,7 +367,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | `--peer` | 各包的 DSH 版本声明覆盖当前版本（静态比较；`package.json` 读不出来退 **3**）：按优先级取 `engines.dsh` → `dsh.engines.dsh` → `dsh.compatibility.dsh` → `@deepseek-ai/dsh*` peer；版本用 `--dsh-version` 或仓内装包；无声明跳过、不知道版本退 2 | 退出 1（读盘失败 3） |
 | `--exit-codes` | 退出码口径自检：起子进程真跑七条用例——APPROVE 记录过闸门→0；REJECT 记录过闸门、按旧规则审的记录（`E_POLICY_VERSION`）→1；缺必填参数/未知参数/未知子命令→2；入口找不到共享包→3（并断言输出里出现「找不到共享包」）；cwd 钉在临时目录、只有环境错误那条注入 `DSH_PIPELINE_HOME`；任一不符即失败并点名用例 | 退出 1 |
 | `--repos` | 多个仓装的共享包是不是同一构建（读各自 `tools/node_modules/dsh-pipeline/build.json` 的 `gitSha`/`builtAt`，比对 `gitSha`；目录不存在 / 未装包的仓跳过并列出，可比对的仓不足 2 个则跳过退 0；装包目录或 `build.json` 读不出来退 **3**（未知 errno 同样按环境错误）；`--json` 给 `{ok,baseline,repos,skipped}`） | 退出 1（读盘失败 3） |
-| `--init` | 四件套接入检测：配置可过 schema、6 个入口与模板一致、pre-push 钩子已装且可执行、`docs/pipeline` 生成区一致（与 `init --check` 同一判据）；**不并入 `--fast`**——消费仓尚未接入时，pre-push 不应因缺 docs 骨架而红 | 退出 1 |
+| `--init` | 四件套接入检测：配置可过 schema、6 个入口与模板一致、pre-push 钩子已装且可执行、`docs/pipeline` 生成区一致（与 `init --check` 同一判据）；**不并入 `--fast`**——消费仓尚未接入时，pre-push 不应因缺 docs 骨架而红 | 退出 1（读盘失败 3） |
 | `--fast` | 只跑 `--shims --config`（pre-push 用，<2 秒） | 退出 1 |
 
 `doctor` 的多仓比对属于本机检查，不进 CI（CI 没有兄弟仓）。
