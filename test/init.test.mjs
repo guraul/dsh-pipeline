@@ -227,3 +227,54 @@ test('--root 不存在或不是目录退 2，且不创建目录树', () => {
     rmSync(file, { force: true })
   }
 })
+
+test('预演失败时一项都不写（配置非法）', () => {
+  const root = makeRepo()
+  try {
+    mkdirSync(join(root, '.dsh'), { recursive: true })
+    writeFileSync(join(root, '.dsh', 'pipeline.json'), '{ 坏 JSON\n')
+
+    const result = run(['init', '--root', root])
+    assert.equal(result.code, 2)
+    assert.match(result.err, /E_CONFIG/)
+    assert.equal(existsSync(join(root, SHIM_DIR)), false, '配置非法时不该写 shim')
+    assert.equal(existsSync(join(root, DOCS_DIR)), false, '配置非法时不该写 docs')
+    assert.equal(existsSync(join(root, '.git', 'hooks', 'pre-push')), false, '配置非法时不该装钩子')
+  } finally {
+    cleanup(root)
+  }
+})
+
+test('预演失败时一项都不写（shim 冲突）', () => {
+  const root = makeRepo()
+  try {
+    mkdirSync(join(root, SHIM_DIR), { recursive: true })
+    writeFileSync(join(root, SHIM_DIR, 'pipeline.sh'), '#!/bin/sh\necho hand-written\n')
+
+    const result = run(['init', '--root', root])
+    assert.equal(result.code, 1)
+    assert.match(result.err, /E_STATE/)
+    assert.equal(existsSync(join(root, '.dsh', 'pipeline.json')), false, 'shim 冲突时不该写配置')
+    assert.equal(existsSync(join(root, '.git', 'hooks', 'pre-push')), false, 'shim 冲突时不该装钩子')
+    assert.equal(existsSync(join(root, DOCS_DIR)), false, 'shim 冲突时不该写 docs')
+  } finally {
+    cleanup(root)
+  }
+})
+
+test('预演失败时一项都不写（钩子冲突）', () => {
+  const root = makeRepo()
+  try {
+    mkdirSync(join(root, '.git', 'hooks'), { recursive: true })
+    writeFileSync(join(root, '.git', 'hooks', 'pre-push'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+
+    const result = run(['init', '--root', root])
+    assert.equal(result.code, 1)
+    assert.match(result.err, /E_STATE/)
+    assert.equal(existsSync(join(root, '.dsh', 'pipeline.json')), false, '钩子冲突时不该写配置')
+    assert.equal(existsSync(join(root, SHIM_DIR)), false, '钩子冲突时不该写 shim')
+    assert.equal(existsSync(join(root, DOCS_DIR)), false, '钩子冲突时不该写 docs')
+  } finally {
+    cleanup(root)
+  }
+})

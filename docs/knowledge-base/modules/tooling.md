@@ -79,6 +79,7 @@ dsh-pipeline init --check [--root <dir>]
 - **`--check`**：只读，逐项 `✓ / ✗`；缺任一项退 1。与 `selftest --init` 同一判据（`checkInit` 复用 `checkConfigFile` / `checkShims` / `checkHook` / `checkDocs`）。
 - **不并入 `--fast`**：pre-push 只跑 `--shims --config`；消费仓尚未接入 docs 骨架时，不应让 pre-push 因缺它而红。
 - **repo 推导**：`--repo` 优先，其次 `git remote get-url origin`；都拿不到就省略该字段（下游命令需要时自己报错，不猜）。
+- **两段式**：先对四项做只判定的预演（各 install 的 `dryRun`），任一项不通过就一个文件都不写——避免「配置失败但 shim / hooks 已落盘」的半写状态。
 
 ## `shim`
 
