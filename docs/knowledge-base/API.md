@@ -1,6 +1,6 @@
 # 接口清单
 
-**最后更新**：2026-11-08 · 对应提交 `cccfe84`
+**最后更新**：2026-11-08 · 对应提交 `211e83c`
 
 本包没有 HTTP 接口。对外接口分两类：**CLI 子命令**（人 / 脚本 / 消费仓 shim 调用）与 **lib 导出**（测试与被后续子命令复用）。规则来源是 `docs/CONTRACT.md` §3–§5。
 
@@ -87,7 +87,9 @@ dsh-pipeline deploy check --root <消费仓>
 | `lib/gh.mjs` | `prView`, `prChecks`, `prDiff`, `prMerge`, `prComment`, `prReview`, `prList`, `issueView`, `prViewByBranch`, `prCreate`, `currentUser`, `MERGE_STRATEGY` | gh 具名操作（`currentUser` 供 `review.identity.account` 校验） |
 | `lib/shim.mjs` | `renderShim`, `installShims`, `checkShims`, `SHIM_ENTRIES`, `SHIM_DIR` | 入口生成与比对 |
 | `lib/hooks.mjs` | `renderHook`, `installHook`, `checkHook`, `HOOK_MARKER` | pre-push 钩子 |
-| `lib/selftest.mjs` | `runChecks`, `checkConfig`, `checkShimsEntry`, `checkRepos`, `DONE_CHECKS`, `PENDING_CHECKS` | 一致性门禁 |
+| `lib/selftest.mjs` | `runChecks`, `checkConfig`, `checkShimsEntry`, `checkRepos`, `checkInit`, `DONE_CHECKS`, `PENDING_CHECKS` | 一致性门禁 |
+| `lib/init.mjs` | `runInit`, `discoverWorkspacePackages`, `renderConfig`, `installConfig`, `checkConfigFile`, `renderDoc`, `renderDocRegion`, `installDocs`, `checkDocs`, `DOCS_DIR`, `DOC_FILES`, `DOC_REGION_BEGIN`, `DOC_REGION_END` | 一键接入（四件套） |
+| `lib/region.mjs` | `extractRegion`, `replaceRegion`, `firstDifference` | 生成区通用操作（deploy / init 共用） |
 | `lib/check-all.mjs` | `discoverPackages`, `runCheckAll` | 批量检查 |
 | `lib/doctor.mjs` | `inspectRepo`, `describeRow`, `diagnose` | 构建一致性 |
 | `lib/lock.mjs` | `readLock`, `writeLock`, `checkLock`, `readInstalledBuild`, `formatExpect`, `LOCK_PATH`, `LockError` | 锁文件（§7.2） |

@@ -175,7 +175,7 @@ selftest 用法:
   --exit-codes       退出码口径自检（契约 §4）：起子进程真跑七条用例——成功 0 / 业务拒绝 1 /
                      用法错误 2（缺参、未知参数、未知子命令）/ 环境错误 3（入口找不到共享包）；
                      任一不符退出 1，detail 指出哪条不符
-  --fast             等价于 --shims --config（契约 §9 的 pre-push 用法；--lock / --peer / --exit-codes 会被忽略，
+  --fast             等价于 --shims --config（契约 §9 的 pre-push 用法；--lock / --peer / --exit-codes / --init 会被忽略，
                      --repos 与 --fast 互斥、组合即退 2）
   --init             四件套接入检测（契约 §9）：配置能过 schema、6 个入口与模板一致、
                      pre-push 钩子已装且可执行、docs/pipeline 生成区一致；缺任一项退 1。
@@ -2241,12 +2241,6 @@ function runHooks(argv, deps, io) {
 }
 
 /**
- * check-all：参数编排与输出，逐包执行逻辑在 lib/check-all.mjs（串行，失败不中断）。
- * 包来源：--packages 显式指定 > 配置 checks.packages（按给定顺序）>
- * 自动发现 <root> 下含 package.json 的子目录并按 checks.exclude 过滤。
- * 退出码：0 全部通过（含全跳过）/ 1 有失败 / 2 用法错误 / 3 找不到 pnpm。
- */
-/**
  * init：新仓库一键接入交付流程（契约 §3.2）。
  *
  * 生成 / 校验四件套：`.dsh/pipeline.json`、入口 shim、pre-push 钩子、`docs/pipeline/` 骨架。
@@ -2300,6 +2294,12 @@ function runInitCommand(argv, deps, io) {
   return result.code
 }
 
+/**
+ * check-all：参数编排与输出，逐包执行逻辑在 lib/check-all.mjs（串行，失败不中断）。
+ * 包来源：--packages 显式指定 > 配置 checks.packages（按给定顺序）>
+ * 自动发现 <root> 下含 package.json 的子目录并按 checks.exclude 过滤。
+ * 退出码：0 全部通过（含全跳过）/ 1 有失败 / 2 用法错误 / 3 找不到 pnpm。
+ */
 function runCheckAllCommand(argv, deps, io) {
   const parsed = parseArgs(argv, CHECK_ALL_VALUE_FLAGS, CHECK_ALL_BOOL_FLAGS)
   if (parsed.error) return argError(io, 'check-all', parsed.error)
