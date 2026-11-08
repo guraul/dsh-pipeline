@@ -348,3 +348,22 @@ test('record：--findings 不可读 → 退 3（不存在才是 2）', (t) => {
   assert.equal(result.code, 3)
   assert.match(result.err, /dsh-pipeline: record: E_ENV: /)
 })
+
+test('record：--findings 不存在 → 仍退 2（参数错误）', (t) => {
+  const root = tmp()
+  const request = join(root, 'request.json')
+  writeFileSync(request, JSON.stringify({ pr: 7, nonce: 'ABCDEFGHJKLM', head_sha: 'a'.repeat(40) }), 'utf8')
+  const response = join(root, 'response.txt')
+  writeFileSync(response, 'VERDICT: APPROVE\n', 'utf8')
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+
+  const result = run([
+    'record',
+    '--request', request,
+    '--response', response,
+    '--findings', join(root, 'nope.json'),
+    '--root', root,
+  ])
+  assert.equal(result.code, 2)
+  assert.match(result.err, /dsh-pipeline: record: E_USAGE: /)
+})
