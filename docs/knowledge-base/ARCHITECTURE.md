@@ -175,7 +175,7 @@ diff 里出现 nonce？     → 视为注入，E_PARSE
 findings 只取判定行之前的 ```json 块（之后的示例块不看）
 ```
 
-解析失败**不阻断落盘**：`record` 写一条 `ESCALATE` + `errorCode=E_PARSE`，退出 1，审计轨迹不丢。唯一例外是写盘自身失败（退 2）。
+解析失败**不阻断落盘**：`record` 写一条 `ESCALATE` + `errorCode=E_PARSE`，退出 1，审计轨迹不丢。唯一例外是写盘自身失败（退 3，环境错误）。
 
 ## 6. 幂等与副作用
 

@@ -111,7 +111,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 **迁移开关 `--legacy-exit-codes`（现行，切换完成后删除）**：带它时 `REJECT` 退回 **0**，给还没改 `set -e` 脚本的调用方留过渡期；其余判定不变。
 
-**例外：`--post-review`** 的退出码反映「review 是否发出」（成功 0 / 配置错误 2 / gh 失败 3），不反映判定——`REJECT` 的 review 照常发出，判定看记录。**记录没写成（退 2）时不发送**：没有记录就没有可追溯的判定。
+**例外：`--post-review`** 的退出码反映「review 是否发出」（成功 0 / 配置错误 2 / gh 失败 3），不反映判定——`REJECT` 的 review 照常发出，判定看记录。**记录没写成时不发送**：前置校验失败退 2、写盘失败退 3，两种都不发 review——没有记录就没有可追溯的判定。
 
 **例外：dist 新鲜度校验（`lib/dist-freshness.mjs`，2026-11-07 起）**：CLI 启动时比对装包 `build.json.sourceHash` 与源码重算值，不一致（源码改了却没重新 `pnpm pack`）→ stderr 打印原因并**退 1**；设 `DSH_PIPELINE_ALLOW_STALE=1` 临时放行。没有 `build.json`（源码运行）、源码 checkout 已删除、旧版打包缺字段 → 静默跳过，不影响任何命令。
 
@@ -196,7 +196,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
     "postReview": true,               // 可选布尔，缺省 false；true = review publish 默认发送（等价每次带 --post-review）
     "identity": {                     // 可选对象；发 review 用的身份
       "ghConfigDir": "~/.config/gh-reviewer", // 可选；展开 ~ 后作为 GH_CONFIG_DIR 传给 gh
-      "account": "guraul-review"      // 可选；发请求前用 gh api user 校验登录名，不一致退 2
+      "account": "guraul-review"      // 可选；发请求前用 gh api user 校验登录名，不一致退 1（记录已落盘，review 未发出）
     },
     "rounds": 3                       // 可选；1..3 的整数，缺省 3；只能把上限往下收（记录层最大就是 3）
   }
@@ -280,7 +280,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 - `review prompt` 按档改「输出要求」第 0.1 条：`inline` 明确「没有工具权限，下面的材料就是全部依据」，并写明「只对材料里的必答问题负责，答不了才 `ESCALATE`，其余细节标『未核验』不影响判定」；`tools` 保留原文，要求把实际核验方式写进 `evidence`。两档共用第 4–8 条（`ESCALATE` 判据、建议上限与去向、不重复、APPROVE 不提建议、超限合并）。
 - **如实标注**：`tools` 档在 codebuddy 下**不是硬只读**——该产品没有「只读 + 工具」档位，审核方仍可能写入。兜底靠任务书写明边界 + 事后 `git status` + 闸门的 SHA 比对；记录与汇报里**不得**写成「只读审核」。
 - 选档看材料能否自证，不按改动大小拍脑袋：纯配置 / 纯文档且 diff 自包含用 `inline`；行为改动、跨文件改动，或 PR 里出现「我跑过 / 我验证过」这类需要复核的断言用 `tools`。
-- **身份**：`review.identity.ghConfigDir` 在发 review 前设为 `GH_CONFIG_DIR`（`~` 会展开），命令结束后还原；`review.identity.account` 非空时先用 `gh api user --jq .login` 校验，不一致退 2 且不发送（记录已落盘）。
+- **身份**：`review.identity.ghConfigDir` 在发 review 前设为 `GH_CONFIG_DIR`（`~` 会展开），命令结束后还原；`review.identity.account` 非空时先用 `gh api user --jq .login` 校验，不一致退 1 且不发送（记录已落盘）。
 - **轮次上限**：`review.rounds`（1..3，缺省 3）同时约束 `record` / `review prepare` / `review publish` 的 `--round`、`review publish` 请求里的 `round`，以及 `gate` 与 `merge` 的轮次判定；超限即「人在环」。**只能收紧不能放宽**——记录层（`lib/record.mjs` 的 `MAX_ROUND`）最大就是 3，写不进去的轮次不该被配置放行。
 
 #### 时限与体量

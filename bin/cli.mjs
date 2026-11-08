@@ -211,7 +211,7 @@ hooks 用法:
   dsh-pipeline hooks check [--root <dir>]
   校验已装钩子与本包当前版本生成的内容一致；未装退出 1 并提示 hooks install。
   --root <dir>       仓库根目录（缺省主工作区；git 定位不到时退回当前目录）
-  退出码: 0 一致 / 1 未装、不一致或拒绝覆盖 / 2 用法或环境错误
+  退出码: 0 一致 / 1 未装、不一致或拒绝覆盖 / 2 用法错误 / 3 git 或读盘失败
 
 check-all 用法:
   dsh-pipeline check-all [--root <dir>] [--packages a,b,c] [--json]
@@ -256,7 +256,7 @@ lock 用法:
   dsh-pipeline lock check --root <dir>   比对装包与锁：一致→0；不一致/格式非法/旧版本包→1；
                                          锁不存在或未装包→跳过（0）。与 selftest --lock 同一实现
   --root <dir>       仓库根目录（必填；不猜当前目录）
-  退出码: 0 一致或跳过 / 1 不一致、格式非法或旧版本包 / 2 用法错误 / 3 未装包或写盘失败
+  退出码: 0 一致或跳过 / 1 不一致、格式非法或旧版本包 / 2 用法错误、未装包 / 3 读盘或写盘失败
 
 task 用法:
   dsh-pipeline task <issue号> [--slug <slug>] [--root <dir>] [--worktrees-dir <dir>]
@@ -361,7 +361,7 @@ status 选项:
   -h, --help     显示帮助
   -v, --version  显示版本
 
-退出码: 0 通过 / 1 闸门拒绝或 CI 未过 / 2 参数或配置错误 / 3 环境错误（gh、git、写审计失败）`
+退出码: 0 通过 / 1 闸门拒绝或 CI 未过 / 2 参数或配置错误 / 3 环境错误（gh、git、读盘或写盘失败）`
 
 function messageOf(error) {
   return error instanceof Error ? error.message : String(error)
@@ -656,8 +656,9 @@ const REVIEW_PUBLISH_VALUE_FLAGS = new Set([
   'form',
 ])
 const REVIEW_PUBLISH_BOOL_FLAGS = new Set(['post-review', 'dry-run', 'legacy-exit-codes'])
-/** `record` 的「没写成」退出码：写盘失败或前置校验失败（契约 §4 的 2）。 */
-const RECORD_NOT_WRITTEN = 2
+/** `record` 的「没写成」退出码：前置校验失败退 2、写盘失败退 3（契约 §4）。 */
+const RECORD_NOT_WRITTEN = 2 // 前置校验失败
+const RECORD_WRITE_FAILED = 3 // 写盘失败（环境错误）
 const REVIEW_PROMPT_VALUE_FLAGS = new Set(['request', 'out', 'role'])
 const REVIEW_PROMPT_BOOL_FLAGS = new Set()
 const SELFTEST_VALUE_FLAGS = new Set(['root', 'repos', 'dsh-version'])
@@ -1141,6 +1142,11 @@ function runRecord(argv, deps, io) {
     if (analysis.verdict === 'REJECT' && options['legacy-exit-codes'] !== true) return 1
     return 0
   } catch (error) {
+    // 语义错误（记录不合规 / 名字非法）退 2；真正的 fs 失败才退 3
+    if (error?.code === 'E_RECORD' || error?.code === 'E_SCHEMA') {
+      errorLine(io, 'record', publicCode(error.code), messageOf(error))
+      return 2
+    }
     errorLine(io, 'record', 'E_ENV', `写入失败: ${messageOf(error)}`)
     return 3 // 写盘失败是环境错误（契约 §4）
   }
@@ -1457,7 +1463,7 @@ function runReviewPublish(argv, deps, io) {
   // 判定不可用：解析出来的结论不可信，没有可发的 event，审计留盘即可——
   // 不能把 E_PARSE 的兜底 ESCALATE 当成 reviewer 的真实意见发出去。
   // 记录没写成（退 2）同样不发：没有记录就没有可追溯的判定。
-  if (!usable || code === RECORD_NOT_WRITTEN) return code
+  if (!usable || code === RECORD_NOT_WRITTEN || code === RECORD_WRITE_FAILED) return code
   return sendReview({ root, pr: pr.value, headSha: request.head_sha, io, runner: deps.runner })
 }
 
@@ -1520,7 +1526,7 @@ function sendReview({ root, pr, headSha, io, runner }) {
   try {
     record = readRecord(file)
   } catch (error) {
-    errorLine(io, 'review publish', 'E_RECORD', `读取审核记录失败: ${messageOf(error)}（review 未发出）`)
+    errorLine(io, 'review publish', 'E_ENV', `读取审核记录失败: ${messageOf(error)}（review 未发出）`)
     return 2
   }
 
@@ -1849,7 +1855,7 @@ function resolveMainWorktreeRoot(value, deps) {
  * write 从「装包位置的 build.json」取标识写进锁——不读源码目录的 build.json，
  * 也不回退到「源码运行」，否则会写出一个别人装不上对不上的假 pin。
  * check 与 selftest --lock 共用 checkLock，输出口径一致。
- * 退出码：0 成功或跳过 / 1 不一致、格式非法或旧版本包 / 2 用法错误、未装包。
+ * 退出码：0 成功或跳过 / 1 不一致、格式非法或旧版本包 / 2 用法错误、未装包 / 3 读盘或写盘失败。
  */
 function runLock(argv, deps, io) {
   const [action, ...rest] = argv
@@ -1878,6 +1884,10 @@ function runLock(argv, deps, io) {
     if (result.ok) {
       io.out(`lock: ${result.detail}`)
       return 0
+    }
+    if (result.code === 'E_IO') {
+      errorLine(io, 'lock', 'E_ENV', result.detail)
+      return 3 // 读盘失败是环境错误
     }
     errorLine(io, 'lock', 'E_STATE', result.detail)
     return 1
