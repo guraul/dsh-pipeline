@@ -485,3 +485,35 @@ test('selftest --repos：某个仓的 build.json 读不出来 → 退 3（不静
   assert.equal(result.code, 3)
   assert.match(result.err, /dsh-pipeline: selftest: E_ENV: /)
 })
+
+test('selftest --repos：装包目录不可读（目录级 EACCES）→ 退 3', (t) => {
+  if (process.getuid?.() === 0) return t.skip('root 不受权限位限制')
+  const base = tmpdir()
+  const a = makeRepo(base, `repos-dir-a-${process.pid}`, { sha: 'aaaaaaa' })
+  const b = makeRepo(base, `repos-dir-b-${process.pid}`, { sha: 'bbbbbbb' })
+  const binDir = join(b, 'tools', 'node_modules', 'dsh-pipeline', 'bin')
+  chmodSync(binDir, 0o000)
+  t.after(() => {
+    try {
+      chmodSync(binDir, 0o755)
+    } catch {
+      // 已清理就跳过
+    }
+    for (const root of [a, b]) rmSync(root, { recursive: true, force: true })
+  })
+
+  const result = run(['selftest', '--repos', `${a},${b}`])
+  assert.equal(result.code, 3)
+  assert.match(result.err, /dsh-pipeline: selftest: E_ENV: /)
+})
+
+test('selftest --repos：路径中间是文件（ENOTDIR）按跳过处理，不退 3', (t) => {
+  const base = mkdtempSync(join(tmpdir(), 'dsh-repos-enotdir-'))
+  const file = join(base, 'a.txt')
+  writeFileSync(file, 'x', 'utf8')
+  t.after(() => rmSync(base, { recursive: true, force: true }))
+
+  const result = run(['selftest', '--repos', `${file}/sub`])
+  assert.equal(result.code, 0)
+  assert.match(result.out, /跳过（目录不存在）/)
+})

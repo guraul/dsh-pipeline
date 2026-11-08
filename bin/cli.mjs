@@ -2035,7 +2035,7 @@ function resolveRepoEntry(entry, base) {
  * selftest --repos：比对多个仓装的共享包是不是同一构建（契约 §9）。
  * 路径口径：绝对路径直接用；相对路径按 --root（缺省当前目录）解析；前导 ~/ 展开成家目录。
  * 比对语义（纳入 / 跳过 / 不足 2 个 / 判据）在 lib/selftest.mjs 的 checkRepos，这里只做编排与输出。
- * 退出码：0 一致或可比对的仓不足 2 个 / 1 有仓与基准不一致 / 2 用法错误。
+ * 退出码：0 一致或可比对的仓不足 2 个 / 1 有仓与基准不一致 / 2 用法错误 / 3 读盘失败（目录或 build.json 不可读）。
  */
 function runReposCheck(raw, options, deps, io) {
   const entries = String(raw)
