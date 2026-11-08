@@ -112,12 +112,12 @@ test('verdict / head_sha / findings / evidence 结构校验', () => {
   assert.throws(() => writeRecord(dir, base({ extra: true })), code('E_RECORD'))
 })
 
-test('坏 JSON 抛 E_PARSE，文件不存在抛 E_IO', () => {
+test('坏 JSON 抛 E_PARSE，文件不存在抛 E_RECORD', () => {
   const dir = tmp()
   const file = join(dir, 'broken.json')
   writeFileSync(file, '{"pr": 12,', 'utf8')
   assert.throws(() => readRecord(file), code('E_PARSE'))
-  assert.throws(() => readRecord(join(dir, 'nope.json')), code('E_IO'))
+  assert.throws(() => readRecord(join(dir, 'nope.json')), code('E_RECORD'))
 })
 
 test('跳过审计落到 <dir>/skips/<stamp>-<pr>.json 并带 policyVersion', () => {

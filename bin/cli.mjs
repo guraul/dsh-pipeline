@@ -186,7 +186,7 @@ selftest 用法:
                      dsh.engines.dsh → dsh.compatibility.dsh → @deepseek-ai/dsh* 的 peer 依赖；
                      无声明→跳过(0)；全部覆盖→0；任一不覆盖→1；不知道当前版本→2
   --dsh-version <v>  仅 --peer：当前 DSH 版本（缺省读 <root>/node_modules 或 <root>/tools/node_modules 下的 @deepseek-ai/dsh）
-  退出码: 0 通过（没有配置文件也退 0）/ 1 检查不通过 / 2 用法错误 / 3 读盘失败（--config / --shims / --lock / --repos 的文件或目录读不出来）
+  退出码: 0 通过（没有配置文件也退 0）/ 1 检查不通过 / 2 用法错误 / 3 读盘失败（--config / --shims / --lock / --repos / --peer 的文件或目录读不出来）
 
 shim 用法:
   dsh-pipeline shim install [--root <dir>] [--force]
@@ -226,7 +226,7 @@ check-all 用法:
                      （退出码与人读模式一致）
   每项一行 <包目录> | <检查> | <结果>，末行 check-all: N 个包，X 通过 / Y 失败 / Z 跳过；
   缺 node_modules 的包三项都记「跳过（未安装依赖）」，不算失败；包目录不存在记失败。
-  退出码: 0 全部通过（含全跳过）/ 1 有失败 / 2 用法错误 / 3 找不到 pnpm
+  退出码: 0 全部通过（含全跳过）/ 1 有失败 / 2 用法错误 / 3 找不到 pnpm、读目录或 package.json 失败
 
 deploy 用法:
   dsh-pipeline deploy init --root <dir> [--write] [--rollback]
@@ -250,7 +250,7 @@ deploy 用法:
   部署 caller 不存在提示先跑 deploy init（退 1）。
   --root <dir>       仓库根目录（必填）
   退出码: 0 一致（含回滚 caller 缺失 / 手写跳过）/ 1 不一致、部署 caller 缺标记或拒绝覆盖 /
-          2 用法或配置错误
+          2 用法或配置错误 / 3 读取已有文件失败
 
 lock 用法:
   dsh-pipeline lock write --root <dir>   把当前装包的 build.json 写进 <dir>/.dsh/pipeline.lock.json
@@ -555,10 +555,17 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
   try {
     candidate = readRecord(record)
   } catch (error) {
+    // 记录缺失 → 业务拒绝（1）；记录读不出来（E_IO）→ 环境错误（3）
+    const ioError = error?.code === 'E_IO'
     return {
-      code: 1,
+      code: ioError ? 3 : 1,
       skipped: false,
-      lines: [{ stream: 'err', text: errorText('gate', publicCode(error?.code, 'E_RECORD'), messageOf(error)) }],
+      lines: [
+        {
+          stream: 'err',
+          text: errorText('gate', ioError ? 'E_ENV' : publicCode(error?.code, 'E_RECORD'), messageOf(error)),
+        },
+      ],
     }
   }
 
@@ -1210,8 +1217,9 @@ function runReviewPrepare(argv, deps, io) {
         return { error: `${label} 指定的文件内容为空: ${target}` }
       }
       return { text }
-    } catch {
-      return { error: `${label} 指定的文件读不到: ${target}` }
+    } catch (error) {
+      // 读不出来（权限 / IO）是环境错误；文件不存在属参数错误
+      return { error: `${label} 指定的文件读不到: ${target}`, ioError: isIoError(error) }
     }
   }
 
@@ -1901,13 +1909,10 @@ function runLock(argv, deps, io) {
   const root = parsed.options.root
 
   // 路径打错不能静默退 0（「无锁」+「未装包」两个跳过会叠成假绿），与 deploy check 一样报 2
-  let rootStat
-  try {
-    rootStat = statSync(root)
-  } catch {
-    return argError(io, 'lock', `目录不存在: ${root}`)
-  }
-  if (!rootStat.isDirectory()) return argError(io, 'lock', `不是目录: ${root}`)
+  const rootProbe = probePath(root)
+  if (rootProbe.kind === 'io-error') return argError(io, 'lock', `读取目录失败: ${rootProbe.error}`, 'E_ENV')
+  if (rootProbe.kind === 'missing') return argError(io, 'lock', `目录不存在: ${root}`)
+  if (!rootProbe.stat.isDirectory()) return argError(io, 'lock', `不是目录: ${root}`)
 
   if (action === 'check') {
     const result = checkLock(root)
@@ -2410,7 +2415,7 @@ function runDeploy(argv, deps, io) {
       try {
         existing = readFileSync(file, 'utf8')
       } catch (error) {
-        if (error?.code !== 'ENOENT') return argError(io, 'deploy', `读取 ${target.file} 失败: ${messageOf(error)}`)
+        if (error?.code !== 'ENOENT') return argError(io, 'deploy', `读取 ${target.file} 失败: ${messageOf(error)}`, 'E_ENV')
       }
       const merged = existing === null ? null : replaceRegion(existing, target.skeleton)
       if (existing !== null && merged === null) {
@@ -2449,7 +2454,7 @@ function runDeploy(argv, deps, io) {
         // 回滚 caller 允许尚未接入（迁移期）：静默跳过，不改变既有输出契约
         continue
       }
-      return argError(io, 'deploy', `读取 ${target.file} 失败: ${messageOf(error)}`)
+      return argError(io, 'deploy', `读取 ${target.file} 失败: ${messageOf(error)}`, 'E_ENV')
     }
 
     const extracted = extractRegion(content)

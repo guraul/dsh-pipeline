@@ -186,3 +186,45 @@ test('gate：配置读不出来 → 退 3（不是参数错误 2）', (t) => {
   assert.equal(result.code, 3)
   assert.match(result.err, /dsh-pipeline: gate: E_ENV: /)
 })
+
+test('check-all：--packages 显式路径下的 package.json 读不出来 → 退 3', (t) => {
+  const root = tmp()
+  const dir = join(root, 'pkg-b')
+  mkdirSync(dir, { recursive: true })
+  const pkgFile = join(dir, 'package.json')
+  writeFileSync(pkgFile, '{"name":"b"}', 'utf8')
+  t.after(() => {
+    try {
+      chmodSync(pkgFile, 0o644)
+    } catch {
+      // 已清理
+    }
+    rmSync(root, { recursive: true, force: true })
+  })
+  if (skipAsRoot(t)) return
+  chmodSync(pkgFile, 0o000)
+
+  const result = run(['check-all', '--root', root, '--packages', 'pkg-b'])
+  assert.equal(result.code, 3)
+  assert.match(result.err, /dsh-pipeline: check-all: E_ENV: /)
+})
+
+test('lock：--root 不可读 → 退 3（不报「目录不存在」）', (t) => {
+  const root = tmp()
+  const inner = join(root, 'repo')
+  mkdirSync(inner, { recursive: true })
+  t.after(() => {
+    try {
+      chmodSync(root, 0o755)
+    } catch {
+      // 已清理
+    }
+    rmSync(root, { recursive: true, force: true })
+  })
+  if (skipAsRoot(t)) return
+  chmodSync(root, 0o000)
+
+  const result = run(['lock', 'check', '--root', join(root, 'repo')])
+  assert.equal(result.code, 3)
+  assert.match(result.err, /dsh-pipeline: lock: E_ENV: /)
+})
