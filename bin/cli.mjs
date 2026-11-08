@@ -233,7 +233,8 @@ init 用法:
   dsh-pipeline init --check
   只读校验四件套：配置能过 schema、6 个入口与模板一致、钩子已装且可执行、docs 生成区一致；
   缺任一项逐项打印 ✗ 并退 1（不写盘，不能与 --force 同用）。
-  --root <dir>         仓库根目录（缺省主工作区；git 定位不到时退回当前目录）
+  --root <dir>         仓库根目录（缺省主工作区；git 定位不到时退回当前目录）。
+                       路径不存在或不是目录时退 2（不会替你创建目录树）
   退出码: 0 成功或齐备 / 1 缺项、冲突或拒绝覆盖 / 2 用法与配置错误 / 3 git、读盘或写盘失败
 
 check-all 用法:
@@ -2266,6 +2267,14 @@ function runInitCommand(argv, deps, io) {
     return argError(io, 'init', '--repo 必须是 owner/name')
   }
   const root = resolveMainWorktreeRoot(options.root, deps)
+  // 路径打错不能靠 mkdir -p 建出目录树再在 hooks 那步退 3：先判定目录存在（与 lock / selftest --peer 同口径）
+  const rootProbe = probePath(root)
+  if (rootProbe.kind === 'io-error') {
+    return argError(io, 'init', `读取 --root 失败: ${rootProbe.error}`, 'E_ENV')
+  }
+  if (rootProbe.kind === 'missing' || !rootProbe.stat.isDirectory()) {
+    return argError(io, 'init', `--root 不是目录: ${root}`)
+  }
   const checking = options.check === true
   const result = runInitFlow(root, {
     check: checking,
