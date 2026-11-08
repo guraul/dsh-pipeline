@@ -322,7 +322,7 @@ review 用法:
            配置 review.tier=inline 时自动把 git show --stat <head> 与 gh pr checks 的结果并进
            facts（取不到写「未取到」，不让 prepare 失败；与 --facts 同时存在时拼接而非覆盖）；
            --include <路径,路径,...> 逐个读文件写进请求的 includes 数组（每项 {path, content}，
-           path 保持调用方给的原样）；任一路径读不到或取值为空即退出 2，不写请求文件。
+           path 保持调用方给的原样）；路径不存在或取值为空退 2，权限 / IO 读不出来退 3，都不写请求文件。
            --facts / --include 的相对路径按**调用处目录**解析（不是 --root），在 worktree 里
            prepare 时读的是被审分支的文件。
   publish  读 --response 并落盘 <root>/.dsh-web/reviews/<pr>-<sha>.json，复用 record 的落盘逻辑；
@@ -902,9 +902,15 @@ function mergeExitCode(code) {
 function readTextFile(file, label) {
   try {
     return { text: readFileSync(file, 'utf8') }
-  } catch {
-    return { error: `无法读取${label}: ${file}` }
+  } catch (error) {
+    // 读不出来（权限 / IO）是环境错误；文件不存在属参数错误
+    return { error: `无法读取${label}: ${file}`, ioError: isIoError(error) }
   }
+}
+
+/** 把 readTextFile 的失败按「环境错误 / 参数错误」分档。 */
+function readErrorCode(read) {
+  return read.ioError === true ? 'E_ENV' : 'E_USAGE'
 }
 
 /** 响应里是否出现 ```json 块（只要围栏在就算，内容是否可解析交给 extractFindings 判断）。 */
@@ -1046,7 +1052,7 @@ function runRecord(argv, deps, io) {
   if (duration.error) return argError(io, 'record', duration.error)
 
   const requestFile = readTextFile(options.request, '请求文件')
-  if (requestFile.error) return argError(io, 'record', requestFile.error)
+  if (requestFile.error) return argError(io, 'record', requestFile.error, readErrorCode(requestFile))
   let payload
   try {
     payload = JSON.parse(requestFile.text)
@@ -1067,7 +1073,7 @@ function runRecord(argv, deps, io) {
   }
 
   const responseFile = readTextFile(options.response, '响应文件')
-  if (responseFile.error) return argError(io, 'record', responseFile.error)
+  if (responseFile.error) return argError(io, 'record', responseFile.error, readErrorCode(responseFile))
   const response = responseFile.text
 
   // 兜底文件先读先校验：传了坏文件就明确失败，不静默忽略。
@@ -1426,7 +1432,7 @@ function runReviewPublish(argv, deps, io) {
       : join(root, '.tmp', 'review', String(pr.value), 'request.json')
 
   const raw = readTextFile(requestFile, '请求文件')
-  if (raw.error) return argError(io, sub, raw.error)
+  if (raw.error) return argError(io, sub, raw.error, readErrorCode(raw))
   let payload
   try {
     payload = JSON.parse(raw.text)
@@ -1477,7 +1483,7 @@ function runReviewPublish(argv, deps, io) {
   let usable = false
   if (postReview) {
     const responseText = readTextFile(options.response, '响应文件')
-    if (responseText.error) return argError(io, sub, responseText.error)
+    if (responseText.error) return argError(io, sub, responseText.error, readErrorCode(responseText))
     const analysis = analyzeVerdict(responseText.text, { nonce: request.nonce, diff: request.diff })
     usable = analysis.ok && analysis.sha === request.head_sha
   }
@@ -1531,7 +1537,7 @@ function previewPostReview({ root, pr, request, responseFile, io }) {
   }
 
   const raw = readTextFile(responseFile, '响应文件')
-  if (raw.error) return argError(io, 'review publish', raw.error)
+  if (raw.error) return argError(io, 'review publish', raw.error, readErrorCode(raw))
 
   const analysis = analyzeVerdict(raw.text, { nonce: request.nonce, diff: request.diff })
   const mismatch = analysis.ok && analysis.sha !== request.head_sha
@@ -1685,7 +1691,7 @@ function runReviewPrompt(argv, deps, io) {
   }
 
   const raw = readTextFile(options.request, '请求文件')
-  if (raw.error) return argError(io, sub, raw.error)
+  if (raw.error) return argError(io, sub, raw.error, readErrorCode(raw))
   let payload
   try {
     payload = JSON.parse(raw.text)
@@ -1735,7 +1741,8 @@ function runReviewPrompt(argv, deps, io) {
     mkdirSync(dirname(options.out), { recursive: true })
     writeFileSync(options.out, `${prompt}\n`, 'utf8')
   } catch (error) {
-    return argError(io, sub, `写入提示词失败: ${messageOf(error)}`)
+    // 写盘失败是环境错误（契约 §4）
+    return argError(io, sub, `写入提示词失败: ${messageOf(error)}`, 'E_ENV')
   }
   io.out(`审核: 已写入 ${options.out}`)
   return 0

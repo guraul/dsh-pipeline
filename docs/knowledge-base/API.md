@@ -12,7 +12,7 @@
 |---|---|---|---|---|
 | `task` | 从 issue 建 `task/<号>-<slug>` 分支与 worktree | `<issue号>`（位置参数）、`--slug`、`--root`、`--worktrees-dir` | `bin/cli.mjs` `runTask` → `lib/task.mjs` `runTask` | 0 成功或幂等 / 2 入参类失败 / 3 git 或目录失败（`E_GIT` / `E_FETCH` / `E_WORKTREE` / `E_ROOT` / `E_REPO`） |
 | `pr` | 推送当前任务分支并创建 PR | `--issue`、`--root` | `runPr` → `lib/pr.mjs` `runPr` | 0 / 2 入参类失败（分支名、工作区脏、`--issue` 冲突）/ 3 gh 或 git 失败 |
-| `review prepare` | 读 PR 的 head / 改动文件 / diff，写审核请求 | `--pr`(必填)、`--issue`、`--root`、`--model`、`--round`、`--out`、`--facts`、`--include` | `runReviewPrepare` | 0 / 2 参数 / 3 读不到 PR 或 diff（gh 失败） |
+| `review prepare` | 读 PR 的 head / 改动文件 / diff，写审核请求 | `--pr`(必填)、`--issue`、`--root`、`--model`、`--round`、`--out`、`--facts`、`--include` | `runReviewPrepare` | 0 / 2 参数 / 3 读不到 PR 或 diff（gh 失败）、`--facts` / `--include` 权限或 IO 读不出来 |
 | `review prompt` | 由请求 JSON 渲染审核提示词（不发外部命令） | `--request`(必填，无缺省)、`--out`、`--role` | `runReviewPrompt` → `lib/review.mjs` `buildPrompt` | 0 / 2 参数或配置 / 3 配置读不出来 |
 | `review publish` | 把判定落成记录；可选发 GitHub review | `--pr`、`--response`(必填)、`--request`、`--round`、`--root`、`--model`、`--provider`、`--form`、`--post-review`、`--dry-run`、`--legacy-exit-codes` | `runReviewPublish` →（复用）`runRecord` + `sendReview` | 0 APPROVE（或带 `--legacy-exit-codes` 的 REJECT）/ 1 REJECT 或 ESCALATE / 2 参数与配置 / 3 发 review 失败 |
 | `record` | 只落盘判定记录（供外部流程使用） | `--request`、`--response`(必填)、`--findings`、`--round`、`--root`、`--model`、`--provider`、`--form`、`--duration-ms`、`--name`、`--json` | `runRecord` | 0 / 1 ESCALATE 或 REJECT（`--legacy-exit-codes` 才 0）/ 2 前置校验 / 3 写盘失败 |
