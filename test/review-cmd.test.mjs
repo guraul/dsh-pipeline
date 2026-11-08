@@ -848,7 +848,7 @@ test('review prompt：未给 --out 时提示词打到 stdout，退出 0', () => 
   assert.ok(out.includes(`${NONCE} VERDICT: <APPROVE|REJECT|ESCALATE> SHA: ${SHA}`))
 })
 
-test('review prompt：--out 写文件并打印「已写入 <路径>」', () => {
+test('review prompt：--out 写文件并打印「审核: 已写入 <路径>」', () => {
   const root = makeRoot()
   const file = writeRequest(root)
   const out = join(root, 'nested', 'prompt.md')
