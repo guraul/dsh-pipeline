@@ -200,8 +200,9 @@ test('空指纹给出专属文案（不伪装成读取失败）', () => {
   const result = verifyDistFreshness({ buildPath })
   assert.equal(result.ok, false)
   assert.match(result.reason, /源码指纹为空/)
-  // 回归保护：旧实现会把它包装成「源码目录读取失败（UNKNOWN）」
-  assert.doesNotMatch(result.reason, /UNKNOWN|读取失败/)
+  // 正向 + 负向双断言：旧实现会包装成「源码目录读取失败（UNKNOWN）」，换别的错误文案也不许通过
+  assert.match(result.reason, /源码指纹为空/)
+  assert.doesNotMatch(result.reason, /UNKNOWN|读取失败|无法读取/)
   rmSync(root, { recursive: true, force: true })
 })
 
@@ -227,6 +228,7 @@ test('记录的源码路径是文件而非目录 → 明确报「不是目录」
   writeFileSync(buildPath, JSON.stringify({ gitSha: 'x', builtAt: 'y', sourcePath: notDir, sourceHash: 'deadbeef' }))
   const result = verifyDistFreshness({ buildPath })
   assert.equal(result.ok, false)
+  assert.equal(result.skipped, false)
   assert.match(result.reason, /不是目录/)
   rmSync(root, { recursive: true, force: true })
 })
