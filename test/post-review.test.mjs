@@ -242,6 +242,7 @@ test('配置 review.identity.account 与当前身份不一致 → 退 2 且不�
 
   const result = runPublish(fixture, ['--post-review'], { STUB_USER_LOGIN: 'guraul-review' })
   assert.equal(result.status, 2)
+  assert.match(result.stderr, /dsh-pipeline: review publish: E_CONFIG: /)
   assert.match(result.stderr, /当前 gh 身份是 guraul-review，配置要求 someone-else/)
   assert.ok(!ghCalls(fixture).some((line) => line.includes('POST')), '身份不符时不许发 review')
   assert.ok(existsSync(recordPath(fixture)), '记录仍要落盘')

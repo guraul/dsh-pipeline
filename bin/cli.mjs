@@ -184,7 +184,7 @@ selftest 用法:
                      dsh.engines.dsh → dsh.compatibility.dsh → @deepseek-ai/dsh* 的 peer 依赖；
                      无声明→跳过(0)；全部覆盖→0；任一不覆盖→1；不知道当前版本→2
   --dsh-version <v>  仅 --peer：当前 DSH 版本（缺省读 <root>/node_modules 或 <root>/tools/node_modules 下的 @deepseek-ai/dsh）
-  退出码: 0 通过（没有配置文件也退 0）/ 1 检查不通过 / 2 用法错误
+  退出码: 0 通过（没有配置文件也退 0）/ 1 检查不通过 / 2 用法错误 / 3 读盘失败（--lock 的锁或 build.json 读不出来）
 
 shim 用法:
   dsh-pipeline shim install [--root <dir>] [--force]
@@ -1526,8 +1526,15 @@ function sendReview({ root, pr, headSha, io, runner }) {
   try {
     record = readRecord(file)
   } catch (error) {
-    errorLine(io, 'review publish', 'E_ENV', `读取审核记录失败: ${messageOf(error)}（review 未发出）`)
-    return 3 // 读盘失败是环境错误
+    // 只有读盘失败（E_IO）是环境错误；记录损坏 / 不合规是记录问题
+    const ioError = error?.code === 'E_IO'
+    errorLine(
+      io,
+      'review publish',
+      ioError ? 'E_ENV' : 'E_RECORD',
+      `读取审核记录失败: ${messageOf(error)}（review 未发出）`,
+    )
+    return ioError ? 3 : 1
   }
 
   let config
@@ -1922,7 +1929,7 @@ function runLock(argv, deps, io) {
  * 与其它检查项互斥（--json 形态不同，合起来没有单一会话能同时表达两种结构）；
  * 没有未实现的检查项。检查逻辑在 lib/selftest.mjs，--shims 的比对复用 lib/shim.mjs。
  * --fast 只跑 --shims --config（契约 §9），与 --lock / --peer / --exit-codes 组合时后三者被忽略。
- * 退出码：0 通过（含「无配置文件跳过」「--repos 可比对的仓不足 2 个」）/ 1 检查不通过 / 2 用法错误或检查项未实现。
+ * 退出码：0 通过（含「无配置文件跳过」「--repos 可比对的仓不足 2 个」）/ 1 检查不通过 / 2 用法错误或检查项未实现 / 3 读盘失败（`E_IO`）。
  */
 function runSelftest(argv, deps, io) {
   const parsed = parseArgs(argv, SELFTEST_VALUE_FLAGS, SELFTEST_BOOL_FLAGS)
@@ -2131,7 +2138,7 @@ function runShim(argv, deps, io) {
 /**
  * hooks：动作是位置参数（install / check），生成、安装与比对在 lib/hooks.mjs。
  * 根目录口径与 shim / selftest 一致（显式 --root > 主工作区 > 当前目录）。
- * 退出码：0 成功 / 1 业务拒绝（未装、不一致、拒绝覆盖）/ 2 用法或环境错误。
+ * 退出码：0 成功 / 1 业务拒绝（未装、不一致、拒绝覆盖）/ 2 用法错误 / 3 git 或读盘失败。
  */
 function runHooks(argv, deps, io) {
   const [action, ...rest] = argv

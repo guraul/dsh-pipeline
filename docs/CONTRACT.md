@@ -105,7 +105,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | 0 | 成功 | 全部命令；`record` / `review publish` 在 `APPROVE` 或带 `--legacy-exit-codes` 的 `REJECT` 下 |
 | 1 | **业务拒绝** | `gate` / `merge`（闸门拒绝、CI 未过）；`record` / `review publish`（判定 `REJECT`，或判定不可用时的兜底 `ESCALATE`） |
 | 2 | **用法 / 配置错误** | 全部命令（入参、配置读取与校验、`--checks-file` 等） |
-| 3 | **环境错误** | 全部命令的 gh / git / 写盘 / 读盘失败与未捕获异常（`merge`、`gate`、`task`、`pr`、`status`、`lock`、`record`、`shim`、`hooks`、`check-all` 都按此） |
+| 3 | **环境错误** | 全部命令的 gh / git / 写盘 / 读盘失败与未捕获异常（`merge`、`gate`、`task`、`pr`、`status`、`lock`、`record`、`shim`、`hooks`、`check-all`、`selftest --lock` 都按此） |
 
 **`record` / `review publish` 的判定与退出码**：`REJECT` → **1**（记录照常落盘——落盘成功不代表判定通过）；判定不可用（解析失败 / 提交不匹配）→ 兜底 `ESCALATE` → 1；`APPROVE` → 0。
 
@@ -143,7 +143,8 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | `E_RECORD` | 审核记录缺失 / 不可用 |
 | `E_PARSE` | 判定解析失败（nonce / SHA / 格式） |
 | `E_ENV` | 外部命令或环境失败（gh / git / pnpm / 目录不可读） |
-| `E_STATE` | 状态不匹配（PR 号、head、身份、文件缺标记） |
+| `E_STATE` | 状态不匹配（PR 号、head、文件缺标记、PR 无 headRefOid） |
+| `E_CONFIG` | 配置读取或校验失败；`review.identity.account` 与实际登录不符也归此类 |
 
 警告行（`警告:` / `提示:`）**不带**错误码——它们不是错误。
 
@@ -258,6 +259,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | 情形 | 结果 |
 |---|---|
 | 锁文件不存在 | **跳过**（退 0）：这个仓还没启用锁 |
+| 锁文件或装包 `build.json` 读不出来（权限 / IO） | **失败**（退 3，`E_IO`）：环境问题，不是「没启用锁」 |
 | 装包目录不存在 | **跳过**（退 0）：还没 install |
 | 装了包但没有 `build.json`（旧版本包） | **失败**（退 1）：无法证明与锁一致 |
 | 锁与装包不一致 / 锁格式非法（多余字段、`expect` 不是 `<sha7> <构建时间>`） | **失败**（退 1） |
@@ -361,7 +363,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 |---|---|---|
 | `--shims` | 6 个入口 == 按当前版本渲染后的模板 | 退出 1 |
 | `--config` | `.dsh/pipeline.json` 能被 schema 接受，无未声明字段 | 退出 1 |
-| `--lock` | 安装的构建 == `pipeline.lock.json` 的 `expect`（读锁 → 读装包 `build.json` → 比对；锁不存在 / 未装包跳过，旧版本包或不一致失败，见 §7.2） | 退出 1 |
+| `--lock` | 安装的构建 == `pipeline.lock.json` 的 `expect`（读锁 → 读装包 `build.json` → 比对；锁不存在 / 未装包跳过，旧版本包或不一致失败，见 §7.2；锁文件或 `build.json` 读不出来退 **3**） | 退出 1（读盘失败 3） |
 | `--peer` | 各包的 DSH 版本声明覆盖当前版本（静态比较）：按优先级取 `engines.dsh` → `dsh.engines.dsh` → `dsh.compatibility.dsh` → `@deepseek-ai/dsh*` peer；版本用 `--dsh-version` 或仓内装包；无声明跳过、不知道版本退 2 | 退出 1 |
 | `--exit-codes` | 退出码口径自检：起子进程真跑七条用例——APPROVE 记录过闸门→0；REJECT 记录过闸门、按旧规则审的记录（`E_POLICY_VERSION`）→1；缺必填参数/未知参数/未知子命令→2；入口找不到共享包→3（并断言输出里出现「找不到共享包」）；cwd 钉在临时目录、只有环境错误那条注入 `DSH_PIPELINE_HOME`；任一不符即失败并点名用例 | 退出 1 |
 | `--repos` | 多个仓装的共享包是不是同一构建（读各自 `tools/node_modules/dsh-pipeline/build.json` 的 `gitSha`/`builtAt`，比对 `gitSha`；目录不存在 / 未装包的仓跳过并列出，可比对的仓不足 2 个则跳过退 0；`--json` 给 `{ok,baseline,repos,skipped}`） | 退出 1 |
