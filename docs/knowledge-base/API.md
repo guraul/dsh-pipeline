@@ -1,6 +1,6 @@
 # 接口清单
 
-**最后更新**：2026-11-07 · 对应提交 `943d92a`
+**最后更新**：2026-11-08 · 对应提交 `18289d5`
 
 本包没有 HTTP 接口。对外接口分两类：**CLI 子命令**（人 / 脚本 / 消费仓 shim 调用）与 **lib 导出**（测试与被后续子命令复用）。规则来源是 `docs/CONTRACT.md` §3–§5。
 
@@ -44,8 +44,8 @@
 |---|---|---|
 | 0 | 成功 | 全部；`record` / `review publish` 的 `REJECT` 只有带 `--legacy-exit-codes` 才退 0 |
 | 1 | 业务拒绝 | `gate`、`merge`（闸门拒绝 / CI 未过）、`record` 与 `review publish` 的 `REJECT` / `ESCALATE`、`doctor` 漂移、`selftest` 不通过、`shim`/`hooks` 不一致或冲突、`check-all` 有失败 |
-| 2 | 用法或环境错误 | 全部子命令的参数错误；`gate` 取不到 head；`task` 的 fetch / worktree 失败；`review prepare` 读 PR 失败 |
-| 3 | 环境错误 | `check-all` 找不到 pnpm；`review publish --post-review` 的 gh 调用失败（记录不回滚）；`shim check` 无法枚举入口目录 |
+| 2 | 用法错误 | 全部子命令的参数错误；`merge` 的入参 / 配置错误（`E_USAGE` / `E_INPUT` / `E_CONFIG`） |
+| 3 | 环境错误 | `check-all` 找不到 pnpm；`review publish --post-review` 的 gh 调用失败（记录不回滚）；`shim check` 无法枚举入口目录；`merge` 的 gh / git 失败与写跳过审计失败（`E_ENV` / `E_GH` / `E_GIT` / `E_HEAD` / `E_AUDIT`，含数字退出码） |
 
 入口 shim **不得改写退出码**，只透传。
 

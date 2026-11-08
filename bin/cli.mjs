@@ -830,8 +830,12 @@ function runMerge(argv, deps, io) {
  * - 1 业务拒绝：闸门拒绝、CI 未过、记录不可用、状态不匹配
  */
 function mergeExitCode(code) {
+  // gh / git 封装失败带的是数字退出码（或 null）：一律是环境错误
+  if (typeof code === 'number' || code === null) return 3
   if (code === 'E_USAGE' || code === 'E_INPUT' || code === 'E_CONFIG') return 2
-  if (code === 'E_ENV' || code === 'E_GH' || code === 'E_GIT' || code === 'E_HEAD') return 3
+  if (code === 'E_ENV' || code === 'E_GH' || code === 'E_GIT' || code === 'E_HEAD' || code === 'E_AUDIT') {
+    return 3
+  }
   return 1
 }
 

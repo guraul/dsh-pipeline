@@ -24,7 +24,7 @@
 | # | 条件 | 失败码 | 说明 |
 |---|---|---|---|
 | 1 | 记录文件存在 | `E_RECORD` | 缺失即拒（fail-closed） |
-| 2 | 文件内容是合法 JSON | `E_PARSE` | 存在但解析不了 |
+| 2 | 文件内容是合法 JSON | `E_PARSE` | 存在但解析不了（由 `readRecord` 抛，CLI 的 `decideGate` 透出；`evaluateGate` 只接收已解析对象） |
 | 3 | `schemaVersion === 1` | `E_SCHEMA`（缺失算 `E_RECORD`） | 结构版本 |
 | 4 | `round ∈ 1..maxRounds` | `E_RECORD` | 轮次上限取配置 `review.rounds`（1..3，缺省 3） |
 | 5 | `verdict === 'APPROVE'` | `E_VERDICT` | 带上记录里的 `errorCode`（可能是 `E_PARSE` / `E_POLICY`）、绝不猜测或补全 |
