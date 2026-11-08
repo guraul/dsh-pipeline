@@ -37,7 +37,11 @@ GitHub 有一条硬规则：**公开仓不能调用私有仓里的可复用工�
 
 失败时的表现极具误导性：**运行连 job 都不会创建**（`referenced_workflows: []`），GitHub 在运行页只给一句「This run likely failed because of a workflow file issue」——完全不提可见性。
 
-真正可检索的信号在**运行日志的解析错误**里：`error parsing called workflow ... workflow was not found`（或用 `gh run view <id>` 看头部）。按「workflow file issue」去搜，基本搜不到有用结果；按 `workflow was not found` 才能定位。注意 `referenced_workflows` 为空是**常见形态**，不是判据本身。
+真正可检索的信号是**运行页的报错注解**（annotation；解析失败时 run 不创建 job，所以没有 job 日志可看）：`error parsing called workflow ... workflow was not found`。按「workflow file issue」去搜基本搜不到有用结果，按 `workflow was not found` 才能定位。
+
+注意两点：
+- `workflow was not found` **不是可见性专属信号**——路径拼错、`@ref`/SHA 不存在、文件被删都给同一句。排查顺序：先验 `uses:` 路径与 ref 是否存在，再判可见性；
+- `referenced_workflows` 为空是**常见形态**（普通非 reusable 的运行本来就空），不是判据本身。
 
 2026-11-08 实测：本包仓当时是私有，`guraul/agent-mobile` 是公开仓，它的 `deploy-web` 从切换共享工作流那天起连续失败 3 天（5 次运行全红）。期间排查过 YAML 语法、caller 的 inputs 与 `deploy.yml` 声明是否一一对应、`secrets` 是否存在、pin 的 SHA 是否存在于远端——**全部正常**。真正的判据只有两条命令：
 
@@ -46,7 +50,7 @@ gh repo view <消费仓> --json visibility --jq .visibility        # PUBLIC / PR
 gh repo view guraul/dsh-pipeline --json visibility --jq .visibility
 ```
 
-判据就是一行映射：**被调用方 PRIVATE + 调用方 PUBLIC = 必红**。
+判据就是一行映射：**跨仓调用 reusable workflow 时，被调用方 PRIVATE + 调用方 PUBLIC = 必红**（github.com 上一律不允许，不受组织级 Access 设置豁免）。
 
 处置：把本包仓改为公开（2026-11-08 已执行；转公开前确认过无凭据、无 `.env`、无字面主机地址，git 历史里也没有）。
 
@@ -121,7 +125,16 @@ dsh-pipeline deploy check --root <dir>
 5. **不要把本包仓改回私有**：消费仓里只要有一个是公开仓，它的部署就会立刻全红，且报错只说「workflow file issue」（见上面「可见性前提」）。
 
    **改回私有的正确顺序**（顺序反了会先制造一次全红）：
-   1. 列出消费仓——GitHub **没有反向索引**（「谁在调用这个 workflow」查不到），私有消费仓的 caller 用 `gh search code` 也搜不到，所以只能靠人工维护的清单。当前已知：`guraul/agent-mobile`（公开）、`guraul/homebase`（私有）。**新增消费仓时必须在这里登记**；
+   1. 列出消费仓——GitHub **没有反向索引**（「谁在调用这个 workflow」查不到），`gh search code 'uses: guraul/dsh-pipeline' --owner guraul` 只能当辅助——它只索引默认分支、覆盖不到 fork 与其他分支，**搜不到不能证明不存在**，所以仍以人工清单为准。
+
+   当前已知（2026-11-08 核对）：
+
+   | 消费仓 | 可见性 |
+   |---|---|
+   | `guraul/agent-mobile` | 公开 |
+   | `guraul/homebase` | 私有 |
+
+   **新增消费仓时必须在这里登记**（并顺手跑一次 `gh repo view <repo> --json visibility` 核对）；
    2. 把清单里仍公开的消费仓改成私有，或让它改用内联部署步骤；
    3. 确认清单里已无公开仓，才允许把本包仓切回私有。
 
