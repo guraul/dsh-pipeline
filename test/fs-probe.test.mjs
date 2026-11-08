@@ -270,3 +270,100 @@ test('gate：记录文件读不出来 → 退 3（缺记录才是 1）', (t) => 
   assert.equal(result.code, 3)
   assert.match(result.err, /dsh-pipeline: gate: E_ENV: /)
 })
+
+test('record：--response 不可读 → 退 3（不存在才是 2）', (t) => {
+  const root = tmp()
+  const file = join(root, 'response.txt')
+  writeFileSync(file, 'VERDICT: APPROVE\n', 'utf8')
+  t.after(() => {
+    try {
+      chmodSync(file, 0o644)
+    } catch {
+      // 已清理
+    }
+    rmSync(root, { recursive: true, force: true })
+  })
+  if (skipAsRoot(t)) return
+  chmodSync(file, 0o000)
+
+  const request = join(root, 'request.json')
+  writeFileSync(request, JSON.stringify({ pr: 7, nonce: 'ABCDEFGHJKLM', head_sha: 'a'.repeat(40) }), 'utf8')
+  const result = run(['record', '--request', request, '--response', file, '--root', root])
+  assert.equal(result.code, 3)
+  assert.match(result.err, /dsh-pipeline: record: E_ENV: /)
+})
+
+test('record：--response 不存在 → 仍退 2（参数错误）', (t) => {
+  const root = tmp()
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+
+  const request = join(root, 'request.json')
+  writeFileSync(request, JSON.stringify({ pr: 7, nonce: 'ABCDEFGHJKLM', head_sha: 'a'.repeat(40) }), 'utf8')
+  const result = run(['record', '--request', request, '--response', join(root, 'nope.txt'), '--root', root])
+  assert.equal(result.code, 2)
+  assert.match(result.err, /dsh-pipeline: record: E_USAGE: /)
+})
+
+test('review prompt：--out 写盘失败 → 退 3', (t) => {
+  const root = tmp()
+  mkdirSync(join(root, '.dsh'), { recursive: true })
+  const request = join(root, 'request.json')
+  writeFileSync(request, JSON.stringify({ pr: 7, nonce: 'ABCDEFGHJKLM', head_sha: 'a'.repeat(40) }), 'utf8')
+  // 把 --out 指向一个已存在的目录：写文件必然失败
+  const outDir = join(root, 'out-dir')
+  mkdirSync(outDir, { recursive: true })
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+
+  const result = run(['review', 'prompt', '--request', request, '--out', outDir])
+  assert.equal(result.code, 3)
+  assert.match(result.err, /dsh-pipeline: review prompt: E_ENV: /)
+})
+
+test('record：--findings 不可读 → 退 3（不存在才是 2）', (t) => {
+  const root = tmp()
+  const request = join(root, 'request.json')
+  writeFileSync(request, JSON.stringify({ pr: 7, nonce: 'ABCDEFGHJKLM', head_sha: 'a'.repeat(40) }), 'utf8')
+  const response = join(root, 'response.txt')
+  writeFileSync(response, 'VERDICT: APPROVE\n', 'utf8')
+  const findings = join(root, 'findings.json')
+  writeFileSync(findings, '{"findings":[],"evidence":[]}', 'utf8')
+  t.after(() => {
+    try {
+      chmodSync(findings, 0o644)
+    } catch {
+      // 已清理
+    }
+    rmSync(root, { recursive: true, force: true })
+  })
+  if (skipAsRoot(t)) return
+  chmodSync(findings, 0o000)
+
+  const result = run([
+    'record',
+    '--request', request,
+    '--response', response,
+    '--findings', findings,
+    '--root', root,
+  ])
+  assert.equal(result.code, 3)
+  assert.match(result.err, /dsh-pipeline: record: E_ENV: /)
+})
+
+test('record：--findings 不存在 → 仍退 2（参数错误）', (t) => {
+  const root = tmp()
+  const request = join(root, 'request.json')
+  writeFileSync(request, JSON.stringify({ pr: 7, nonce: 'ABCDEFGHJKLM', head_sha: 'a'.repeat(40) }), 'utf8')
+  const response = join(root, 'response.txt')
+  writeFileSync(response, 'VERDICT: APPROVE\n', 'utf8')
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+
+  const result = run([
+    'record',
+    '--request', request,
+    '--response', response,
+    '--findings', join(root, 'nope.json'),
+    '--root', root,
+  ])
+  assert.equal(result.code, 2)
+  assert.match(result.err, /dsh-pipeline: record: E_USAGE: /)
+})

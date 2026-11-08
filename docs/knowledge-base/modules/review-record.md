@@ -110,7 +110,7 @@ writeRecord(dir, record, { name? })
 算 policy（loadConfig + mergePolicy.hit(files, changedLines, {diff})）→ 算不出来退 2
 组记录（含 form/provider/model/durationMs/nonce/request{issue,diffChars}）→ writeRecord
 --json 时输出记录本体，否则打印「审核: 已写入审核记录: <路径>」
-判定不可用 → 退 1（已落盘）；否则 0；前置校验失败退 2、写盘失败退 3
+判定不可用 → 退 1（已落盘）；否则 0；前置校验失败退 2（含输入文件不存在）、读盘或写盘失败退 3
 ```
 
 **`--name` 的用途**：分片审核直接写成 `<pr>-<sha>.shard-i-of-n.json`，避免"先写规范名再删除"那段"单片判定冒充整份判定"的窗口。
