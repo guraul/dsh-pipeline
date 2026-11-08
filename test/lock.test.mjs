@@ -9,7 +9,7 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -293,4 +293,18 @@ test('selftest --lock --json：结构与其它检查项一致', (t) => {
   assert.equal(payload.checks.length, 1)
   assert.equal(payload.checks[0].name, 'lock')
   assert.equal(payload.checks[0].ok, true)
+})
+
+test('lock check：锁文件读不出来（E_IO）→ 退 3', (t) => {
+  if (process.getuid?.() === 0) return t.skip('root 不受权限位限制')
+  const root = tmp()
+  mkdirSync(join(root, '.dsh'), { recursive: true })
+  const file = join(root, '.dsh', 'pipeline.lock.json')
+  writeFileSync(file, '{}', 'utf8')
+  chmodSync(file, 0o000)
+  t.after(() => chmodSync(file, 0o644))
+
+  const result = run(['lock', 'check', '--root', root])
+  assert.equal(result.code, 3)
+  assert.match(result.err, /dsh-pipeline: lock: E_ENV: /)
 })

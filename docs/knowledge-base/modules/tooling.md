@@ -50,7 +50,7 @@ dsh-pipeline lock check --root <仓>   # 与 selftest --lock 同一实现
 |---|---|
 | 锁文件 | `<仓>/.dsh/pipeline.lock.json`，内容只有 `{"expect":"<sha7> <builtAt>"}`；多余字段、格式不合规都算失败 |
 | 写 | 只认**装包位置** `tools/node_modules/dsh-pipeline/build.json`；未装包 / 旧版本包（没有 build.json）→ 退 2，不写假 pin |
-| 读 | `checkLock` 同时被 `lock check` 与 `selftest --lock` 使用，输出口径一致 |
+| 读 | `checkLock` 同时被 `lock check` 与 `selftest --lock` 使用；锁文件读不出来（`E_IO`）时两者都退 3，格式非法退 1 |
 | 跳过 | 锁不存在、或装包目录不存在 → 跳过（退 0） |
 | 失败 | 旧版本包（无法证明）→ 1；锁与装包不一致 → 1（detail 同时给两边的值）；锁格式非法 → 1 |
 | 路径错 | `--root` 不存在或不是目录 → 退 2（不是静默跳过） |

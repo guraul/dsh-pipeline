@@ -1038,7 +1038,7 @@ function runRecord(argv, deps, io) {
 
   const analysis = analyzeVerdict(response, { nonce: request.nonce, diff: request.diff })
   // 判定不可用不阻断落盘：审计轨迹不能因为「模型没按格式回答」而断掉。
-  // 记录写成 ESCALATE，退出码仍是 1（闸门拒绝）；只有落盘失败才是 2。
+  // 记录写成 ESCALATE，退出码仍是 1（闸门拒绝）；只有前置校验失败才是 2（写盘失败是 3）。
   let escalation = null
   if (!analysis.ok) {
     escalation = { errorCode: 'E_PARSE', reason: analysis.reason }
@@ -1527,7 +1527,7 @@ function sendReview({ root, pr, headSha, io, runner }) {
     record = readRecord(file)
   } catch (error) {
     errorLine(io, 'review publish', 'E_ENV', `读取审核记录失败: ${messageOf(error)}（review 未发出）`)
-    return 2
+    return 3 // 读盘失败是环境错误
   }
 
   let config
@@ -1571,10 +1571,10 @@ function sendReviewWithIdentity({ identity, repo, pr, headSha, io, runner, root,
       errorLine(
         io,
         'review publish',
-        'E_STATE',
+        'E_CONFIG',
         `当前 gh 身份是 ${who.data}，配置要求 ${identity.account}（记录已写入，review 未发出）`,
       )
-      return 2
+      return 2 // 配置与身份不符属配置错误（契约 §4 的 --post-review 口径）
     }
   }
 
@@ -1732,7 +1732,9 @@ function collectRecords(root) {
         time: Number.isNaN(created) ? mtime : created,
         mtime,
       })
-    } catch {
+    } catch (error) {
+      // 读盘失败（权限 / IO）不是「记录不合规」，要报出来；解析失败才算 invalid
+      if (error?.code === 'E_IO') throw error
       invalid += 1
     }
   }
@@ -1854,7 +1856,7 @@ function resolveMainWorktreeRoot(value, deps) {
  *
  * write 从「装包位置的 build.json」取标识写进锁——不读源码目录的 build.json，
  * 也不回退到「源码运行」，否则会写出一个别人装不上对不上的假 pin。
- * check 与 selftest --lock 共用 checkLock，输出口径一致。
+ * check 与 selftest --lock 共用 checkLock；检查项带 E_IO 时两者都按环境错误退 3。
  * 退出码：0 成功或跳过 / 1 不一致、格式非法或旧版本包 / 2 用法错误、未装包 / 3 读盘或写盘失败。
  */
 function runLock(argv, deps, io) {
@@ -1896,6 +1898,10 @@ function runLock(argv, deps, io) {
   const installed = readInstalledBuild(root)
   if (installed.state === 'missing') {
     return argError(io, 'lock', `${root} 下没有装共享包（tools/node_modules/dsh-pipeline），先 pnpm install`)
+  }
+  if (installed.state === 'io-error') {
+    errorLine(io, 'lock', 'E_ENV', `读取已装包的 build.json 失败: ${installed.error}`)
+    return 3
   }
   if (installed.state === 'legacy') {
     return argError(io, 'lock', '装的是没有 build.json 的旧版本包，先重新打包并刷新依赖')
@@ -1994,12 +2000,17 @@ function runSelftest(argv, deps, io) {
   const result = runChecks(root, checks, { runner: deps.runner, dshVersion })
 
   // 失败原文始终走 stderr：--json 只改 stdout 的形态，不改退出码也不吞错误
+  let ioFailed = false
   for (const check of result.checks) {
-    if (!check.ok) errorLine(io, 'selftest', 'E_STATE', check.detail)
-    else if (options.json !== true) io.out(`${root}: ${check.detail}`)
+    if (!check.ok) {
+      // 检查项带 E_IO 时按环境错误报（如锁文件读不出来）
+      if (check.code === 'E_IO') ioFailed = true
+      errorLine(io, 'selftest', check.code === 'E_IO' ? 'E_ENV' : 'E_STATE', check.detail)
+    } else if (options.json !== true) io.out(`${root}: ${check.detail}`)
   }
   if (options.json === true) io.out(JSON.stringify({ ok: result.ok, root, checks: result.checks }))
-  return result.ok ? 0 : 1
+  if (result.ok) return 0
+  return ioFailed ? 3 : 1
 }
 
 /**
