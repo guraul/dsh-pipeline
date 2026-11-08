@@ -139,12 +139,11 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | 码 | 含义 |
 |---|---|
 | `E_USAGE` | 参数 / 用法错误（缺必填、未知选项、取值非法） |
-| `E_CONFIG` | 配置读取或校验失败 |
+| `E_CONFIG` | 配置读取或校验失败；`review.identity.account` 与实际登录不符也归此类 |
 | `E_RECORD` | 审核记录缺失 / 不可用 |
 | `E_PARSE` | 判定解析失败（nonce / SHA / 格式） |
 | `E_ENV` | 外部命令或环境失败（gh / git / pnpm / 目录不可读） |
 | `E_STATE` | 状态不匹配（PR 号、head、文件缺标记、PR 无 headRefOid） |
-| `E_CONFIG` | 配置读取或校验失败；`review.identity.account` 与实际登录不符也归此类 |
 
 警告行（`警告:` / `提示:`）**不带**错误码——它们不是错误。
 

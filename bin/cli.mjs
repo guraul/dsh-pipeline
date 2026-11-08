@@ -175,9 +175,10 @@ selftest 用法:
   --repos <a,b,c>    比对多个仓装的共享包是不是同一构建（读各自 build.json 的 gitSha/builtAt）。
                      绝对路径直接用、相对路径按 --root（缺省当前目录）解析、前导 ~/ 展开成家目录；
                      目录不存在或未装包的仓跳过并列出，可比对的仓不足 2 个则跳过退出 0；
+                     build.json 读不出来（权限 / IO）不算跳过，退 3；
                      与 --shims / --config / --lock / --peer / --exit-codes / --fast 互斥
   --json             输出 {"ok":true|false,"root":"…","checks":[{"name":"…","ok":…,"detail":"…"}]}；
-                     带 --repos 时改为 {"ok":…,"baseline":"…","repos":[{"path","sha","builtAt","ok"}],"skipped":[{"path","reason"}]}
+                     带 --repos 时改为 {"ok":…,"baseline":"…","repos":[{"path","sha","builtAt","ok"}],"skipped":[{"path","reason","ioError"?}]}
                      （退出码与人读模式一致）
   --root <dir>       仓库根目录（缺省主工作区；git 定位不到时退回当前目录）；--repos 用它解析相对路径
   --peer             检查各包声明的 DSH 版本范围是否覆盖当前版本：声明来自 engines.dsh →
@@ -2061,6 +2062,12 @@ function runReposCheck(raw, options, deps, io) {
     else if (result.ok) io.out(`构建一致：${result.repos.length} 个仓`)
   }
 
+  if (result.ioError) {
+    // 读盘失败是环境错误：退 3，不要混进「构建不一致」的 1
+    const bad = result.skipped.filter((item) => item.ioError === true).map((item) => item.path)
+    errorLine(io, 'selftest', 'E_ENV', `读不到已装包的 build.json: ${bad.join(', ')}`)
+    return 3
+  }
   if (!result.ok) {
     // GitHub annotation 风格，CI 能直接把它标成注解；--json 模式下照样进 stderr
     const drift = result.repos.filter((repo) => !repo.ok).map((repo) => repo.path)

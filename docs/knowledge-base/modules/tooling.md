@@ -35,7 +35,7 @@ dsh-pipeline selftest [--shims] [--config] [--lock] [--peer] [--exit-codes] [--f
 
 - `--repos` 与 `--shims` / `--config` / `--lock` / `--peer` / `--exit-codes` / `--fast` **互斥**（两者的 `--json` 形态不同）；
 - `--repos` 的路径：绝对路径直接用、相对路径按 `--root`（缺省当前目录）、`~/` 展开；
-- `--repos` 的纳入条件：目录存在 + 有 `bin/cli.mjs` + `build.json` 可读；其余**跳过并列出**（目录不存在 / 不是目录 / 未装包）；
+- `--repos` 的纳入条件：目录存在 + 有 `bin/cli.mjs` + `build.json` 可读；目录不存在 / 不是目录 / 未装包**跳过并列出**，`build.json` 读不出来（权限 / IO）**判失败退 3**（不静默放行）；
 - 可比对的仓**不足 2 个** → `baseline = null`、`ok = true`（没有第二方就没有"不一致"可言）；
 - `--root` 缺省：显式 > 主工作区 > 当前目录（与 `record` / `review` / `status` / `shim` / `hooks` 同一口径 `resolveMainWorktreeRoot`）。
 
