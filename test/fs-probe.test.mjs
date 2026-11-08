@@ -1,6 +1,7 @@
 /**
- * 「读盘失败不能当成不存在」这一整类的回归：每个命令在路径不可读时都退 3。
- * 覆盖：fs-probe 本身、selftest --config、doctor、check-all、hooks、selftest --peer、shim check。
+ * 「读盘失败不能当成不存在」这一整类的回归。
+ * 覆盖：probePath 本身、selftest --config、doctor、check-all。
+ * （hooks / shim / peer 的同一改动由各自的既有测试覆盖，这里不重复造夹具。）
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -65,8 +66,7 @@ test('selftest --config：配置文件读不出来 → 退 3（不当「无配�
   mkdirSync(join(root, '.dsh'), { recursive: true })
   const file = join(root, '.dsh', 'pipeline.json')
   writeFileSync(file, '{"repo":"owner/repo"}', 'utf8')
-  if (skipAsRoot(t)) return
-  chmodSync(file, 0o000)
+  // 先注册清理，再决定是否 skip：root 下也要把临时目录删掉
   t.after(() => {
     try {
       chmodSync(file, 0o644)
@@ -75,6 +75,8 @@ test('selftest --config：配置文件读不出来 → 退 3（不当「无配�
     }
     rmSync(root, { recursive: true, force: true })
   })
+  if (skipAsRoot(t)) return
+  chmodSync(file, 0o000)
 
   const result = run(['selftest', '--config', '--root', root])
   assert.equal(result.code, 3)
@@ -86,8 +88,6 @@ test('doctor：装包的 package.json 读不出来 → 退 3（不当「没装�
   const pkgDir = join(root, 'tools', 'node_modules', 'dsh-pipeline')
   mkdirSync(pkgDir, { recursive: true })
   writeFileSync(join(pkgDir, 'package.json'), '{"name":"@guraul/dsh-pipeline"}', 'utf8')
-  if (skipAsRoot(t)) return
-  chmodSync(pkgDir, 0o000)
   t.after(() => {
     try {
       chmodSync(pkgDir, 0o755)
@@ -96,6 +96,8 @@ test('doctor：装包的 package.json 读不出来 → 退 3（不当「没装�
     }
     rmSync(root, { recursive: true, force: true })
   })
+  if (skipAsRoot(t)) return
+  chmodSync(pkgDir, 0o000)
 
   const result = run(['doctor', '--repo', root])
   assert.equal(result.code, 3)
@@ -107,8 +109,6 @@ test('check-all：包目录的 package.json 读不出来 → 退 3（不静默�
   const dir = join(root, 'pkg-a')
   mkdirSync(dir, { recursive: true })
   writeFileSync(join(dir, 'package.json'), '{"name":"a"}', 'utf8')
-  if (skipAsRoot(t)) return
-  chmodSync(dir, 0o000)
   t.after(() => {
     try {
       chmodSync(dir, 0o755)
@@ -117,6 +117,8 @@ test('check-all：包目录的 package.json 读不出来 → 退 3（不静默�
     }
     rmSync(root, { recursive: true, force: true })
   })
+  if (skipAsRoot(t)) return
+  chmodSync(dir, 0o000)
 
   const result = run(['check-all', '--root', root])
   assert.equal(result.code, 3)

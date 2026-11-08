@@ -18,7 +18,7 @@
  * 退出码：0 通过 / 1 闸门拒绝或 CI 未过 / 2 参数或配置错误 / 3 环境错误（gh、git、写审计等 IO 失败）。
  * runner 可注入，测试用假 runner 断言实际发出的命令，不碰真实 gh/git。
  */
-import {existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync} from 'node:fs'
+import {mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync} from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -594,9 +594,14 @@ function decideGate({ pr, root, record, noReview, reason, headSha, runner }) {
     maxRounds = loadConfig(root).config.review.rounds
   } catch (error) {
     return {
-      code: 2,
+      code: isIoError(error) ? 3 : 2,
       skipped: false,
-      lines: [{ stream: 'err', text: errorText('gate', 'E_CONFIG', `读取配置失败: ${messageOf(error)}`) }],
+      lines: [
+        {
+          stream: 'err',
+          text: errorText('gate', isIoError(error) ? 'E_ENV' : 'E_CONFIG', `读取配置失败: ${messageOf(error)}`),
+        },
+      ],
     }
   }
 
@@ -1089,8 +1094,10 @@ function runRecord(argv, deps, io) {
     policy = { ...policy, changedLines: { total: lines.total, production: lines.production, testLines: lines.testLines } }
   } catch (error) {
     // 策略算不出来就写不了可信记录：宁可失败，也不写一条 policy 缺失的记录。
-    errorLine(io, 'record', 'E_CONFIG', `高风险判定失败: ${messageOf(error)}`)
-    return 2
+    // 读盘失败（EACCES 等）是环境错误，配置写错才是 E_CONFIG
+    const ioError = isIoError(error)
+    errorLine(io, 'record', ioError ? 'E_ENV' : 'E_CONFIG', `高风险判定失败: ${messageOf(error)}`)
+    return ioError ? 3 : 2
   }
 
   const record = {
@@ -1543,8 +1550,9 @@ function sendReview({ root, pr, headSha, io, runner }) {
   try {
     config = loadConfig(root).config
   } catch (error) {
-    errorLine(io, 'review publish', 'E_CONFIG', `读取配置失败: ${messageOf(error)}（记录已写入，review 未发出）`)
-    return 2
+    const ioError = isIoError(error)
+    errorLine(io, 'review publish', ioError ? 'E_ENV' : 'E_CONFIG', `读取配置失败: ${messageOf(error)}（记录已写入，review 未发出）`)
+    return ioError ? 3 : 2
   }
   const repo = config.repo
   if (!nonEmpty(repo)) {
