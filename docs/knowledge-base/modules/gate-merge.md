@@ -55,7 +55,7 @@
 | `head` | `gh pr view` 的 `headRefOid`（或 `--head-sha`） | `E_HEAD`（gh 读取失败 → 输出层折成 `E_ENV`）/ `E_STATE`（PR 没有 headRefOid）/ `E_INPUT`（输出层同样折成 `E_STATE`） | **不用本机 HEAD** |
 | `gate` | 同闸门（含跳过审计） | 闸门的码 | 不通过时后面的 gh 命令一条都不发 |
 | `pr` | 取 `headRefName` / `state` | `E_PR` | `CLOSED` 拒绝；`MERGED` 只清理 |
-| `ci` | `gh pr checks` 或 `--checks-file` | `E_CI` | 未知状态按阻塞；无 checks 跳过门槛；`--force` 连 gh 都不发 |
+| `ci` | `gh pr view --json statusCheckRollup` 或 `--checks-file` | `E_CI`（checks 真的没过）/ `E_ENV`（gh 失败或输出解析不了）/ `E_INPUT`（`--checks-file` 读不到或不是 JSON） | 未知状态按阻塞；无 checks 跳过门槛；`--force` 连 gh 都不发 |
 | `merge` | `gh pr merge --squash` | `E_GH` | squash 固定 |
 | `worktree` | 移除持有该分支的 worktree | `E_GIT` | 主工作区不可 remove → 跳过并继续 |
 | `fetch` | 主工作区 `fetch origin` | `E_GIT` | 只更新远端引用 |

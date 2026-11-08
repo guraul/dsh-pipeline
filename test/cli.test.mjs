@@ -287,6 +287,44 @@ test('merge 收尾删分支透传 force：实际执行的是 branch -D（回归 
   assert.deepEqual(branchCalls, [['branch', '-D', '--', 'task/7']])
 })
 
+test('merge: 取不到 checks（gh 失败）→ E_ENV 退 3；checks 真的没过 → E_CI 退 1', () => {
+  const makeRunner = (checks) => (command, args) => {
+    if (command === 'git') return { status: 0, stdout: `${SHA}\n`, stderr: '' }
+    // prChecks 走的是 `gh pr view <n> --json statusCheckRollup`（不是 `gh pr checks`）
+    if (args[0] === 'pr' && args[1] === 'view' && args.includes('statusCheckRollup')) return checks
+    if (args[0] === 'pr' && args[1] === 'view') {
+      return { status: 0, stdout: JSON.stringify({ headRefName: 'task/7', state: 'OPEN' }), stderr: '' }
+    }
+    return { status: 0, stdout: 'merged\n', stderr: '' }
+  }
+
+  // gh 侧失败：环境错误
+  const envRoot = tmp()
+  withRepo(envRoot)
+  const envFile = writeApprovedRecord(envRoot)
+  const envIo = makeIO()
+  const envCode = run(
+    ['merge', '--pr', '7', '--root', envRoot, '--record', envFile, '--head-sha', SHA],
+    envIo,
+    { runner: makeRunner({ status: 1, stdout: '', stderr: 'gh: boom' }) },
+  )
+  assert.equal(envCode, 3)
+  assert.match(envIo.state.err, /dsh-pipeline: merge: E_ENV: /)
+
+  // checks 真的没过：业务拒绝
+  const ciRoot = tmp()
+  withRepo(ciRoot)
+  const ciFile = writeApprovedRecord(ciRoot)
+  const ciIo = makeIO()
+  const ciCode = run(
+    ['merge', '--pr', '7', '--root', ciRoot, '--record', ciFile, '--head-sha', SHA],
+    ciIo,
+    { runner: makeRunner({ status: 0, stdout: JSON.stringify({ statusCheckRollup: [{ name: 'test', conclusion: 'FAILURE' }] }), stderr: '' }) },
+  )
+  assert.equal(ciCode, 1)
+  assert.match(ciIo.state.err, /dsh-pipeline: merge: E_STATE: /)
+})
+
 test('gate: --record 指向不存在的文件 → E_RECORD（E_IO 折成契约码）', () => {
   const root = tmp()
   withRepo(root)

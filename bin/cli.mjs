@@ -361,7 +361,7 @@ status 选项:
   -h, --help     显示帮助
   -v, --version  显示版本
 
-退出码: 0 通过 / 1 闸门拒绝 / 2 参数或环境错误`
+退出码: 0 通过 / 1 闸门拒绝或 CI 未过 / 2 参数或配置错误 / 3 环境错误（gh、git、写审计失败）`
 
 function messageOf(error) {
   return error instanceof Error ? error.message : String(error)
@@ -734,14 +734,13 @@ function publicCode(internal, fallback = 'E_STATE') {
     case 'E_PARSE':
       return 'E_PARSE'
     case 'E_ENV':
-    case 'E_CI':
     case 'E_AUDIT':
     case 'E_GH':
     case 'E_GIT':
     case 'E_HEAD':
       return 'E_ENV'
     default:
-      // E_VERDICT / E_EXPIRED / E_SHA_MISMATCH / E_PR_MISMATCH / E_INPUT / E_POLICY /
+      // E_CI（CI 真的没过）/ E_VERDICT / E_EXPIRED / E_SHA_MISMATCH / E_PR_MISMATCH / E_INPUT / E_POLICY /
       // E_POLICY_VERSION … 都是「状态不对」，不是配置读不出来
       return PUBLIC_CODES.includes(fallback) ? fallback : 'E_STATE'
   }
