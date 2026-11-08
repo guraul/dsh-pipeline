@@ -190,7 +190,7 @@ test('gate: 过期记录拒绝，退出码 1', () => {
   const io = makeIO()
 
   assert.equal(run(['gate', '--pr', '7', '--root', root, '--record', file, '--head-sha', SHA], io), 1)
-  assert.match(io.state.err, /dsh-pipeline: gate: E_/)
+  assert.match(io.state.err, /dsh-pipeline: gate: E_STATE: /)
   assert.match(io.state.err, /已过期/)
 })
 
@@ -208,7 +208,7 @@ test('gate: 缺记录且未跳过时 fail-closed，退出码 1', () => {
   const io = makeIO()
 
   assert.equal(run(['gate', '--pr', '7', '--root', root], io), 1)
-  assert.match(io.state.err, /dsh-pipeline: gate: E_/)
+  assert.match(io.state.err, /dsh-pipeline: gate: E_RECORD: /)
   assert.match(io.state.err, /失败关闭/)
   assert.equal(io.state.out, '')
 })

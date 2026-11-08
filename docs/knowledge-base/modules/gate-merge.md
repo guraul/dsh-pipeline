@@ -49,7 +49,7 @@
 | 步 | 动作 | 失败码 | 关键约束 |
 |---|---|---|---|
 | `repo` | 读 `.dsh/pipeline.json` 的 `repo` | `E_CONFIG` | 缺 repo 直接拒绝 |
-| `head` | `gh pr view` 的 `headRefOid`（或 `--head-sha`） | `E_HEAD` / `E_INPUT` | **不用本机 HEAD** |
+| `head` | `gh pr view` 的 `headRefOid`（或 `--head-sha`） | `E_HEAD`（gh 读取失败 → 输出层折成 `E_ENV`）/ `E_STATE`（PR 没有 headRefOid）/ `E_INPUT` | **不用本机 HEAD** |
 | `gate` | 同闸门（含跳过审计） | 闸门的码 | 不通过时后面的 gh 命令一条都不发 |
 | `pr` | 取 `headRefName` / `state` | `E_PR` | `CLOSED` 拒绝；`MERGED` 只清理 |
 | `ci` | `gh pr checks` 或 `--checks-file` | `E_CI` | 未知状态按阻塞；无 checks 跳过门槛；`--force` 连 gh 都不发 |
