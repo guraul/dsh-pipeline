@@ -22,7 +22,7 @@
 ## `selftest`
 
 ```bash
-dsh-pipeline selftest [--shims] [--config] [--lock] [--peer] [--exit-codes] [--fast | --repos a,b,c] [--json] [--root <dir>] [--dsh-version <v>]
+dsh-pipeline selftest [--shims] [--config] [--lock] [--peer] [--exit-codes] [--init] [--fast | --repos a,b,c] [--json] [--root <dir>] [--dsh-version <v>]
 ```
 
 | 检查项 | 内容 | 状态 |
@@ -33,13 +33,14 @@ dsh-pipeline selftest [--shims] [--config] [--lock] [--peer] [--exit-codes] [--f
 | `--fast` | 等价 `--shims --config`（pre-push 用，契约 §9） | 已实现 |
 | `--repos a,b,c` | 多仓装的共享包是否同一构建（读各自 `tools/node_modules/dsh-pipeline/build.json` 的 `gitSha`） | 已实现 |
 | `--peer` | 各包的 DSH 版本声明覆盖当前版本（四个来源按优先级） | 已实现 |
+| `--init` | 四件套接入检测：配置可过 schema、6 个入口与模板一致、pre-push 钩子已装且可执行、`docs/pipeline` 生成区一致（与 `init --check` 同一判据）；不并入 `--fast` | 已实现 |
 | `--exit-codes` | 起子进程真跑七条用例，断言契约 §4：APPROVE 记录过闸门→0；REJECT 记录、旧规则记录（`E_POLICY_VERSION`）→1；缺参/未知参数/未知子命令→2；入口找不到共享包→3（并断言输出关键字）；cwd 钉临时目录 | 已实现（唯一会 spawn 的检查项） |
 
-- `--repos` 与 `--shims` / `--config` / `--lock` / `--peer` / `--exit-codes` / `--fast` **互斥**（两者的 `--json` 形态不同）；
+- `--repos` 与 `--shims` / `--config` / `--lock` / `--peer` / `--exit-codes` / `--init` / `--fast` **互斥**（两者的 `--json` 形态不同）；
 - `--repos` 的路径：绝对路径直接用、相对路径按 `--root`（缺省当前目录）、`~/` 展开；
 - `--repos` 的纳入条件：目录存在 + 有 `bin/cli.mjs` + `build.json` 可读；目录不存在 / 不是目录 / 未装包**跳过并列出**，装包目录或 `build.json` 读不出来（权限 / IO）**判失败退 3**（不静默放行）；路径中间是文件（`ENOTDIR`）按「目录不存在」跳过；**其余未知 errno 一律按环境错误**（宁可报错，不静默跳过）；
 - 可比对的仓**不足 2 个** → `baseline = null`、`ok = true`（没有第二方就没有"不一致"可言）；
-- `--root` 缺省：显式 > 主工作区 > 当前目录（与 `record` / `review` / `status` / `shim` / `hooks` 同一口径 `resolveMainWorktreeRoot`）。
+- `--root` 缺省：显式 > 主工作区 > 当前目录（与 `record` / `review` / `status` / `shim` / `hooks` / `init` 同一口径 `resolveMainWorktreeRoot`）。
 
 ## `lock`
 
