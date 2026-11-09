@@ -224,14 +224,20 @@ test('导出面固定：只有具名操作，没有接受 argv 的通用入口',
   assert.deepEqual(callables.map(([name]) => name).sort(), [
     'branchShow',
     'checkout',
+    'commitExists',
     'configGet',
     'configSet',
     'currentBranch',
     'deleteBranch',
+    'diffNameOnly',
+    'diffShortstat',
     'fetch',
     'gitCommonDir',
     'headOneline',
     'headSha',
+    'isAncestor',
+    'logOnelineRange',
+    'lsFiles',
     'mergeFF',
     'push',
     'remoteUrl',
@@ -316,4 +322,61 @@ test('worktreeAdd / push / configGet / configSet：非法入参不调用 git', (
   const set = recorder({ status: 0, stdout: '', stderr: '' })
   git.configSet(CWD, { key: 'user.name', value: 'gubin', runner: set })
   assert.deepEqual(set.calls[0].args, ['-C', CWD, 'config', 'user.name', 'gubin'])
+})
+
+
+test('lsFiles：-z 分隔、-- 保护 pathspec、非法项不执行', () => {
+  const runner = recorder({ status: 0, stdout: 'lib/a.mjs\0lib/b.mjs\0' })
+  const result = git.lsFiles(CWD, { pathspec: ['lib/*.mjs'], runner })
+  assert.deepEqual(result.data, ['lib/a.mjs', 'lib/b.mjs'])
+  assert.deepEqual(runner.calls[0].args, ['-C', CWD, 'ls-files', '-z', '--', 'lib/*.mjs'])
+
+  const bad = recorder()
+  assert.equal(git.lsFiles(CWD, { pathspec: [], runner: bad }).code, 'E_INPUT')
+  assert.equal(git.lsFiles(CWD, { pathspec: ['-x'], runner: bad }).code, 'E_INPUT')
+  assert.equal(bad.calls.length, 0)
+})
+
+test('commitExists / isAncestor：固定 argv，非十六进制 sha 不执行', () => {
+  const ok = recorder({ status: 0, stdout: '' })
+  assert.equal(git.commitExists(CWD, { sha: 'abc1234', runner: ok }).ok, true)
+  assert.deepEqual(ok.calls[0].args, ['-C', CWD, 'cat-file', '-e', 'abc1234^{commit}'])
+
+  const ancestor = recorder({ status: 1, stdout: '', stderr: '' })
+  const result = git.isAncestor(CWD, { sha: 'abc1234', runner: ancestor })
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 1)
+  assert.deepEqual(ancestor.calls[0].args, ['-C', CWD, 'merge-base', '--is-ancestor', 'abc1234', 'HEAD'])
+
+  const bad = recorder()
+  assert.equal(git.commitExists(CWD, { sha: 'not-hex', runner: bad }).code, 'E_INPUT')
+  assert.equal(git.isAncestor(CWD, { sha: 'a..b', runner: bad }).code, 'E_INPUT')
+  assert.equal(bad.calls.length, 0)
+})
+
+test('logOnelineRange / diffShortstat / diffNameOnly：固定 argv', () => {
+  const log = recorder({ status: 0, stdout: 'abc1234 改 a\ndef5678 改 b\n' })
+  const lines = git.logOnelineRange(CWD, { from: 'aaa1111', paths: ['lib/*.mjs'], runner: log })
+  assert.deepEqual(lines.data, ['abc1234 改 a', 'def5678 改 b'])
+  assert.deepEqual(log.calls[0].args, [
+    '-C', CWD, 'log', '--oneline', 'aaa1111..HEAD', '--', 'lib/*.mjs',
+  ])
+
+  const stat = recorder({ status: 0, stdout: ' 1 file changed, 2 insertions(+)\n' })
+  assert.equal(
+    git.diffShortstat(CWD, { from: 'aaa1111', paths: ['lib/*.mjs'], runner: stat }).data,
+    '1 file changed, 2 insertions(+)',
+  )
+
+  const staged = recorder({ status: 0, stdout: 'lib/a.mjs\n' })
+  assert.deepEqual(git.diffNameOnly(CWD, { staged: true, runner: staged }).data, ['lib/a.mjs'])
+  assert.deepEqual(staged.calls[0].args, ['-C', CWD, 'diff', '--name-only', '--cached'])
+
+  const range = recorder({ status: 0, stdout: 'lib/a.mjs\n' })
+  git.diffNameOnly(CWD, { range: 'main..HEAD', runner: range })
+  assert.deepEqual(range.calls[0].args, ['-C', CWD, 'diff', '--name-only', 'main..HEAD'])
+
+  const bad = recorder()
+  assert.equal(git.diffNameOnly(CWD, { range: '-x..y', runner: bad }).code, 'E_INPUT')
+  assert.equal(bad.calls.length, 0)
 })
