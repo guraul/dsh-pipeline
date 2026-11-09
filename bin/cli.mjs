@@ -2410,6 +2410,9 @@ function runKbCheck(argv, deps, io) {
   if (options.root !== undefined && !nonEmpty(options.root)) {
     return argError(io, 'kb', '--root 必须是非空目录路径')
   }
+  for (const value of options.exclude ?? []) {
+    if (!nonEmpty(value)) return argError(io, 'kb', '--exclude 必须是非空 glob')
+  }
   const root = resolveKbRoot(options.root, deps)
   const located = resolveKbDir(root, options['kb-dir'])
   if (located.error !== undefined) return argError(io, 'kb', located.error)
@@ -2469,7 +2472,7 @@ function runKbInit(argv, deps, io) {
   const existing = listKbDocs(root, { kbDir: located.kbDir })
   if (existing.error !== undefined) return argError(io, 'kb', existing.error, 'E_ENV')
   if (existing.docs.length > 0) {
-    errorLine(io, 'kb', 'E_CONFIG', `已有知识库（${located.kbDir} 下 ${existing.docs.length} 篇），请用 kb refresh`)
+    io.err(`kb: 已有知识库（${located.kbDir} 下 ${existing.docs.length} 篇），请用 kb refresh`)
     return 1
   }
 
@@ -2531,6 +2534,12 @@ function runKbRefresh(argv, deps, io) {
   }
   if (options.out !== undefined && !nonEmpty(options.out)) {
     return argError(io, 'kb', '--out 必须是非空文件路径')
+  }
+  for (const value of options.exclude ?? []) {
+    if (!nonEmpty(value)) return argError(io, 'kb', '--exclude 必须是非空 glob')
+  }
+  for (const value of options.doc ?? []) {
+    if (!nonEmpty(value)) return argError(io, 'kb', '--doc 必须是非空路径')
   }
   const root = resolveKbRoot(options.root, deps)
   const located = resolveKbDir(root, options['kb-dir'])
