@@ -541,3 +541,63 @@ test('kb impact：--staged 与 --range 互斥，非法区间退 2', (t) => {
   assert.equal(run(['kb', 'impact', '--root', root, '--staged', '--range', 'a..b']).code, 2)
   assert.equal(run(['kb', 'impact', '--root', root, '--range', 'not-a-range']).code, 2)
 })
+
+// ---------------------------------------------------------------- 审核修复的回归
+
+test('git 不可用（非 git 目录）按环境错误退 3，不报成 E_DEAD_GLOB', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-kb-nogit-'))
+  t.after(() => cleanup(root))
+  writeDoc(root, 'INDEX.md', { title: '索引', stamp: 'abc1234', body: INDEX_BODY })
+  const result = check(root)
+  assert.equal(result.code, 3)
+  assert.match(result.err, /E_ENV/)
+  assert.doesNotMatch(result.out, /E_DEAD_GLOB/)
+})
+
+test('覆盖路径带空格（合法文件名）可以正常展开', (t) => {
+  const { root } = makeCleanRepo()
+  t.after(() => cleanup(root))
+  writeFileSync(join(root, 'lib', 'a b.mjs'), 'export const b = 1\n')
+  commitAll(root, '加带空格的文件')
+  writeFileSync(
+    join(root, KB, 'modules', 'core.md'),
+    `# 核心模块\n\n> 最后更新: 2026-11-01 | commit: \`${git(root, 'rev-parse', 'HEAD').trim()}\`\n> 覆盖路径: \`lib/a b.mjs\`\n`,
+  )
+  const result = check(root)
+  assert.equal(result.code, 0, result.out)
+})
+
+test('--exclude 同时过滤 INDEX 导航，排除导航里列着的文档不报 E_NAV_MISMATCH', (t) => {
+  const { root, stamp } = makeCleanRepo()
+  t.after(() => cleanup(root))
+  writeDoc(root, 'modules/extra.md', { title: '额外模块', stamp })
+  const indexFile = join(root, KB, 'INDEX.md')
+  writeFileSync(
+    indexFile,
+    readFileSync(indexFile, 'utf8').replace(
+      '| `modules/core.md` | 核心模块 |',
+      '| `modules/core.md` | 核心模块 |\n| `modules/extra.md` | 额外模块 |',
+    ),
+  )
+  writeFileSync(
+    join(root, 'AGENTS.md'),
+    `${AGENTS_TEXT}| 额外模块 | \`${KB}/modules/extra.md\` |\n`,
+  )
+  assert.equal(check(root).code, 0)
+  assert.equal(check(root, ['--exclude', 'modules/extra.md']).code, 0)
+})
+
+test('INDEX 导航写全仓相对路径（docs/knowledge-base/…）也能识别', (t) => {
+  const { root } = makeCleanRepo()
+  t.after(() => cleanup(root))
+  const indexFile = join(root, KB, 'INDEX.md')
+  const text = readFileSync(indexFile, 'utf8')
+  const rewritten = text
+    .replace(/`(INDEX|ARCHITECTURE|API|DATA|OPERATIONS|CONVENTIONS)\.md`/g, `\`${KB}/$1.md\``)
+    .replace(/`modules\/(core)\.md`/g, `\`${KB}/modules/$1.md\``)
+  assert.match(rewritten, new RegExp(`\`${KB}/INDEX\\.md\``), '导航必须真的改写成全仓相对路径')
+  assert.match(rewritten, new RegExp(`\`${KB}/modules/core\\.md\``))
+  writeFileSync(indexFile, rewritten)
+  const result = check(root)
+  assert.equal(result.code, 0, result.out)
+})
