@@ -24,7 +24,7 @@
 | 编码约定、历史包袱、修改红线 | `docs/knowledge-base/CONVENTIONS.md` |
 | **契约（唯一规范来源）** | `docs/CONTRACT.md` |
 
-**查询流程**（参照 `docs/promptA.md` 维护约定）：先基于知识库定位涉及模块与文件，给出方案；信息不足时再针对性读源码片段，不要全量读码。涉及命令面 / 退出码 / 配置 schema / 落盘路径变更时，事后同步更新 `docs/CONTRACT.md` 与知识库对应文档。
+**查询流程**（参照 `docs/kb-prompt.md` 维护约定）：先基于知识库定位涉及模块与文件，给出方案；信息不足时再针对性读源码片段，不要全量读码。涉及命令面 / 退出码 / 配置 schema / 落盘路径变更时，事后同步更新 `docs/CONTRACT.md` 与知识库对应文档。
 
 ## CODING GUIDELINES
 
