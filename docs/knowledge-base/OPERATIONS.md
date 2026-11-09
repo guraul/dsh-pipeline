@@ -1,6 +1,7 @@
 # 构建与运维
 
-**最后更新**：2026-11-08 · 对应提交 `cccfe84`
+> 最后更新: 2026-11-09 | commit: `ca4f040`
+> 覆盖路径: `package.json`, `bin/cli.mjs`, `.github/workflows/ci.yml`, `scripts/pack.sh`, `templates/shim.sh`, `test/contract.test.mjs`, `test/gitignore.test.mjs`, `.dsh/pipeline.json`, `lib/dist-freshness.mjs`, `lib/profile-check.mjs`
 
 ## 1. 环境变量清单
 
@@ -39,7 +40,7 @@ node bin/cli.mjs --version
 | 夹具 | `test/fixtures/plugin-record.json`（**真实运行产出**，防字段漂移，不要手改） |
 | 特点 | 大量用例注入假 `runner` 断言"实际发出的命令"；`test/contract.test.mjs` 用真实子进程 + 假 gh/git 验证「闸门不通过时一条 gh 命令都不发」；`test/gitignore.test.mjs` 用真实 `git check-ignore` |
 
-按模块看测试分布（同名前缀）：`gate`、`merge`、`policy`、`record`（+ `record-name`）、`review`（+ `review-cmd`）、`roles`、`config`、`task`（+ `task-worktree`）、`pr`、`git`、`gh`、`shim`、`hooks`、`selftest`、`init`、`check-all`、`doctor`、`contract`（+ `contract-format`）、`cli`、`post-review`、`gitignore`。
+按模块看测试分布（同名前缀）：`gate`、`merge`、`policy`、`record`（+ `record-name`）、`review`（+ `review-cmd`）、`roles`、`config`、`task`（+ `task-worktree`）、`pr`、`git`、`gh`、`shim`、`hooks`、`selftest`、`init`、`check-all`、`doctor`、`contract`（+ `contract-format`）、`cli`、`post-review`、`gitignore`、`kb`。
 
 ## 4. 打包（发给消费仓的唯一方式）
 
@@ -185,3 +186,20 @@ dsh-pipeline merge --pr <N> --record <记录>
 ```
 
 `.dsh/pipeline.json` 的 `ci` 字段**没有消费方**（CI 判定走 `gh pr checks`），写它只是预留。
+
+## 10. 知识库维护（kb）
+
+本仓知识库在 `docs/knowledge-base/`，机械校验是 `kb check`（契约 §3.2，规则见 `modules/kb.md`）：
+
+```bash
+node bin/cli.mjs kb check --root .              # 页眉 + 覆盖路径 + 入口检查；退 0 才算完成
+node bin/cli.mjs kb check --root . --json       # 机器报告
+node bin/cli.mjs kb check --root . --strict     # stale > 0 也退 1（收尾用）
+node bin/cli.mjs kb impact --staged             # 这次暂存的改动影响哪几篇
+node bin/cli.mjs kb refresh --root . --out /tmp/kb-refresh.md   # 存量更新提示词
+```
+
+- 改了 `lib/` / `bin/` 的代码后，若文档内容需要跟着改，`kb impact` 会列出受影响的文档；改完把页眉的 stamp 更新为**内容对齐的代码提交**。
+- 页眉格式固定两行（`> 最后更新: … | commit: \`…\`` + `> 覆盖路径: …`），旧格式只给 `W_LEGACY_HEADER`。
+- `kb init` 只给新仓用（已有 KB 会退 1），它只打印提示词与 `AGENTS.md` 草稿，不写任何文件。
+- `kb check` 的缺省 root 是当前工作树的 git 顶层（不是主工作区）；在 task worktree 里跑要显式 `--root .`。

@@ -1,12 +1,13 @@
 # dsh-pipeline 知识库索引
 
-**最后更新**：2026-11-08 · 对应提交 `cccfe84`
+> 最后更新: 2026-11-09 | commit: `ca4f040`
+> 覆盖路径: `package.json`, `bin/cli.mjs`, `lib/*.mjs`, `templates/**`, `.dsh/pipeline.json`, `.github/workflows/*.yml`, `scripts/pack.sh`, `test/gate.test.mjs`, `test/merge.test.mjs`, `test/contract-format.test.mjs`
 
 ## 使用说明
 
 **加载顺序**：每次对话先读本文件建立全局认知；需要动某个子命令时只加载对应 `modules/*.md`；查产物落在哪读 `DATA.md`；跑测试 / 打包 / 部署读 `OPERATIONS.md`；改行为前先看 `CONVENTIONS.md` 的红线。
 
-**如何更新**：知识库与代码同仓，放 `docs/knowledge-base/`。涉及**架构 / 命令面 / 退出码 / 配置 schema / 落盘路径**的变更必须同步更新对应文档（纯实现细节不必）。每份文档顶部标注最后更新日期 + 对应 commit 短 hash。生成与本文件的约定见 `docs/kb-prompt.md`；唯一规范来源是 `docs/CONTRACT.md`——本知识库**描述现状**，契约**定义规则**，两者冲突时以契约为准并视为缺陷。
+**如何更新**：知识库与代码同仓，放 `docs/knowledge-base/`。涉及**架构 / 命令面 / 退出码 / 配置 schema / 落盘路径**的变更必须同步更新对应文档（纯实现细节不必）。每份文档顶部用 canonical 两行（`> 最后更新: … | commit: \`…\`` + `> 覆盖路径: …`），由 `node bin/cli.mjs kb check --root .` 机械校验；生成与本文件的约定见 `docs/kb-prompt.md`；唯一规范来源是 `docs/CONTRACT.md`——本知识库**描述现状**，契约**定义规则**，两者冲突时以契约为准并视为缺陷。
 
 ## 项目一句话定位
 
@@ -33,6 +34,7 @@
 | 逐包跑 test/check/typecheck | `check-all` | `lib/check-all.mjs` |
 | 生成 / 校验部署 caller workflow 骨架 | `deploy init` / `deploy check` | `lib/deploy.mjs` |
 | 新仓库一键接入（配置 + shim + hooks + docs 骨架） | `init` / `init --check` | `lib/init.mjs` |
+| 知识库检查 / 初始化 / 更新提示词 / 影响分析 | `kb check` / `kb init` / `kb refresh` / `kb impact` | `lib/kb.mjs` |
 | 写入 / 核对锁文件（装的是哪个构建） | `lock write` / `lock check`（`selftest --lock` 同一实现） | `lib/lock.mjs`（自己读装包的 `build.json`） |
 | 构建标识（打包时写入） | `bash scripts/pack.sh` | `scripts/pack.sh` + `lib/build-info.mjs` |
 
@@ -53,8 +55,8 @@
 
 ```text
 dsh-pipeline/
-├── bin/cli.mjs              # 唯一入口：参数解析、子命令编排、输出与退出码（约 2000 行）
-├── lib/                     # 业务实现，19 个模块；CLI 只调它，不复制规则
+├── bin/cli.mjs              # 唯一入口：参数解析、子命令编排、输出与退出码（约 3200 行）
+├── lib/                     # 业务实现，28 个模块；CLI 只调它，不复制规则
 │   ├── gate.mjs             # 闸门判定（纯函数）
 │   ├── merge.mjs            # 合并编排：闸门 → CI → squash → 清理
 │   ├── policy.mjs           # 高风险 glob 策略 + 变更行数上限
@@ -69,11 +71,12 @@ dsh-pipeline/
 │   ├── init.mjs / region.mjs  # 一键接入（四件套）与生成区通用操作
 │   ├── deploy.mjs           # 部署 caller workflow 骨架的生成 / 校验（契约 §10）
 │   ├── lock.mjs             # .dsh/pipeline.lock.json 的读 / 写 / 核对（契约 §7.2）
+│   ├── kb.mjs               # 知识库页眉 / 覆盖路径 / 入口检查与四种提示词（契约 §3.2）
 │   ├── doctor.mjs / profile-check.mjs / build-info.mjs
-├── templates/shim.sh        # 6 个入口的渲染模板（{{VERSION}} / {{CMD}}）
+├── templates/               # shim.sh（6 个入口）+ pipeline-docs/ + kb-prompt.md + agents.md
 ├── scripts/pack.sh          # 打包门禁：先 node --test，通过才 pnpm pack 到 dist/
 ├── docs/
-│   ├── CONTRACT.md          # 交付契约 v1.1（唯一规范来源）
+│   ├── CONTRACT.md          # 交付契约 v1.3（唯一规范来源）
 │   ├── kb-prompt.md         # 知识库生成提示词（从 agent-mobile 复制）
 │   └── knowledge-base/      # 本知识库
 ├── .dsh/pipeline.json       # 本仓配置：repo / ci / highRisk
@@ -147,6 +150,8 @@ merge ──> gate(读记录 + policyVersion/TTL/SHA) ──> gh pr checks ─�
 | 刷新 / 核对某仓的锁文件 | `node bin/cli.mjs lock write --root <仓>` / `lock check --root <仓>`（见 `modules/tooling.md`） |
 | 生成 / 校验某仓的部署 caller 骨架 | `.dsh/pipeline.json` 的 `deploy` 段 → `node bin/cli.mjs deploy init --root <仓> [--write]` / `deploy check --root <仓>`（见 `modules/deploy.md`） |
 | 新仓接入 / 校验四件套 | `node bin/cli.mjs init --root <仓>` / `init --check --root <仓>`（见 `modules/tooling.md`） |
+| 检查 / 初始化 / 更新知识库 | `node bin/cli.mjs kb check --root .` / `kb init` / `kb refresh` / `kb impact`（见 `modules/kb.md`） |
+| 改知识库页眉 / 覆盖路径判据 | `lib/kb.mjs`（`parseHeader` / `checkCoverage` / `checkEntry`）+ `test/kb.test.mjs` |
 | 打包给消费仓 | `bash scripts/pack.sh` → `dist/latest.tgz` + `build.json` |
 
 ## 文档导航
@@ -165,4 +170,5 @@ merge ──> gate(读记录 + policyVersion/TTL/SHA) ──> gh pr checks ─�
 | `modules/task-pr-git-gh.md` | task / pr / repo / git / gh |
 | `modules/tooling.md` | init / selftest / lock / shim / hooks / check-all / doctor / profile-check / build-info |
 | `modules/deploy.md` | 部署 caller 骨架：`deploy init` / `check`、`deploy` 配置段、三条铁律 |
+| `modules/kb.md` | 知识库三件套：`kb check` / `init` / `refresh` / `impact`、12 类错误码、页眉与覆盖路径契约 |
 | `../CONTRACT.md`（仓内 `docs/CONTRACT.md`） | 契约：命令面、退出码、输出、落盘、配置 schema、shim、门禁、部署 |

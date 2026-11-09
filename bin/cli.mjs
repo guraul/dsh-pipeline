@@ -45,6 +45,15 @@ import { currentUser, issueView, prChecks, prDiff, prMerge, prView } from '../li
 import { checkHook, installHook } from '../lib/hooks.mjs'
 import { runInit as runInitFlow } from '../lib/init.mjs'
 import {
+  KB_DIR,
+  checkKb,
+  computeImpact,
+  listKbDocs,
+  renderAgentsDraft,
+  renderInitPrompt,
+  renderRefreshPrompt,
+} from '../lib/kb.mjs'
+import {
   branchShow,
   checkout,
   currentBranch,
@@ -105,6 +114,7 @@ const pkg = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8'))
 
 const IMPLEMENTED = new Set([
   'check-all',
+  'kb',
   'deploy',
   'doctor',
   'gate',
@@ -122,6 +132,7 @@ const IMPLEMENTED = new Set([
 ])
 const SUBCOMMANDS = [
   'task',
+  'kb',
   'lock',
   'pr',
   'merge',
@@ -162,6 +173,7 @@ const HELP = `dsh-pipeline ${pkg.version} — 统一交付与审核流程的单�
   check-all  逐包跑 test / check / typecheck 并汇总（缺 node_modules 跳过不算失败）
   deploy     生成 / 校验部署 caller workflow 骨架（契约 §10）
   lock       写入 / 核对 .dsh/pipeline.lock.json（契约 §7.2）
+  kb         知识库检查 / 初始化 / 更新提示词 / 影响分析（契约 §3.2）
   task       从 issue 创建 task/<号>-<slug> 分支与 worktree
   pr         推送当前 task 分支并创建 PR
   review     生成审核请求（prepare）、审核提示词（prompt）并把判定落成记录（publish）
@@ -283,6 +295,38 @@ lock 用法:
   --root <dir>       仓库根目录（必填；不猜当前目录）
   退出码: 0 一致或跳过 / 1 不一致、格式非法或旧版本包 / 2 用法错误、未装包 / 3 读盘或写盘失败
 
+kb 用法:
+  dsh-pipeline kb check   [--root <dir>] [--kb-dir <dir>] [--exclude <glob>]... [--strict] [--json] [--allow-missing]
+  dsh-pipeline kb init    [--root <dir>] [--kb-dir <dir>] [--prompt <path>] [--out <file>] [--json]
+  dsh-pipeline kb refresh [--root <dir>] [--kb-dir <dir>] [--doc <path>]... [--exclude <glob>]... [--out <file>] [--json]
+  dsh-pipeline kb impact  [--root <dir>] [--kb-dir <dir>] (--staged | --range <a>..<b>) [--json]
+  check    校验每篇页眉（最后更新 + commit / 覆盖路径）与入口（AGENTS.md 路由、INDEX.md 导航）：
+           文档级 7 类错误码 E_NO_STAMP / E_BAD_DATE / E_STAMP_ORPHAN / E_NO_COVERAGE /
+           E_DEAD_GLOB / E_BROAD_GLOB / E_FORBIDDEN_PATH；入口级 5 类 E_NO_AGENTS /
+           E_NO_KB_ROUTE / E_ROUTE_DEAD / E_ROUTE_MISMATCH / E_NAV_MISMATCH。
+           旧格式页眉（· commit / **最后更新** / commit <sha> · 说明）可解析，只给 W_LEGACY_HEADER 不失败；
+           单条 glob >30 文件、单篇 >200 文件、顶层文档 >10 条均报 E_BROAD_GLOB。
+  init     生成「从零建知识库」提示词（stdout；--out 落文件）：含写作指令全文、仓库事实、
+           页眉契约与覆盖路径契约；额外打印 AGENTS.md 草稿但**不写任何文件**；
+           KB 目录下已有 *.md 时退 1（改用 kb refresh）。
+  refresh  生成「存量更新」提示词：写作指令全文 + 结构违规清单 + 每篇 stale 的 git log 原文
+           + 升级规则（>30 条提交或 >2000 行 diff 改为重写）+ 页眉规则 + 禁止项；
+           --doc 可重复，只处理指定文档。
+  impact   算「这次改动影响哪几篇文档」：--staged 取暂存区，--range 取区间（缺省 origin/main..HEAD）；
+           只读，不改任何文件。
+  --root <dir>       仓库根目录（缺省 cwd 的 git 顶层；不是 git 仓时用 cwd）
+  --kb-dir <dir>     知识库目录（相对仓库根，缺省 docs/knowledge-base）
+  --exclude <glob>   可重复；枚举时排除命中的文档（相对知识库或仓库根匹配）
+  --strict           仅 check：stale > 0 也退 1（缺省只报告不失败，避免阻塞无关 PR）
+  --allow-missing    仅 check：知识库目录不存在时退 0（多仓批量巡检用）
+  --prompt <path>    仅 init / refresh：写作指令路径（缺省 docs/kb-prompt.md → docs/promptA.md → 包内模板）
+  --out <file>       仅 init / refresh：提示词写入文件（不写 KB 正文、不改任何文档）
+  --doc <path>       仅 refresh：可重复，只处理指定文档（相对知识库目录）
+  --range <a>..<b>   仅 impact：提交区间（与 --staged 互斥）
+  --json             机器可读输出（退出码与人读模式一致）
+  退出码: 0 通过 / 1 有结构违规（或 --strict 且有 stale；init 遇已有 KB、refresh 遇无 KB）/
+          2 用法或配置错误 / 3 git、读盘或写盘失败
+
 task 用法:
   dsh-pipeline task <issue号> [--slug <slug>] [--root <dir>] [--worktrees-dir <dir>]
   --slug <slug>      手动指定分支/目录后缀（缺省由 issue 标题生成；中文标题会退化成哈希，可读性差时用它）。
@@ -403,8 +447,9 @@ function nonEmpty(value) {
 /**
  * 极简参数解析：只接受 --name value 与 --name=value。
  * 布尔参数不取值；重复参数、未知参数一律报错，不做猜测。
+ * repeatableFlags 里的参数可重复出现，收集成数组（--exclude / --doc 用）。
  */
-function parseArgs(argv, valueFlags, booleanFlags) {
+function parseArgs(argv, valueFlags, booleanFlags, repeatableFlags = new Set()) {
   const options = {}
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
@@ -416,6 +461,20 @@ function parseArgs(argv, valueFlags, booleanFlags) {
       if (eq !== -1) return { error: `--${name} 不接受取值` }
       if (options[name] !== undefined) return { error: `重复参数: --${name}` }
       options[name] = true
+      continue
+    }
+
+    if (repeatableFlags.has(name)) {
+      let value
+      if (eq !== -1) {
+        value = arg.slice(eq + 1)
+      } else {
+        const next = argv[i + 1]
+        if (next === undefined || next.startsWith('--')) return { error: `--${name} 缺少取值` }
+        value = next
+        i += 1
+      }
+      options[name] = [...(options[name] ?? []), value]
       continue
     }
 
@@ -728,6 +787,17 @@ const CHECK_ALL_BOOL_FLAGS = new Set(['json'])
 const DEPLOY_VALUE_FLAGS = new Set(['root'])
 const DEPLOY_INIT_BOOL_FLAGS = new Set(['write', 'rollback'])
 const DEPLOY_CHECK_BOOL_FLAGS = new Set()
+const KB_CHECK_VALUE_FLAGS = new Set(['root', 'kb-dir'])
+const KB_CHECK_BOOL_FLAGS = new Set(['strict', 'json', 'allow-missing'])
+const KB_CHECK_REPEAT_FLAGS = new Set(['exclude'])
+const KB_INIT_VALUE_FLAGS = new Set(['root', 'kb-dir', 'prompt', 'out'])
+const KB_INIT_BOOL_FLAGS = new Set(['json'])
+const KB_REFRESH_VALUE_FLAGS = new Set(['root', 'kb-dir', 'prompt', 'out'])
+const KB_REFRESH_BOOL_FLAGS = new Set(['json'])
+const KB_REFRESH_REPEAT_FLAGS = new Set(['doc', 'exclude'])
+const KB_IMPACT_VALUE_FLAGS = new Set(['root', 'kb-dir', 'range'])
+const KB_IMPACT_BOOL_FLAGS = new Set(['staged', 'json'])
+const KB_RANGE_PATTERN = /^[^\s-][^\s]*\.\.[^\s]+$/
 
 function emit(io, lines) {
   for (const line of lines) {
@@ -2248,6 +2318,332 @@ function runHooks(argv, deps, io) {
   return 0
 }
 
+/** kb 的根目录：显式 --root > cwd 的 git 顶层 > cwd（不是 git 仓时由后续 git 调用报环境错误）。 */
+function resolveKbRoot(value, deps) {
+  if (nonEmpty(value)) return resolve(value)
+  const cwd = deps.cwd ?? process.cwd()
+  const top = toplevel(cwd, { runner: deps.runner })
+  return top.ok ? top.data : resolve(cwd)
+}
+
+/** 校验 --kb-dir：必须是仓库内的相对路径（否则导航与覆盖路径都无法相对它解析）。 */
+function resolveKbDir(root, value) {
+  const raw = value === undefined ? KB_DIR : String(value).trim()
+  if (raw.length === 0) return { error: '--kb-dir 不能为空' }
+  if (isAbsolute(raw)) return { error: '--kb-dir 必须是相对仓库根的路径' }
+  const cleaned = raw.replace(/\\/g, '/').replace(/\/+$/, '')
+  const abs = resolve(root, cleaned)
+  const rel = relative(root, abs)
+  if (rel.length === 0 || rel.startsWith('..') || isAbsolute(rel)) {
+    return { error: `--kb-dir 必须在仓库内: ${raw}` }
+  }
+  return { kbDir: cleaned }
+}
+
+/** 写 --out：父目录不存在就建，写失败按环境错误退 3。 */
+function writeKbOut(io, out, text, deps) {
+  const target = resolve(deps.cwd ?? process.cwd(), out)
+  try {
+    mkdirSync(dirname(target), { recursive: true })
+    writeFileSync(target, text)
+  } catch (error) {
+    return argError(io, 'kb', `写入 --out 失败: ${messageOf(error)}`, 'E_ENV')
+  }
+  io.out(`kb: 已写入 ${target}`)
+  return 0
+}
+
+/** check 的机器可读形态：去掉内部字段（log / diffstat 只在 refresh 提示词里用）。 */
+function kbJsonReport(report) {
+  return {
+    ok: report.ok,
+    root: report.root,
+    kbDir: report.kbDir,
+    entry: report.entry,
+    docs: report.docs.map((doc) => ({
+      path: doc.path,
+      stamp: doc.stamp,
+      date: doc.date,
+      coverage: doc.coverage,
+      stale: doc.stale,
+      commits: doc.commits,
+      errors: doc.errors,
+      warnings: doc.warnings,
+    })),
+    summary: report.summary,
+  }
+}
+
+function printKbReport(io, report, { strict }) {
+  io.out(`kb: 检查 ${report.kbDir}（${report.summary.docs} 篇）`)
+  io.out('入口:')
+  if (report.entry.agents && report.entry.kbRoute && report.entry.errors.length === 0) {
+    io.out('  ✓ AGENTS.md 存在且含知识库路由')
+  } else {
+    if (report.entry.agents) io.out('  ✓ AGENTS.md 存在')
+    for (const error of report.entry.errors) io.out(`  ✗ ${error.code}: ${error.detail}`)
+  }
+  io.out('文档:')
+  for (const doc of report.docs) {
+    const mark = doc.errors.length === 0 ? '✓' : '✗'
+    const parts = [`stamp ${doc.stamp ?? '无'}`, `覆盖 ${doc.coverage} 条`, `stale ${doc.stale}`]
+    io.out(`  ${mark} ${doc.path}（${parts.join('，')}）`)
+    for (const error of doc.errors) io.out(`      ${error.code}: ${error.detail}`)
+    for (const warning of doc.warnings) io.out(`      ${warning}: 页眉是旧格式（可解析，不失败）`)
+  }
+  io.out(
+    `汇总: ${report.summary.docs} 篇，${report.summary.errors} 个错误，${report.summary.stale} 篇 stale`,
+  )
+  if (report.ok) io.out('kb: 检查通过')
+  else if (strict && report.summary.errors === 0) io.out('kb: 有 stale 提交（--strict 要求为 0）')
+  else io.out('kb: 检查未通过')
+}
+
+/**
+ * kb check：页眉 + 覆盖路径 + 入口检查（契约 §3.2）。
+ * 退出码：0 通过 / 1 结构违规（或 --strict 且有 stale）/ 2 用法与配置错误 / 3 git 或读盘失败。
+ */
+function runKbCheck(argv, deps, io) {
+  const parsed = parseArgs(argv, KB_CHECK_VALUE_FLAGS, KB_CHECK_BOOL_FLAGS, KB_CHECK_REPEAT_FLAGS)
+  if (parsed.error) return argError(io, 'kb', parsed.error)
+  const options = parsed.options
+  if (options.root !== undefined && !nonEmpty(options.root)) {
+    return argError(io, 'kb', '--root 必须是非空目录路径')
+  }
+  for (const value of options.exclude ?? []) {
+    if (!nonEmpty(value)) return argError(io, 'kb', '--exclude 必须是非空 glob')
+  }
+  const root = resolveKbRoot(options.root, deps)
+  const located = resolveKbDir(root, options['kb-dir'])
+  if (located.error !== undefined) return argError(io, 'kb', located.error)
+
+  const report = checkKb(root, {
+    kbDir: located.kbDir,
+    excludes: options.exclude ?? [],
+    strict: options.strict === true,
+    runner: deps.runner,
+  })
+
+  if (report.missing === true) {
+    if (options['allow-missing'] === true) {
+      if (options.json === true) {
+        io.out(JSON.stringify({ ok: true, missing: true, root, kbDir: located.kbDir }))
+      } else {
+        io.out(`kb: 跳过（${located.kbDir} 不存在，--allow-missing）`)
+      }
+      return 0
+    }
+    return argError(
+      io,
+      'kb',
+      `${located.kbDir} 不存在（多仓巡检可加 --allow-missing）`,
+      'E_CONFIG',
+    )
+  }
+  if (report.code === 3) return argError(io, 'kb', report.envError, 'E_ENV')
+
+  if (options.json === true) {
+    io.out(JSON.stringify(kbJsonReport(report)))
+  } else {
+    printKbReport(io, report, { strict: options.strict === true })
+  }
+  return report.ok ? 0 : 1
+}
+
+/**
+ * kb init：生成初始化提示词 + AGENTS.md 草稿。
+ * 只读仓库（除 --out）：不写 KB、不写 AGENTS.md。
+ * 退出码：0 成功 / 1 已有知识库 / 2 用法与配置错误 / 3 读盘或写盘失败。
+ */
+function runKbInit(argv, deps, io) {
+  const parsed = parseArgs(argv, KB_INIT_VALUE_FLAGS, KB_INIT_BOOL_FLAGS)
+  if (parsed.error) return argError(io, 'kb', parsed.error)
+  const options = parsed.options
+  if (options.root !== undefined && !nonEmpty(options.root)) {
+    return argError(io, 'kb', '--root 必须是非空目录路径')
+  }
+  if (options.out !== undefined && !nonEmpty(options.out)) {
+    return argError(io, 'kb', '--out 必须是非空文件路径')
+  }
+  const root = resolveKbRoot(options.root, deps)
+  const located = resolveKbDir(root, options['kb-dir'])
+  if (located.error !== undefined) return argError(io, 'kb', located.error)
+
+  const existing = listKbDocs(root, { kbDir: located.kbDir })
+  if (existing.error !== undefined) return argError(io, 'kb', existing.error, 'E_ENV')
+  if (existing.docs.length > 0) {
+    io.err(`kb: 已有知识库（${located.kbDir} 下 ${existing.docs.length} 篇），请用 kb refresh`)
+    return 1
+  }
+
+  const rendered = renderInitPrompt(root, { kbDir: located.kbDir, prompt: options.prompt })
+  if (!rendered.ok) {
+    return argError(io, 'kb', rendered.error, rendered.code === 3 ? 'E_ENV' : 'E_CONFIG')
+  }
+  const draft = renderAgentsDraft(root, { kbDir: located.kbDir })
+  if (!draft.ok) return argError(io, 'kb', draft.error, 'E_ENV')
+
+  if (options.json === true) {
+    io.out(
+      JSON.stringify({
+        ok: true,
+        root,
+        kbDir: located.kbDir,
+        promptSource: rendered.source,
+        prompt: rendered.text,
+        agentsDraft: draft.text,
+      }),
+    )
+    return 0
+  }
+
+  if (options.out !== undefined) {
+    const written = writeKbOut(io, options.out, rendered.text, deps)
+    if (written !== 0) return written
+  } else {
+    io.out(rendered.text)
+  }
+
+  io.out('')
+  io.out('---')
+  io.out('kb: AGENTS.md 草稿（只打印，不落盘；确认后手工提交）')
+  io.out('')
+  io.out(draft.text)
+  io.out('')
+  io.out(
+    `下一步: 把提示词交给执行 agent → 生成 ${located.kbDir}/ → dsh-pipeline kb check --root ${root}`,
+  )
+  return 0
+}
+
+/**
+ * kb refresh：生成存量更新提示词（结构违规 + stale 原文 + 规则 + 禁止项）。
+ * 退出码：0 成功 / 1 无知识库（改用 init）/ 2 用法与配置错误 / 3 git 或读写失败。
+ */
+function runKbRefresh(argv, deps, io) {
+  const parsed = parseArgs(
+    argv,
+    KB_REFRESH_VALUE_FLAGS,
+    KB_REFRESH_BOOL_FLAGS,
+    KB_REFRESH_REPEAT_FLAGS,
+  )
+  if (parsed.error) return argError(io, 'kb', parsed.error)
+  const options = parsed.options
+  if (options.root !== undefined && !nonEmpty(options.root)) {
+    return argError(io, 'kb', '--root 必须是非空目录路径')
+  }
+  if (options.out !== undefined && !nonEmpty(options.out)) {
+    return argError(io, 'kb', '--out 必须是非空文件路径')
+  }
+  for (const value of options.exclude ?? []) {
+    if (!nonEmpty(value)) return argError(io, 'kb', '--exclude 必须是非空 glob')
+  }
+  for (const value of options.doc ?? []) {
+    if (!nonEmpty(value)) return argError(io, 'kb', '--doc 必须是非空路径')
+  }
+  const root = resolveKbRoot(options.root, deps)
+  const located = resolveKbDir(root, options['kb-dir'])
+  if (located.error !== undefined) return argError(io, 'kb', located.error)
+
+  const rendered = renderRefreshPrompt(root, {
+    kbDir: located.kbDir,
+    docs: options.doc ?? [],
+    excludes: options.exclude ?? [],
+    prompt: options.prompt,
+    runner: deps.runner,
+  })
+  if (!rendered.ok) {
+    if (rendered.code === 1) {
+      io.err(`kb: ${rendered.error}`)
+      return 1
+    }
+    return argError(io, 'kb', rendered.error, rendered.code === 3 ? 'E_ENV' : 'E_CONFIG')
+  }
+
+  if (options.json === true) {
+    io.out(
+      JSON.stringify({
+        ok: true,
+        root,
+        kbDir: located.kbDir,
+        promptSource: rendered.source,
+        docs: rendered.docs,
+        prompt: rendered.text,
+      }),
+    )
+    return 0
+  }
+  if (options.out !== undefined) {
+    const written = writeKbOut(io, options.out, rendered.text, deps)
+    if (written !== 0) return written
+  } else {
+    io.out(rendered.text)
+  }
+  return 0
+}
+
+/**
+ * kb impact：算「这次改动影响哪几篇文档」。只读。
+ * 退出码：0 成功 / 2 用法与配置错误 / 3 git 或读盘失败。
+ */
+function runKbImpact(argv, deps, io) {
+  const parsed = parseArgs(argv, KB_IMPACT_VALUE_FLAGS, KB_IMPACT_BOOL_FLAGS)
+  if (parsed.error) return argError(io, 'kb', parsed.error)
+  const options = parsed.options
+  if (options.root !== undefined && !nonEmpty(options.root)) {
+    return argError(io, 'kb', '--root 必须是非空目录路径')
+  }
+  if (options.staged === true && options.range !== undefined) {
+    return argError(io, 'kb', '--staged 与 --range 不能同时使用')
+  }
+  if (options.range !== undefined && !KB_RANGE_PATTERN.test(options.range)) {
+    return argError(io, 'kb', `--range 必须是 <a>..<b>: ${options.range}`)
+  }
+  const root = resolveKbRoot(options.root, deps)
+  const located = resolveKbDir(root, options['kb-dir'])
+  if (located.error !== undefined) return argError(io, 'kb', located.error)
+
+  const result = computeImpact(root, {
+    kbDir: located.kbDir,
+    staged: options.staged === true,
+    range: options.range ?? 'origin/main..HEAD',
+    runner: deps.runner,
+  })
+  if (!result.ok) return argError(io, 'kb', result.error, result.code === 3 ? 'E_ENV' : 'E_CONFIG')
+
+  if (options.json === true) {
+    io.out(JSON.stringify(result))
+    return 0
+  }
+
+  io.out(
+    `kb: 影响分析（${result.mode === 'staged' ? '暂存区' : `区间 ${result.range}`}）`,
+  )
+  io.out(
+    `改动文件: ${result.summary.changed} 个；受影响文档: ${result.summary.affected} / ${result.summary.docs} 篇`,
+  )
+  for (const item of result.affected) {
+    io.out(`  ${item.doc} ← ${item.files.join(', ')}`)
+  }
+  if (result.summary.affected === 0) io.out('  （没有文档受影响）')
+  else io.out(`建议: dsh-pipeline kb refresh --root ${root} --doc <文档>`)
+  return 0
+}
+
+/** kb 的分动作编排：check / init / refresh / impact。 */
+function runKb(argv, deps, io) {
+  const [action, ...rest] = argv
+  if (action === 'check') return runKbCheck(rest, deps, io)
+  if (action === 'init') return runKbInit(rest, deps, io)
+  if (action === 'refresh') return runKbRefresh(rest, deps, io)
+  if (action === 'impact') return runKbImpact(rest, deps, io)
+  return argError(
+    io,
+    'kb',
+    action === undefined ? '缺少动作（check / init / refresh / impact）' : `未知动作: ${action}`,
+  )
+}
+
 /**
  * init：新仓库一键接入交付流程（契约 §3.2）。
  *
@@ -2816,6 +3212,7 @@ export function runCli(argv, deps = {}) {
     if (first === 'init') return runInitCommand(rest, deps, io)
     if (first === 'check-all') return runCheckAllCommand(rest, deps, io)
     if (first === 'deploy') return runDeploy(rest, deps, io)
+    if (first === 'kb') return runKb(rest, deps, io)
     return runStatus(rest, deps, io)
   } catch (error) {
     errorLine(io, first, 'E_ENV', messageOf(error))

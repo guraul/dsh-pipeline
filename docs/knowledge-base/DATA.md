@@ -1,6 +1,7 @@
 # 数据查询指南
 
-**最后更新**：2026-11-08 · 对应提交 `211e83c`
+> 最后更新: 2026-11-09 | commit: `211e83c`
+> 覆盖路径: `scripts/pack.sh`, `test/contract-format.test.mjs`, `test/gitignore.test.mjs`
 
 本包不连接任何数据库，全部数据都是**仓库内的 JSON 文件**。所有路径都相对「root」，而 root 有两套语义（见下），查数据前先确认你要的是哪一份。
 

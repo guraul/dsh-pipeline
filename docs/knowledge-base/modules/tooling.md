@@ -1,6 +1,7 @@
 # 模块：接入与一致性工具（init / selftest / shim / hooks / check-all / doctor / build-info）
 
-**最后更新**：2026-11-08 · 对应提交 `8a4f46b`
+> 最后更新: 2026-11-09 | commit: `8a4f46b`
+> 覆盖路径: `lib/init.mjs`, `lib/selftest.mjs`, `lib/shim.mjs`, `lib/hooks.mjs`, `lib/check-all.mjs`, `lib/doctor.mjs`, `lib/profile-check.mjs`, `lib/build-info.mjs`, `lib/region.mjs`, `templates/shim.sh`, `templates/pipeline-docs/**`, `.dsh/pipeline.json`, `package.json`, `test/init.test.mjs`, `test/selftest.test.mjs`, `test/shim.test.mjs`, `test/hooks.test.mjs`, `test/check-all.test.mjs`, `test/doctor.test.mjs`, `test/config.test.mjs`, `test/gitignore.test.mjs`
 
 这一组命令的共同点：**只读检查优先、能修才写、判据是"渲染后逐字节比对"而不是"看起来像"**。它们替代了各仓过去手写的 `build-check.sh` / `review-loop-check.sh` 之类脚本。
 
