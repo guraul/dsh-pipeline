@@ -39,7 +39,7 @@
 | pre-push 钩子 | `.git/hooks/pre-push`（或 `core.hooksPath` 指向的位置） | `pipeline.sh hooks check` |
 | 文档骨架 | `docs/pipeline/` | `pipeline.sh init --check` |
 
-一次跑完前两项：`pipeline.sh selftest --fast`（pre-push 钩子用的就是它）。
+本地自检：`pipeline.sh selftest --fast` 一次跑完前两项。pre-push 钩子只拦直推 `main` / `master`，不跑自检。
 
 ## 四、规范来源
 
