@@ -6,7 +6,7 @@
 
 **加载顺序**：每次对话先读本文件建立全局认知；需要动某个子命令时只加载对应 `modules/*.md`；查产物落在哪读 `DATA.md`；跑测试 / 打包 / 部署读 `OPERATIONS.md`；改行为前先看 `CONVENTIONS.md` 的红线。
 
-**如何更新**：知识库与代码同仓，放 `docs/knowledge-base/`。涉及**架构 / 命令面 / 退出码 / 配置 schema / 落盘路径**的变更必须同步更新对应文档（纯实现细节不必）。每份文档顶部标注最后更新日期 + 对应 commit 短 hash。生成与本文件的约定见 `docs/promptA.md`；唯一规范来源是 `docs/CONTRACT.md`——本知识库**描述现状**，契约**定义规则**，两者冲突时以契约为准并视为缺陷。
+**如何更新**：知识库与代码同仓，放 `docs/knowledge-base/`。涉及**架构 / 命令面 / 退出码 / 配置 schema / 落盘路径**的变更必须同步更新对应文档（纯实现细节不必）。每份文档顶部标注最后更新日期 + 对应 commit 短 hash。生成与本文件的约定见 `docs/kb-prompt.md`；唯一规范来源是 `docs/CONTRACT.md`——本知识库**描述现状**，契约**定义规则**，两者冲突时以契约为准并视为缺陷。
 
 ## 项目一句话定位
 
@@ -74,7 +74,7 @@ dsh-pipeline/
 ├── scripts/pack.sh          # 打包门禁：先 node --test，通过才 pnpm pack 到 dist/
 ├── docs/
 │   ├── CONTRACT.md          # 交付契约 v1.1（唯一规范来源）
-│   ├── promptA.md           # 知识库生成提示词（从 agent-mobile 复制）
+│   ├── kb-prompt.md         # 知识库生成提示词（从 agent-mobile 复制）
 │   └── knowledge-base/      # 本知识库
 ├── .dsh/pipeline.json       # 本仓配置：repo / ci / highRisk
 ├── .github/workflows/       # ci.yml（测试）、deploy.yml、rollback.yml（复用）
