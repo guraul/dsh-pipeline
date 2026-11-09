@@ -60,7 +60,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 关于 `-C/--root`：包侧只认 `--root <dir>`（`parseArgs` 拒绝非 `--` 形式的位置参数）。**由 shim 负责把 `-C <dir>` 翻译成 `--root <dir>`**，包本身不解析 `-C`。
 
-各子命令的 `--root` 缺省值（**现行**）：`pr` 取当前任务 worktree（提交必须落在被审分支上）；`record` / `review` / `selftest` / `shim` / `hooks` / `init` / `status` 缺省定位**主工作区**（同一实现 `resolveMainWorktreeRoot`，见 §6）；`merge` / `gate` **必填** `--root`。`doctor` / `check-all` 按当前目录。**在 task worktree 里跑这些命令时，要校验 / 写入当前分支的生成物必须显式 `--root .`**（缺省仍是主工作区）。
+各子命令的 `--root` 缺省值（**现行**）：`pr` 取当前任务 worktree（提交必须落在被审分支上）；`kb` 取当前工作树的 git 顶层（与 `pr` 同口径，**不是**主工作区；不是 git 仓时退回当前目录）；`record` / `review` / `selftest` / `shim` / `hooks` / `init` / `status` 缺省定位**主工作区**（同一实现 `resolveMainWorktreeRoot`，见 §6）；`merge` / `gate` **必填** `--root`。`doctor` / `check-all` 按当前目录。**在 task worktree 里跑这些命令时，要校验 / 写入当前分支的生成物必须显式 `--root .`**（缺省仍是主工作区）。
 
 ### 3.2 包子命令全集
 

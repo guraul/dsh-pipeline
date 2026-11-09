@@ -1,6 +1,6 @@
 # 模块：知识库三件套（kb check / init / refresh）与影响分析（kb impact）
 
-> 最后更新: 2026-11-09 | commit: `ca4f040`
+> 最后更新: 2026-11-09 | commit: `377ebd9`
 > 覆盖路径: `lib/kb.mjs`, `lib/git.mjs`, `lib/policy.mjs`, `bin/cli.mjs`, `templates/kb-prompt.md`, `templates/agents.md`, `test/kb.test.mjs`, `test/git.test.mjs`
 
 这一组命令把「知识库从零建起来 / 存量重新对齐 / 判断一篇文档是否过期 / 这次改动影响哪几篇」收进本包。设计边界：**只读仓库**（除 `--out` 指定的文件），不写 KB 正文、不改 `AGENTS.md`、不装定时任务。
@@ -64,6 +64,14 @@
 
 警告只有 `W_LEGACY_HEADER`，不失败。
 
+## 入口检查
+
+- `AGENTS.md` 必须有指向 `<kb-dir>/INDEX.md` 的路由；路由里提到的每个 `<kb-dir>/*.md` 都必须存在（否则 `E_ROUTE_DEAD`）。
+- `modules/*.md` 与 `AGENTS.md` 路由表双向一致：模块文档没被路由 → `E_ROUTE_MISMATCH`。
+- `INDEX.md` 的「文档导航」小节与实际文件双向一致（缺项 / 指向不存在的文档都是 `E_NAV_MISMATCH`）。
+- 导航项可以写知识库相对路径（`modules/x.md`），也可以写全仓相对路径（`docs/knowledge-base/modules/x.md`），两者都会归一到知识库相对路径；`../CONTRACT.md` 这类知识库外的文档不算导航项。
+- `--exclude` 同时作用于文档枚举与导航比对：排除一篇导航里列着的文档，不会反过来报 `E_NAV_MISMATCH`。
+
 ## 覆盖路径的机械判据
 
 1. 只列正文点名的代码 / 配置 / 脚本；按目录聚合。
@@ -96,7 +104,8 @@
 4. **新增错误码先改契约**：`docs/CONTRACT.md` §3.2 / §4 / §5 与 `HELP` 同步；测试里 `DOC_ERROR_CODES` / `ENTRY_ERROR_CODES` 的长度断言（7 / 5）是「12 类」的守门。
 5. **`--doc` / `--exclude` 可重复**：`parseArgs` 的第 4 个参数是 `repeatableFlags`，不要退回「重复参数一律报错」。
 6. **stale 用原始 glob**：用展开后的文件列表会漏掉覆盖目录里的新增文件。
-7. **在 worktree 里跑 `kb check` 用 `--root .`**：缺省 root 是 `git rev-parse --show-toplevel`（当前工作树），不是主工作区；这与 `record` / `review` 的口径不同。
+7. **在 worktree 里跑 `kb check` 用 `--root .`**：缺省 root 是 `git rev-parse --show-toplevel`（当前工作树），不是主工作区；这与 `record` / `review` 的口径不同（契约 §3.1）。
+8. **git 失败与「glob 命中 0」必须分开**：非 git 仓 / git 不可用 / `safe.directory` 拒绝时 `git ls-files` 非零退出 → 环境错误退 3；只有 git 正常跑完、命中 0 个 tracked 文件才是 `E_DEAD_GLOB`（退 1）。`commitExists` / `isAncestor` 同理：`isAncestor` 只有退出码 1 是「不是祖先」。
 
 ## 相关测试
 
