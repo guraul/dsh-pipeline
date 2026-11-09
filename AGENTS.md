@@ -18,6 +18,7 @@
 | 改 task 建 worktree、pr 开 PR、git/gh 封装 | `docs/knowledge-base/modules/task-pr-git-gh.md` |
 | 改 selftest / lock / shim / hooks / check-all / doctor | `docs/knowledge-base/modules/tooling.md` |
 | 改部署 caller 骨架 / `deploy` 配置段 | `docs/knowledge-base/modules/deploy.md` |
+| 改知识库检查 / 初始化 / 更新提示词 / 影响分析（`kb`） | `docs/knowledge-base/modules/kb.md` |
 | 查产物落在哪、怎么查审核记录 | `docs/knowledge-base/DATA.md` |
 | 子命令清单、参数、退出码（接口视角） | `docs/knowledge-base/API.md` |
 | 测试 / 打包 / CI / 部署 / 环境变量 | `docs/knowledge-base/OPERATIONS.md` |

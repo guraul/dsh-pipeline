@@ -2,7 +2,7 @@
 
 统一交付与审核流程的单一实现，包名 `@guraul/dsh-pipeline`。
 `bin/cli.mjs` 负责参数分发，流程与外部命令封装在 `lib/`。
-已实现：`task` / `pr` / `review`（`prepare` / `prompt` / `publish`）/ `record` / `gate` / `merge` / `status` / `doctor` / `selftest` / `lock`（`write` / `check`）/ `shim` / `hooks` / `check-all` / `deploy`（`init` / `check`）/ `init`（`--check` / `--force`）；顶层 `prepare` 占位已按契约删除。
+已实现：`task` / `pr` / `review`（`prepare` / `prompt` / `publish`）/ `record` / `gate` / `merge` / `status` / `doctor` / `selftest` / `lock`（`write` / `check`）/ `shim` / `hooks` / `check-all` / `deploy`（`init` / `check`）/ `init`（`--check` / `--force`）/ `kb`（`check` / `init` / `refresh` / `impact`）；顶层 `prepare` 占位已按契约删除。
 设计与版本策略见下。
 
 - ADR：`self-dsh-plugins` 的 [docs/adr/0003-pipeline-单一实现与版本策略.md](https://github.com/guraul/self-dsh-plugins/blob/main/docs/adr/0003-pipeline-%E5%8D%95%E4%B8%80%E5%AE%9E%E7%8E%B0%E4%B8%8E%E7%89%88%E6%9C%AC%E7%AD%96%E7%95%A5.md)
@@ -12,6 +12,23 @@
 `.github/workflows/ci.yml` 在 `push`（任意分支）与 `pull_request` 上跑 `node --test`（Node 24，pnpm `--frozen-lockfile`）。
 
 **CI 只跑测试；审核闸门与合并只在本地。** 按 ADR-0003 §5，`gate` / `merge` 属于本地闸门，不在 CI 中执行，CI 也不跑 `scripts/pack.sh`、不上传任何产物。
+
+## 知识库（`kb`）
+
+把「知识库从零建起来 / 存量重新对齐 / 判断一篇文档是否过期 / 这次改动影响哪几篇」收进本包，规则见 `docs/CONTRACT.md` §3.2 与 `docs/knowledge-base/modules/kb.md`：
+
+```bash
+dsh-pipeline kb check --root .              # 页眉 + 覆盖路径 + 入口检查；退 0 才算完成
+dsh-pipeline kb check --root . --json       # 机器报告
+dsh-pipeline kb impact --staged             # 这次暂存的改动影响哪几篇
+dsh-pipeline kb init --root <仓>            # 只打印提示词 + AGENTS.md 草稿，不写文件
+dsh-pipeline kb refresh --root <仓> --out /tmp/kb-refresh.md
+```
+
+- 每篇文档顶部 canonical 两行：`> 最后更新: YYYY-MM-DD | commit: `<sha>`` + `> 覆盖路径: `a`, `b/**``；stamp 取**内容对齐的代码提交**（不是写文档那天），必须是 `HEAD` 的祖先。旧格式（`· commit` / `**最后更新**：` / `commit <sha> · 说明`）可解析，只给 `W_LEGACY_HEADER`。
+- 覆盖路径只列正文点名的代码；单条 glob ≤30 个 tracked 文件、单篇 ≤200 个、顶层文档 ≤10 条；`docs/**` 与测试夹具不进覆盖路径。展开一律 `git ls-files`，不用 `fs` 递归。
+- 检查码：文档级 7 类 + 入口级 5 类（见契约 §5）；`--strict` 时 stale > 0 也退 1，缺省只报告。
+- 三个动作**只读仓库**（除 `--out`）：`kb init` 不写 KB、不写 `AGENTS.md`。
 
 ## 没有 review.sh 的消费仓：`review` 一趟出请求与记录
 

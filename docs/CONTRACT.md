@@ -1,6 +1,6 @@
 # 交付契约（CONTRACT）
 
-**版本**：v1.2（2026-11-06）
+**版本**：v1.3（2026-11-09）
 **适用**：所有接入本包的仓库——`self-dsh-plugins`、`agent-mobile`、`homebase`、`memx`，以及包仓自身。
 **地位**：这是唯一的规范来源。各仓文档只写差异与索引，不复述本文件。
 
@@ -84,12 +84,13 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | `hooks install\|check` | 安装 / 校验 pre-push 直推拦截钩子 | 现行 |
 | `deploy init\|check` | 生成 / 校验 caller workflow 骨架：`deploy-web.yml`（生成区 = `name` / `on` / `concurrency` + 单 job 的 `uses`+`with`+`secrets`，`with:` 含按 artifact 推导的 `mode` 与 `assemble`）；`--write --rollback` 连带生成 / 更新 `rollback-web.yml`（`workflow_dispatch` + `rollback.yml` 同一 pin，见 §10）。**回滚文件已是生成物时，只跑 `--write` 也会刷新它**（不用每次记着加 `--rollback`）；它是手写文件时跳过并提示（显式 `--rollback` 才拒绝覆盖）。`check` 逐字节比对：部署 caller 必须存在且一致（缺标记退 1），回滚 caller 是生成物才校验——**不存在或手写（缺标记）都跳过并退 0**（手写时 stderr 提示「要接管请删除它再跑 `deploy init --write --rollback`」），因此 CI 不能强制回滚 caller 被接管；标记之后允许各仓追加自己的后置 job | **现行** |
 | `init` | 新仓库一键接入：生成 `.dsh/pipeline.json` 最小配置（`repo` 从 origin 推导、`checks.packages` 从 `workspaces` 展开）、入口 shim、pre-push 钩子、`docs/pipeline/` 骨架（README + review-loop，生成区用标记包裹、标记外可追加）；`--check` 只读校验四件套，缺项退 1；已存在的配置与无标记文档不覆盖（`--force` 才接管）；`--root` 不存在或不是目录退 2（不替调用方建目录树）；生成是两段式——先对四项做只判定的预演，任一不通过就一个文件都不写 | **现行** |
+| `kb check\|init\|refresh\|impact` | 知识库检查 / 初始化 / 更新提示词 / 影响分析（issue #154）：`check` 校验每篇页眉（canonical 两行：最后更新 + commit / 覆盖路径）与入口（`AGENTS.md` 路由、`INDEX.md` 文档导航，双向一致），并报告 stale；`init` 生成初始化提示词 + `AGENTS.md` 草稿（草稿只打印，不落盘）；`refresh` 生成存量更新提示词（结构违规 + 每篇 stale 的 `git log` 原文 + 升级/页眉规则 + 禁止项）；`impact` 算这次改动影响哪几篇。三个动作都**只读仓库**（除 `--out` 指定的文件），不写 KB 正文、不改任何文档；`--kb-dir` 缺省 `docs/knowledge-base`，`--prompt` 缺省 `docs/kb-prompt.md`（回退 `docs/promptA.md` → 包内 `templates/kb-prompt.md`） | **现行** |
 
 新增子命令属于**契约变更**，必须同时更新本文件与 §3.3。
 
 ### 3.3 实现状态（v1.2 校正，2026-11-06）
 
-**已实现**：`task` / `pr` / `review prepare|prompt|publish`（含 `--post-review`）/ `record` / `gate` / `merge` / `status` / `doctor`（含 `--profile`）/ `selftest`（`--shims` / `--config` / `--lock` / `--peer` / `--exit-codes` / `--init` / `--fast` / `--repos`）/ `lock write|check` / `shim install|check` / `hooks install|check` / `check-all` / `deploy init|check`（`artifact` 支持 `static-dir` 与 `node-standalone`）/ `init`（`--check` / `--force`）。
+**已实现**：`task` / `pr` / `review prepare|prompt|publish`（含 `--post-review`）/ `record` / `gate` / `merge` / `status` / `doctor`（含 `--profile`）/ `selftest`（`--shims` / `--config` / `--lock` / `--peer` / `--exit-codes` / `--init` / `--fast` / `--repos`）/ `lock write|check` / `shim install|check` / `hooks install|check` / `check-all` / `deploy init|check`（`artifact` 支持 `static-dir` 与 `node-standalone`）/ `init`（`--check` / `--force`）/ `kb check|init|refresh|impact`。
 
 **配置字段（已进 schema）**：`worktreesDir` 由 `task` 消费——缺省读配置、`--worktrees-dir` 优先；`checks` 由 `check-all` 消费——`--packages` 优先，其次 `checks.packages`（按给定顺序），再否则自动发现并按 `checks.exclude` 过滤；`deploy` 由 `deploy init|check` 消费（字段见 §7.1，部署行为见 §10）；`review` 段的 `tier` / `postReview` / `identity` / `rounds` 全部进 schema 并被消费（见 §7.3）。
 
@@ -111,6 +112,8 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 **`record` / `review publish` 的判定与退出码**：`REJECT` → **1**（记录照常落盘——落盘成功不代表判定通过）；判定不可用（解析失败 / 提交不匹配）→ 兜底 `ESCALATE` → 1；`APPROVE` → 0。
 
 **迁移开关 `--legacy-exit-codes`（现行，切换完成后删除）**：带它时 `REJECT` 退回 **0**，给还没改 `set -e` 脚本的调用方留过渡期；其余判定不变。
+
+**`kb` 的退出码（契约 §4 口径）**：`kb check` 有结构违规退 **1**（`--strict` 且 stale > 0 也退 1；`--allow-missing` 在知识库目录不存在时退 **0**）；`kb init` 遇已有知识库退 **1**；`kb refresh` 遇无知识库退 **1**；`kb impact` 只读、没有业务拒绝，只有 0 / 2 / 3。参数与 `--kb-dir` / `--doc` 问题退 **2**，git / 读写失败退 **3**。
 
 **例外：`--post-review`** 的退出码反映「review 是否发出」（成功 0 / 配置错误 2 / gh 失败 3），不反映判定——`REJECT` 的 review 照常发出，判定看记录。**记录没写成时不发送**：前置校验失败退 2、写盘失败退 3，两种都不发 review——没有记录就没有可追溯的判定。
 
@@ -145,6 +148,8 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | `E_PARSE` | 判定解析失败（nonce / SHA / 格式） |
 | `E_ENV` | 外部命令或环境失败（gh / git / pnpm / 目录不可读） |
 | `E_STATE` | 状态不匹配（PR 号、head、文件缺标记、PR 无 headRefOid） |
+
+**`kb` 的检查码不是上面 6 个错误行错误码**：`kb check` 把文档级 7 类（`E_NO_STAMP` / `E_BAD_DATE` / `E_STAMP_ORPHAN` / `E_NO_COVERAGE` / `E_DEAD_GLOB` / `E_BROAD_GLOB` / `E_FORBIDDEN_PATH`）与入口级 5 类（`E_NO_AGENTS` / `E_NO_KB_ROUTE` / `E_ROUTE_DEAD` / `E_ROUTE_MISMATCH` / `E_NAV_MISMATCH`）作为**报告内容**打印在 stdout（`--json` 时落在 `entry.errors` / `docs[].errors`），不套用错误行的 6 码；命令级失败（参数、环境）仍走 `dsh-pipeline: kb: <6 码>: <说明>` 到 stderr。警告只有 `W_LEGACY_HEADER`（旧格式页眉可解析，不失败）。
 
 警告行（`警告:` / `提示:`）**不带**错误码——它们不是错误。
 
@@ -464,3 +469,4 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | 2026-11-08 | 退出码口径统一：环境错误（gh / git / 写盘 / 读盘 / 未捕获异常）全命令退 3，入参 / 配置退 2，业务拒绝退 1；`E_REPO` 拆成 `E_CONFIG`（配置读不出）与 `E_ENV`（origin 读不出） |
 | 2026-11-08 | §3.2 新增 `init`：一键生成配置 + 入口 shim + pre-push 钩子 + `docs/pipeline` 骨架（幂等、`--check` 只读校验）；§9 新增 `--init`（不并入 `--fast`） |
 | 2026-11-08 | `--request` / `--response` / `--findings` 的读失败按 errno 分档：文件不存在退 2、权限 / IO 退 3；`review prompt --out` 写盘失败退 3 |
+| 2026-11-09 | 新增 `kb check\|init\|refresh\|impact`（契约 §3.2，issue #154）：页眉 canonical 两行 + 三种旧格式兼容、覆盖路径机械判据（单条 ≤30 / 单篇 ≤200 / 顶层 ≤10）、入口双向一致性检查、12 类检查码；`kb init` / `kb refresh` 只读仓库（除 `--out`）。§4 / §5 补 kb 的退出码与检查码口径 |

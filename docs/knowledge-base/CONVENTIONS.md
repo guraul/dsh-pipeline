@@ -1,6 +1,7 @@
 # 约定与陷阱
 
-**最后更新**：2026-11-08 · 对应提交 `cccfe84`
+> 最后更新: 2026-11-09 | commit: `ca4f040`
+> 覆盖路径: `package.json`, `bin/cli.mjs`, `lib/*.mjs`, `templates/**`, `.dsh/pipeline.json`, `test/gate.test.mjs`, `test/contract-format.test.mjs`, `test/gitignore.test.mjs`, `.github/workflows/*.yml`
 
 ## 1. 代码风格与命名
 
@@ -93,9 +94,12 @@
 16. **源码运行不能 `deploy init`**：`uses` 必须 pin 安装包 `build.json` 的 `gitSha`，源码目录没有它 → 退 2。别用假 pin 绕（会让 caller 指到不存在的版本）。
 17. **`resolveDeploy` 的 `null` 是「不写这一行」**：可选项没配就不写进 caller，交给 `deploy.yml` 的默认值；写成空串会把默认值顶掉。
 18. **`init` 幂等的边界**：配置「已存在就不覆盖」，docs「只换生成区」，两者都不碰标记外的手写内容；无标记的 `docs/pipeline/*.md` 视为手写文件，`init` 退 1、`--force` 才接管。失败时零写入：四项先预演（`dryRun`），任一不通过就一项都不写。
+19. **知识库页眉不许只改 stamp 不改内容**：`kb check` 只能机械校验 stamp 是 `HEAD` 的祖先，内容是否真对齐靠 PR diff 审核；为了过 check 把 hash 换掉属作弊（issue #154 §6 第 6 条）。
+20. **不许为了过 `kb check` 放宽覆盖路径**：单条 glob ≤30 个 tracked 文件、单篇 ≤200 个、顶层文档 ≤10 条；超了要按目录聚合，不是把 `**` 加宽（`E_BROAD_GLOB`）。
+21. **`kb init` / `kb refresh` 只读**：不写 KB 正文、不改 `AGENTS.md`（草稿只打印）、不替调用方复制 `docs/kb-prompt.md`；唯一允许写的是 `--out` 指定的文件。
 
 ## 6. 文档与注释的维护约定
 
 - 契约（`docs/CONTRACT.md`）是唯一规范来源；本仓文档只写**差异与索引**，不复述契约。
 - 命令面 / 退出码 / 落盘 / 配置 schema 变更 → 同一次提交里改契约 + `HELP` + 知识库 + 测试。
-- 知识库每篇顶部写「最后更新 + commit 短 hash」，只写**代码里真实存在**的内容；拿不准标「待确认」，不要臆测。
+- 知识库每篇顶部用 canonical 两行（`> 最后更新: … | commit: \`…\`` + `> 覆盖路径: …`），stamp 取**内容对齐的代码提交**；只写**代码里真实存在**的内容，拿不准标「待确认」，不要臆测。改完跑 `node bin/cli.mjs kb check --root .` 退 0。

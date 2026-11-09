@@ -1,6 +1,7 @@
 # 模块：审核请求、判定解析与记录
 
-**最后更新**：2026-11-07 · 对应提交 `57ee957`
+> 最后更新: 2026-11-09 | commit: `c5aa0b2`
+> 覆盖路径: `lib/review.mjs`, `lib/record.mjs`, `lib/roles.mjs`, `bin/cli.mjs`, `package.json`, `test/contract-format.test.mjs`, `test/post-review.test.mjs`, `test/record-name.test.mjs`, `test/record.test.mjs`, `test/review-cmd.test.mjs`, `test/review.test.mjs`, `test/roles.test.mjs`
 
 ## 职责
 
