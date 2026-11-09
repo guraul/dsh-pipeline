@@ -80,6 +80,7 @@ dsh-pipeline init --check [--root <dir>]
 - **不并入 `--fast`**：pre-push 只跑 `--shims --config`；消费仓尚未接入 docs 骨架时，不应让 pre-push 因缺它而红。
 - **repo 推导**：`--repo` 优先，其次 `git remote get-url origin`；都拿不到就省略该字段（下游命令需要时自己报错，不猜）。
 - **两段式**：先对四项做只判定的预演（各 install 的 `dryRun`），任一项不通过就一个文件都不写——避免「配置失败但 shim / hooks 已落盘」的半写状态。
+- **worktree 里要显式 `--root .`**：`init` 的 `--root` 缺省是主工作区（与 `shim` / `hooks` / `selftest` 同口径）；在 task worktree 里不带 `--root` 会校验 / 写入主工作区。
 
 ## `shim`
 
