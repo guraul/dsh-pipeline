@@ -30,7 +30,7 @@
 |---|---|---|
 | `gate` / `merge` | **必填 `--root`** | 传主工作区 |
 | `record` / `review *` | 显式 `--root` > 主工作区 > 当前目录（与 status / selftest 同一口径） | 在 worktree 里跑也落主仓，不会被清理删掉 |
-| `status` / `selftest` / `shim` / `hooks` / `init` | 显式 `--root` > 主工作区 > 当前目录 | 查主仓那一份 |
+| `status` / `selftest` / `shim` / `hooks` / `init` | 显式 `--root` > 主工作区 > 当前目录 | 查主仓那一份；在 worktree 里要查当前分支就显式 `--root .` |
 | `task` | 主工作区（显式 root 若是 linked worktree 顶层会折回主工作区） | — |
 | `deploy` | **必填 `--root`** | 生成 / 校验的是被指向那个仓的 caller |
 | `pr` | 当前工作树顶层 | — |
