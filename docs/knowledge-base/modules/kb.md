@@ -21,7 +21,7 @@
 | 文件 | 职责 |
 |---|---|
 | `lib/kb.mjs` | 页眉解析、覆盖路径校验、入口检查、stale 计算、四种提示词渲染、影响分析 |
-| `lib/git.mjs` | 新增具名封装：`lsFiles` / `commitExists` / `isAncestor` / `logOnelineRange` / `diffShortstat` / `diffNameOnly` |
+| `lib/git.mjs` | 新增具名封装：`lsFiles` / `commitExists` / `isAncestor` / `logOnelineRange` / `diffShortstat` / `diffNameOnly` / `diffNameStatus`（`--name-status -M`，删除取旧路径、改名/复制取旧+新） |
 | `lib/policy.mjs` | 复用 `globToRegExp`（`--exclude` 与路径匹配）与 `normalizePath`；不引第三方 glob |
 | `bin/cli.mjs` | `runKb` 分派 + `runKbCheck` / `runKbInit` / `runKbRefresh` / `runKbImpact`；`parseArgs` 支持可重复参数（`--exclude` / `--doc`） |
 | `templates/kb-prompt.md` | 写作指令模板（init 的回退来源；本仓 `docs/kb-prompt.md` 与它同源） |
