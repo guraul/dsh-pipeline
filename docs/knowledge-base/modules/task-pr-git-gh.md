@@ -15,7 +15,7 @@
 | `lib/pr.mjs` | `runPr`、`prBody`、`issueFromBranch`、`TASK_BRANCH_PATTERN` |
 | `lib/repo.mjs` | `resolveRoot`（当前工作树）、`resolveMainRoot`（主工作区）、`resolveRepo`、`repoFromRemote`、`mainRootFromCommonDir` |
 | `lib/git.mjs` | 26 个具名 git 操作 |
-| `lib/gh.mjs` | 11 个具名 gh 操作；`MERGE_STRATEGY = 'squash'` |
+| `lib/gh.mjs` | 12 个具名 gh 操作；`MERGE_STRATEGY = 'squash'` |
 
 ## `task`（`lib/task.mjs`）
 
@@ -72,7 +72,7 @@ dsh-pipeline pr [--issue <号>] [--root <dir>]
 
 交付流程用：`worktreeList`（解析 `--porcelain`）、`worktreeListPlain`、`currentBranch`、`branchShow`、`headOneline`、`headSha`、`showStat`、`remoteUrl`、`toplevel`、`gitCommonDir`、`statusPorcelain`、`checkout`、`fetch`、`mergeFF`、`worktreeAdd`、`push`、`configGet`、`configSet`、`worktreeRemove`、`deleteBranch`。
 
-`kb` 用（2026-11 新增）：`lsFiles`（`-z` 分隔，知识库覆盖路径只靠它展开）、`commitExists`、`isAncestor`（只有退出码 1 算「不是祖先」）、`logOnelineRange`、`diffShortstat`、`diffNameOnly`、`diffNameStatus`（`--name-status -M`，`kb impact` 用）。
+`kb` 用（2026-11 新增）：`lsFiles`（`-z` 分隔，知识库覆盖路径只靠它展开）、`commitExists`、`isAncestor`（只有退出码 1 算「不是祖先」）、`logOnelineRange`、`diffShortstat`、`diffNameOnly`、`diffNameStatus`（`--name-status -M`，`kb impact` 用）、`revParse`（`kb queue` 的 `--since` 解析用）。
 
 约定：
 
@@ -84,7 +84,7 @@ dsh-pipeline pr [--issue <号>] [--root <dir>]
 
 ## `lib/gh.mjs`（具名操作）
 
-`currentUser`（`gh api user --jq .login`，供 `review.identity.account` 校验）、`prView`、`prChecks`（`pr view --json statusCheckRollup`；gh 2.42.1 不支持 `pr checks --json`）、`prDiff`、`prMerge`、`prComment`、`prReview`、`prList`、`issueView`、`prViewByBranch`、`prCreate`。
+`currentUser`（`gh api user --jq .login`，供 `review.identity.account` 校验）、`prView`、`prChecks`（`pr view --json statusCheckRollup`；gh 2.42.1 不支持 `pr checks --json`）、`prDiff`、`prMerge`、`prComment`、`prReview`、`prList`、`issueView`、`issueComment`、`prViewByBranch`、`prCreate`。
 
 - 只暴露具名操作，argv 在内部拼好，调用方**不能传任意子命令或任意参数**；
 - 合并策略固定 `--squash`，不接受参数；

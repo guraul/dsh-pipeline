@@ -1,4 +1,4 @@
-# 模块：知识库三件套（kb check / init / refresh）与影响分析（kb impact）
+# 模块：知识库三件套（kb check / init / refresh）、影响分析（kb impact）与日更队列（kb queue）
 
 > 最后更新: 2026-11-10 | commit: `d934fd5`
 > 覆盖路径: `lib/kb.mjs`, `lib/git.mjs`, `lib/policy.mjs`, `bin/cli.mjs`, `templates/kb-prompt.md`, `templates/agents.md`, `test/kb.test.mjs`, `test/git.test.mjs`
@@ -13,6 +13,7 @@
 | `kb init` | 生成「从零建知识库」提示词 + `AGENTS.md` 草稿（只打印，不落盘） |
 | `kb refresh` | 生成「存量更新」提示词：结构违规 + 每篇 stale 的 `git log` 原文 + 升级/页眉规则 + 禁止项 |
 | `kb impact` | 算「这次改动影响哪几篇文档」（`--staged` 或 `--range`） |
+| `kb queue` | 日更队列：算「水位..HEAD」的影响，有影响才投滚动 issue 评论；投递成功才推进水位 |
 
 `check` 是唯一验收器：`init` / `refresh` 的「完成」定义都是 `kb check` 退 0（或只剩被 `--exclude` 明确排除的文件）。`check` 不判断「文档写得对不对」，只判断「声明是否完整、路径是否活着、有没有变过」。
 
@@ -101,12 +102,12 @@
 
 ## 退出码（契约 §4）
 
-| 场景 | check | init | refresh | impact |
-|---|---|---|---|---|
-| 成功 | 0 | 0 | 0 | 0 |
-| 业务拒绝 | 1（有结构违规；`--strict` 且有 stale） | 1（已有 KB） | 1（无 KB，提示用 init） | — |
-| 用法 / 配置 | 2（参数错；`--kb-dir` 不存在且没给 `--allow-missing`） | 2 | 2（含未知 `--doc`） | 2 |
-| 环境错误 | 3（git / 读盘失败） | 3（写 `--out` 失败） | 3 | 3 |
+| 场景 | check | init | refresh | impact | queue |
+|---|---|---|---|---|---|
+| 成功 | 0 | 0 | 0 | 0 | 0（含无影响静默） |
+| 业务拒绝 | 1（有结构违规；`--strict` 且有 stale） | 1（已有 KB） | 1（无 KB，提示用 init） | — | — |
+| 用法 / 配置 | 2（参数错；`--kb-dir` 不存在且没给 `--allow-missing`） | 2 | 2（含未知 `--doc`） | 2 | 2（缺 `--repo` / `--issue` / 水位） |
+| 环境错误 | 3（git / 读盘失败） | 3（写 `--out` 失败） | 3 | 3 | 3（gh 投递 / 水位写盘失败） |
 
 ## 修改本模块的注意事项
 

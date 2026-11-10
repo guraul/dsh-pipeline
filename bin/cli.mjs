@@ -2732,7 +2732,6 @@ function runKbQueue(argv, deps, io) {
     head: head.data,
     affected,
     commits: log.data,
-    root,
   })
 
   if (options['dry-run'] === true) {
