@@ -1,6 +1,6 @@
 # 模块：CLI 编排层
 
-> 最后更新: 2026-11-09 | commit: `d934fd5`
+> 最后更新: 2026-11-09 | commit: `3676219`
 > 覆盖路径: `bin/cli.mjs`, `lib/merge.mjs`, `test/cli.test.mjs`, `test/contract.test.mjs`, `test/post-review.test.mjs`, `test/record-name.test.mjs`, `test/review-cmd.test.mjs`
 
 ## 职责
