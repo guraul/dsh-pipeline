@@ -34,7 +34,7 @@
 | 逐包跑 test/check/typecheck | `check-all` | `lib/check-all.mjs` |
 | 生成 / 校验部署 caller workflow 骨架 | `deploy init` / `deploy check` | `lib/deploy.mjs` |
 | 新仓库一键接入（配置 + shim + hooks + docs 骨架） | `init` / `init --check` | `lib/init.mjs` |
-| 知识库检查 / 初始化 / 更新提示词 / 影响分析 | `kb check` / `kb init` / `kb refresh` / `kb impact` | `lib/kb.mjs` |
+| 知识库检查 / 初始化 / 更新提示词 / 影响分析 / 日更队列 | `kb check` / `kb init` / `kb refresh` / `kb impact` / `kb queue` | `lib/kb.mjs` |
 | 写入 / 核对锁文件（装的是哪个构建） | `lock write` / `lock check`（`selftest --lock` 同一实现） | `lib/lock.mjs`（自己读装包的 `build.json`） |
 | 构建标识（打包时写入） | `bash scripts/pack.sh` | `scripts/pack.sh` + `lib/build-info.mjs` |
 
@@ -170,5 +170,5 @@ merge ──> gate(读记录 + policyVersion/TTL/SHA) ──> gh pr checks ─�
 | `modules/task-pr-git-gh.md` | task / pr / repo / git / gh |
 | `modules/tooling.md` | init / selftest / lock / shim / hooks / check-all / doctor / profile-check / build-info |
 | `modules/deploy.md` | 部署 caller 骨架：`deploy init` / `check`、`deploy` 配置段、三条铁律 |
-| `modules/kb.md` | 知识库三件套：`kb check` / `init` / `refresh` / `impact`、12 类错误码、页眉与覆盖路径契约 |
+| `modules/kb.md` | 知识库三件套：`kb check` / `init` / `refresh` / `impact` / `queue`、12 类错误码、页眉与覆盖路径契约 |
 | `../CONTRACT.md`（仓内 `docs/CONTRACT.md`） | 契约：命令面、退出码、输出、落盘、配置 schema、shim、门禁、部署 |

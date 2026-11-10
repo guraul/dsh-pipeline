@@ -41,17 +41,22 @@ import {
 } from '../lib/deploy.mjs'
 import { verifyDistFreshness } from '../lib/dist-freshness.mjs'
 import { evaluateGate } from '../lib/gate.mjs'
-import { currentUser, issueView, prChecks, prDiff, prMerge, prView } from '../lib/gh.mjs'
+import { currentUser, issueComment, issueView, prChecks, prDiff, prMerge, prView } from '../lib/gh.mjs'
 import { checkHook, installHook } from '../lib/hooks.mjs'
 import { runInit as runInitFlow } from '../lib/init.mjs'
 import {
   KB_DIR,
+  buildQueueComment,
   checkKb,
   computeImpact,
   listKbDocs,
+  localDate,
+  queueStatePath,
+  readQueueState,
   renderAgentsDraft,
   renderInitPrompt,
   renderRefreshPrompt,
+  writeQueueState,
 } from '../lib/kb.mjs'
 import {
   branchShow,
@@ -62,7 +67,9 @@ import {
   gitCommonDir,
   headOneline,
   headSha as gitHeadSha,
+  logOnelineRange,
   mergeFF,
+  revParse,
   showStat,
   statusPorcelain,
   toplevel,
@@ -300,6 +307,7 @@ kb 用法:
   dsh-pipeline kb init    [--root <dir>] [--kb-dir <dir>] [--prompt <path>] [--out <file>] [--json]
   dsh-pipeline kb refresh [--root <dir>] [--kb-dir <dir>] [--doc <path>]... [--exclude <glob>]... [--out <file>] [--json]
   dsh-pipeline kb impact  [--root <dir>] [--kb-dir <dir>] (--staged | --range <a>..<b>) [--json] [--out <file>]
+  dsh-pipeline kb queue   --root <dir> --repo <owner/name> --issue <n> [--since <sha>] [--state <file>] [--dry-run] [--json]
   check    校验每篇页眉（最后更新 + commit / 覆盖路径）与入口（AGENTS.md 路由、INDEX.md 导航）：
            文档级 7 类错误码 E_NO_STAMP / E_BAD_DATE / E_STAMP_ORPHAN / E_NO_COVERAGE /
            E_DEAD_GLOB / E_BROAD_GLOB / E_FORBIDDEN_PATH；入口级 5 类 E_NO_AGENTS /
@@ -315,6 +323,9 @@ kb 用法:
   impact   算「这次改动影响哪几篇文档」：--staged 取暂存区，--range 取区间（缺省 origin/main..HEAD）；
            删除取旧路径、改名/复制取旧+新（git diff --name-status -M）；只读，不改任何文件；
            --json 与 --out 同时给时两者都生效（文件写 JSON、stdout 也输出 JSON）。
+  queue    日更队列：算「水位..HEAD」的影响；无影响静默退 0，有影响生成评论投到滚动 issue
+           （标记 <!-- kb-queue: <repo> -->），**投递成功后**才推进水位（缺省
+           ~/.dsh/kb-queue/<repo>.json，不进仓库）；--dry-run 只打印正文、不投递不写状态。
   --root <dir>       仓库根目录（缺省 cwd 的 git 顶层；不是 git 仓时用 cwd）
   --kb-dir <dir>     知识库目录（相对仓库根，缺省 docs/knowledge-base）
   --exclude <glob>   可重复；枚举时排除命中的文档（相对知识库或仓库根匹配）
@@ -324,6 +335,11 @@ kb 用法:
   --out <file>       仅 init / refresh / impact：init/refresh 写提示词；impact 写 JSON 报告
   --doc <path>       仅 refresh：可重复，只处理指定文档（相对知识库目录）
   --range <a>..<b>   仅 impact：提交区间（与 --staged 互斥）
+  --repo <owner/name> 仅 queue：滚动 issue 所在仓库
+  --issue <n>        仅 queue：滚动 issue 号
+  --since <sha>      仅 queue：首次水位（之后从 --state 读）
+  --state <file>     仅 queue：水位文件（缺省 ~/.dsh/kb-queue/<repo>.json）
+  --dry-run          仅 queue：只打印评论正文，不投递、不推进水位
   --json             机器可读输出（退出码与人读模式一致）
   退出码: 0 通过 / 1 有结构违规（或 --strict 且有 stale；init 遇已有 KB、refresh 遇无 KB）/
           2 用法或配置错误 / 3 git、读盘或写盘失败
@@ -797,6 +813,8 @@ const KB_REFRESH_VALUE_FLAGS = new Set(['root', 'kb-dir', 'prompt', 'out'])
 const KB_REFRESH_BOOL_FLAGS = new Set(['json'])
 const KB_REFRESH_REPEAT_FLAGS = new Set(['doc', 'exclude'])
 const KB_IMPACT_VALUE_FLAGS = new Set(['root', 'kb-dir', 'range', 'out'])
+const KB_QUEUE_VALUE_FLAGS = new Set(['root', 'repo', 'issue', 'since', 'state'])
+const KB_QUEUE_BOOL_FLAGS = new Set(['dry-run', 'json'])
 const KB_IMPACT_BOOL_FLAGS = new Set(['staged', 'json'])
 const KB_RANGE_PATTERN = /^[^\s-][^\s]*\.\.[^\s]+$/
 
@@ -2645,6 +2663,131 @@ function runKbImpact(argv, deps, io) {
   return 0
 }
 
+/**
+ * kb queue：日更队列。算 `<水位>..HEAD` 的影响，有影响才往滚动 issue 投一条评论；
+ * 投递成功后才推进水位（失败不推进）。`--dry-run` 只打印正文，不投递、不写状态。
+ * 退出码：0 成功（含无影响静默）/ 2 用法与配置错误 / 3 gh、git 或写盘失败。
+ */
+function runKbQueue(argv, deps, io) {
+  const parsed = parseArgs(argv, KB_QUEUE_VALUE_FLAGS, KB_QUEUE_BOOL_FLAGS)
+  if (parsed.error) return argError(io, 'kb', parsed.error)
+  const options = parsed.options
+  if (options.root !== undefined && !nonEmpty(options.root)) {
+    return argError(io, 'kb', '--root 必须是非空目录路径')
+  }
+  if (!nonEmpty(options.repo) || !REPO_PATTERN.test(options.repo)) {
+    return argError(io, 'kb', '--repo 必须是 owner/name')
+  }
+  const issue = Number(options.issue)
+  if (!Number.isInteger(issue) || issue <= 0) {
+    return argError(io, 'kb', '--issue 必须是正整数')
+  }
+  if (options.state !== undefined && !nonEmpty(options.state)) {
+    return argError(io, 'kb', '--state 必须是非空文件路径')
+  }
+  const root = resolveKbRoot(options.root, deps)
+  const statePath = options.state !== undefined ? options.state : queueStatePath(options.repo)
+
+  const rawWatermark = options.since !== undefined ? options.since : readQueueState(statePath)?.watermark
+  if (!nonEmpty(rawWatermark)) {
+    return argError(io, 'kb', `缺少水位：首次运行请给 --since <sha>（水位文件: ${statePath}）`)
+  }
+  const resolved = revParse(root, { ref: rawWatermark, runner: deps.runner })
+  if (!resolved.ok) {
+    return argError(
+      io,
+      'kb',
+      `水位不是有效提交: ${rawWatermark}`,
+      typeof resolved.code === 'string' ? 'E_CONFIG' : 'E_ENV',
+    )
+  }
+  const watermark = resolved.data
+
+  const head = gitHeadSha(root, { runner: deps.runner })
+  if (!head.ok) return argError(io, 'kb', `读取 HEAD 失败: ${head.error}`, 'E_ENV')
+
+  const impact = computeImpact(root, { range: `${watermark}..HEAD`, runner: deps.runner })
+  if (!impact.ok) return argError(io, 'kb', impact.error, impact.code === 3 ? 'E_ENV' : 'E_CONFIG')
+  const affected = impact.affected
+
+  if (affected.length === 0) {
+    if (options.json === true) io.out(JSON.stringify({ ok: true, affected: [] }))
+    return 0
+  }
+
+  const files = [...new Set(affected.flatMap((item) => item.files))]
+  const log = logOnelineRange(root, {
+    from: watermark,
+    to: 'HEAD',
+    paths: files,
+    runner: deps.runner,
+  })
+  if (!log.ok) return argError(io, 'kb', `读取涉及提交失败: ${log.error}`, 'E_ENV')
+
+  const body = buildQueueComment({
+    repo: options.repo,
+    issue,
+    date: localDate(),
+    watermark,
+    head: head.data,
+    affected,
+    commits: log.data,
+  })
+
+  if (options['dry-run'] === true) {
+    if (options.json === true) {
+      io.out(
+        JSON.stringify({
+          ok: true,
+          repo: options.repo,
+          issue,
+          watermark,
+          head: head.data,
+          affected,
+          delivered: false,
+          comment: body,
+        }),
+      )
+    } else {
+      io.out(body)
+    }
+    return 0
+  }
+
+  const posted = issueComment(issue, { repo: options.repo, body, runner: deps.runner })
+  if (!posted.ok) return argError(io, 'kb', `投递评论失败: ${posted.error}`, 'E_ENV')
+
+  try {
+    writeQueueState(statePath, {
+      repo: options.repo,
+      watermark: head.data,
+      updatedAt: new Date().toISOString(),
+    })
+  } catch (error) {
+    return argError(io, 'kb', `评论已投递，但水位写盘失败: ${messageOf(error)}`, 'E_ENV')
+  }
+
+  if (options.json === true) {
+    io.out(
+      JSON.stringify({
+        ok: true,
+        repo: options.repo,
+        issue,
+        watermark,
+        head: head.data,
+        affected,
+        delivered: true,
+        state: statePath,
+      }),
+    )
+    return 0
+  }
+  io.out(`kb: 日更队列：${affected.length} 篇文档受影响，已投递到 ${options.repo}#${issue}`)
+  for (const item of affected) io.out(`  ${item.doc} ← ${item.files.join(', ')}`)
+  io.out(`水位: ${watermark} → ${head.data}（${statePath}）`)
+  return 0
+}
+
 /** kb 的分动作编排：check / init / refresh / impact。 */
 function runKb(argv, deps, io) {
   const [action, ...rest] = argv
@@ -2652,10 +2795,11 @@ function runKb(argv, deps, io) {
   if (action === 'init') return runKbInit(rest, deps, io)
   if (action === 'refresh') return runKbRefresh(rest, deps, io)
   if (action === 'impact') return runKbImpact(rest, deps, io)
+  if (action === 'queue') return runKbQueue(rest, deps, io)
   return argError(
     io,
     'kb',
-    action === undefined ? '缺少动作（check / init / refresh / impact）' : `未知动作: ${action}`,
+    action === undefined ? '缺少动作（check / init / refresh / impact / queue）' : `未知动作: ${action}`,
   )
 }
 

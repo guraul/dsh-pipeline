@@ -10,14 +10,15 @@
  *   - 退出码 0 / 1 / 2 / 3；
  *   - init 只读（不写 AGENTS.md、不写 KB）、已有 KB 退 1、--out 落文件；
  *   - refresh 无 KB 退 1、--doc 过滤、未知 --doc 退 2；
- *   - impact 的 --staged / --range / 互斥 / 删除 / 改名 / --json+--out。
+ *   - impact 的 --staged / --range / 互斥 / 删除 / 改名 / --json+--out；
+ *   - queue 的无影响静默 / 有影响投递 / --dry-run / 投递失败 / --json。
  *
  * 全部用临时 git 仓库 + 本地提交，不触网、不碰真实仓库。
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -615,6 +616,143 @@ test('kb impact：目录写法与 glob 写法都能命中删除（#163）', (t) 
   assert.ok(docs.includes('modules/dir.md'), '目录写法应命中')
   assert.ok(docs.includes('modules/glob.md'), 'glob 写法应命中')
   assert.ok(docs.includes('modules/core.md'), '字面写法应命中')
+})
+
+// ---------------------------------------------------------------- queue
+
+/** gh 走假 runner（记录 argv），git 仍走真实命令——不碰网络。 */
+function queueRunner(calls, { ghStatus = 0 } = {}) {
+  return (command, args, options) => {
+    if (command === 'gh') {
+      calls.push(args)
+      return { status: ghStatus, stdout: '', stderr: ghStatus === 0 ? '' : 'boom' }
+    }
+    return spawnSync(command, args, { encoding: 'utf8', ...options })
+  }
+}
+
+function queueStateFile() {
+  return join(tmpdir(), `dsh-kb-queue-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.json`)
+}
+
+test('kb queue：无影响静默退 0，不投递、不写状态', (t) => {
+  const { root } = makeCleanRepo()
+  t.after(() => cleanup(root))
+  const state = queueStateFile()
+  const calls = []
+  const runner = queueRunner(calls)
+
+  const result = run(
+    ['kb', 'queue', '--root', root, '--repo', 'demo/repo', '--issue', '7', '--since', 'HEAD', '--state', state],
+    { runner },
+  )
+  assert.equal(result.code, 0, result.err)
+  assert.equal(result.out.trim(), '')
+  assert.equal(calls.length, 0)
+  assert.equal(existsSync(state), false)
+
+  const json = run(
+    ['kb', 'queue', '--root', root, '--repo', 'demo/repo', '--issue', '7', '--since', 'HEAD', '--state', state, '--json'],
+    { runner },
+  )
+  assert.equal(json.code, 0, json.err)
+  assert.deepEqual(JSON.parse(json.out), { ok: true, affected: [] })
+})
+
+test('kb queue：有影响时投递评论并推进水位', (t) => {
+  const { root, stamp } = makeCleanRepo()
+  t.after(() => cleanup(root))
+  writeFileSync(join(root, 'lib', 'a.mjs'), 'export const a = 9\n')
+  commitAll(root, '改 a')
+  const head = git(root, 'rev-parse', 'HEAD').trim()
+
+  const state = queueStateFile()
+  t.after(() => rmSync(state, { force: true }))
+  const calls = []
+  const result = run(
+    ['kb', 'queue', '--root', root, '--repo', 'demo/repo', '--issue', '7', '--since', stamp, '--state', state],
+    { runner: queueRunner(calls) },
+  )
+  assert.equal(result.code, 0, result.err)
+  assert.equal(calls.length, 1)
+  const args = calls[0]
+  assert.equal(args[0], 'issue')
+  assert.equal(args[1], 'comment')
+  assert.equal(args[2], '7')
+  assert.ok(args.includes('demo/repo'))
+  const body = args[args.length - 1]
+  assert.match(body, /<!-- kb-queue: demo\/repo -->/)
+  assert.match(body, /modules\/core\.md/)
+  assert.match(body, /kb refresh --root/)
+  assert.match(result.out, /modules\/core\.md/)
+
+  const saved = JSON.parse(readFileSync(state, 'utf8'))
+  assert.equal(saved.repo, 'demo/repo')
+  assert.equal(saved.watermark, head)
+
+  // 第二次不给 --since：从状态文件读水位，已无改动 → 静默。
+  const again = run(
+    ['kb', 'queue', '--root', root, '--repo', 'demo/repo', '--issue', '7', '--state', state],
+    { runner: queueRunner(calls) },
+  )
+  assert.equal(again.code, 0, again.err)
+  assert.equal(again.out.trim(), '')
+  assert.equal(calls.length, 1)
+})
+
+test('kb queue --dry-run：只打印正文，不投递、不写状态', (t) => {
+  const { root, stamp } = makeCleanRepo()
+  t.after(() => cleanup(root))
+  writeFileSync(join(root, 'lib', 'a.mjs'), 'export const a = 10\n')
+  commitAll(root, '改 a')
+
+  const state = queueStateFile()
+  const calls = []
+  const result = run(
+    ['kb', 'queue', '--root', root, '--repo', 'demo/repo', '--issue', '7', '--since', stamp, '--state', state, '--dry-run'],
+    { runner: queueRunner(calls) },
+  )
+  assert.equal(result.code, 0, result.err)
+  assert.match(result.out, /<!-- kb-queue: demo\/repo -->/)
+  assert.match(result.out, /modules\/core\.md/)
+  assert.equal(calls.length, 0)
+  assert.equal(existsSync(state), false)
+})
+
+test('kb queue：投递失败退 3 且水位不动', (t) => {
+  const { root, stamp } = makeCleanRepo()
+  t.after(() => cleanup(root))
+  writeFileSync(join(root, 'lib', 'a.mjs'), 'export const a = 11\n')
+  commitAll(root, '改 a')
+
+  const state = queueStateFile()
+  const result = run(
+    ['kb', 'queue', '--root', root, '--repo', 'demo/repo', '--issue', '7', '--since', stamp, '--state', state],
+    { runner: queueRunner([], { ghStatus: 1 }) },
+  )
+  assert.equal(result.code, 3)
+  assert.match(result.err, /投递评论失败/)
+  assert.equal(existsSync(state), false)
+})
+
+test('kb queue --json：有影响时输出结构化结果', (t) => {
+  const { root, stamp } = makeCleanRepo()
+  t.after(() => cleanup(root))
+  writeFileSync(join(root, 'lib', 'a.mjs'), 'export const a = 12\n')
+  commitAll(root, '改 a')
+
+  const state = queueStateFile()
+  t.after(() => rmSync(state, { force: true }))
+  const result = run(
+    ['kb', 'queue', '--root', root, '--repo', 'demo/repo', '--issue', '7', '--since', stamp, '--state', state, '--json'],
+    { runner: queueRunner([]) },
+  )
+  assert.equal(result.code, 0, result.err)
+  const payload = JSON.parse(result.out)
+  assert.equal(payload.ok, true)
+  assert.equal(payload.delivered, true)
+  assert.equal(payload.repo, 'demo/repo')
+  assert.ok(payload.affected.some((item) => item.doc === 'modules/core.md'))
 })
 
 // ---------------------------------------------------------------- 审核修复的回归

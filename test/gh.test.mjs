@@ -214,6 +214,7 @@ test('导出面固定：只有具名操作，没有接受 argv 的通用入口',
   const callables = Object.entries(gh).filter(([, value]) => typeof value === 'function')
   assert.deepEqual(callables.map(([name]) => name).sort(), [
     'currentUser',
+    'issueComment',
     'issueView',
     'prChecks',
     'prComment',

@@ -84,13 +84,13 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | `hooks install\|check` | 安装 / 校验 pre-push 直推拦截钩子 | 现行 |
 | `deploy init\|check` | 生成 / 校验 caller workflow 骨架：`deploy-web.yml`（生成区 = `name` / `on` / `concurrency` + 单 job 的 `uses`+`with`+`secrets`，`with:` 含按 artifact 推导的 `mode` 与 `assemble`）；`--write --rollback` 连带生成 / 更新 `rollback-web.yml`（`workflow_dispatch` + `rollback.yml` 同一 pin，见 §10）。**回滚文件已是生成物时，只跑 `--write` 也会刷新它**（不用每次记着加 `--rollback`）；它是手写文件时跳过并提示（显式 `--rollback` 才拒绝覆盖）。`check` 逐字节比对：部署 caller 必须存在且一致（缺标记退 1），回滚 caller 是生成物才校验——**不存在或手写（缺标记）都跳过并退 0**（手写时 stderr 提示「要接管请删除它再跑 `deploy init --write --rollback`」），因此 CI 不能强制回滚 caller 被接管；标记之后允许各仓追加自己的后置 job | **现行** |
 | `init` | 新仓库一键接入：生成 `.dsh/pipeline.json` 最小配置（`repo` 从 origin 推导、`checks.packages` 从 `workspaces` 展开）、入口 shim、pre-push 钩子、`docs/pipeline/` 骨架（README + review-loop，生成区用标记包裹、标记外可追加）；`--check` 只读校验四件套，缺项退 1；已存在的配置与无标记文档不覆盖（`--force` 才接管）；`--root` 不存在或不是目录退 2（不替调用方建目录树）；生成是两段式——先对四项做只判定的预演，任一不通过就一个文件都不写 | **现行** |
-| `kb check\|init\|refresh\|impact` | 知识库检查 / 初始化 / 更新提示词 / 影响分析（issue #154）：`check` 校验每篇页眉（canonical 两行：最后更新 + commit / 覆盖路径）与入口（`AGENTS.md` 路由、`INDEX.md` 文档导航，双向一致），并报告 stale；`init` 生成初始化提示词 + `AGENTS.md` 草稿（草稿只打印，不落盘）；`refresh` 生成存量更新提示词（结构违规 + 每篇 stale 的 `git log` 原文 + 升级/页眉规则 + 禁止项）；`impact` 用 `git diff --name-status -M` 解析改动（删除取旧路径、改名/复制取旧+新），按覆盖路径的 glob 匹配器直接测试改动路径；`--json` 与 `--out` 同时给时**两者都生效**（`--out` 写 JSON 文件、stdout 也输出 JSON）。三个动作都**只读仓库**（除 `--out` 指定的文件），不写 KB 正文、不改任何文档；`--kb-dir` 缺省 `docs/knowledge-base`，`--prompt` 缺省 `docs/kb-prompt.md`（回退 `docs/promptA.md` → 包内 `templates/kb-prompt.md`） | **现行** |
+| `kb check\|init\|refresh\|impact\|queue` | 知识库检查 / 初始化 / 更新提示词 / 影响分析（issue #154）：`check` 校验每篇页眉（canonical 两行：最后更新 + commit / 覆盖路径）与入口（`AGENTS.md` 路由、`INDEX.md` 文档导航，双向一致），并报告 stale；`init` 生成初始化提示词 + `AGENTS.md` 草稿（草稿只打印，不落盘）；`refresh` 生成存量更新提示词（结构违规 + 每篇 stale 的 `git log` 原文 + 升级/页眉规则 + 禁止项）；`impact` 用 `git diff --name-status -M` 解析改动（删除取旧路径、改名/复制取旧+新），按覆盖路径的 glob 匹配器直接测试改动路径；`--json` 与 `--out` 同时给时**两者都生效**（`--out` 写 JSON 文件、stdout 也输出 JSON）；`queue` 是日更队列——算「水位..HEAD」的影响，无影响静默退 0，有影响生成带 `<!-- kb-queue: <repo> -->` 标记的评论投到滚动 issue，**投递成功后才推进水位**（缺省 `~/.dsh/kb-queue/<repo>.json`，不进仓库），`--dry-run` 只打印正文。`check` / `init` / `refresh` / `impact` 都**只读仓库**（除 `--out` 指定的文件），不写 KB 正文、不改任何文档；`queue` 只写仓库外的水位文件并投评论；`--kb-dir` 缺省 `docs/knowledge-base`，`--prompt` 缺省 `docs/kb-prompt.md`（回退 `docs/promptA.md` → 包内 `templates/kb-prompt.md`） | **现行** |
 
 新增子命令属于**契约变更**，必须同时更新本文件与 §3.3。
 
 ### 3.3 实现状态（v1.2 校正，2026-11-06）
 
-**已实现**：`task` / `pr` / `review prepare|prompt|publish`（含 `--post-review`）/ `record` / `gate` / `merge` / `status` / `doctor`（含 `--profile`）/ `selftest`（`--shims` / `--config` / `--lock` / `--peer` / `--exit-codes` / `--init` / `--fast` / `--repos`）/ `lock write|check` / `shim install|check` / `hooks install|check` / `check-all` / `deploy init|check`（`artifact` 支持 `static-dir` 与 `node-standalone`）/ `init`（`--check` / `--force`）/ `kb check|init|refresh|impact`。
+**已实现**：`task` / `pr` / `review prepare|prompt|publish`（含 `--post-review`）/ `record` / `gate` / `merge` / `status` / `doctor`（含 `--profile`）/ `selftest`（`--shims` / `--config` / `--lock` / `--peer` / `--exit-codes` / `--init` / `--fast` / `--repos`）/ `lock write|check` / `shim install|check` / `hooks install|check` / `check-all` / `deploy init|check`（`artifact` 支持 `static-dir` 与 `node-standalone`）/ `init`（`--check` / `--force`）/ `kb check|init|refresh|impact|queue`。
 
 **配置字段（已进 schema）**：`worktreesDir` 由 `task` 消费——缺省读配置、`--worktrees-dir` 优先；`checks` 由 `check-all` 消费——`--packages` 优先，其次 `checks.packages`（按给定顺序），再否则自动发现并按 `checks.exclude` 过滤；`deploy` 由 `deploy init|check` 消费（字段见 §7.1，部署行为见 §10）；`review` 段的 `tier` / `postReview` / `identity` / `rounds` 全部进 schema 并被消费（见 §7.3）。
 
@@ -113,7 +113,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 
 **迁移开关 `--legacy-exit-codes`（现行，切换完成后删除）**：带它时 `REJECT` 退回 **0**，给还没改 `set -e` 脚本的调用方留过渡期；其余判定不变。
 
-**`kb` 的退出码（契约 §4 口径）**：`kb check` 有结构违规退 **1**（`--strict` 且 stale > 0 也退 1；`--allow-missing` 在知识库目录不存在时退 **0**）；`kb init` 遇已有知识库退 **1**；`kb refresh` 遇无知识库退 **1**；`kb impact` 只读、没有业务拒绝，只有 0 / 2 / 3。参数与 `--kb-dir` / `--doc` 问题退 **2**，git / 读写失败退 **3**。
+**`kb` 的退出码（契约 §4 口径）**：`kb check` 有结构违规退 **1**（`--strict` 且 stale > 0 也退 1；`--allow-missing` 在知识库目录不存在时退 **0**）；`kb init` 遇已有知识库退 **1**；`kb refresh` 遇无知识库退 **1**；`kb impact` 只读、没有业务拒绝，只有 0 / 2 / 3。`kb queue` 无影响退 **0**，投递失败退 **3**（水位不动），参数问题退 **2**。参数与 `--kb-dir` / `--doc` 问题退 **2**，git / 读写失败退 **3**。
 
 **例外：`--post-review`** 的退出码反映「review 是否发出」（成功 0 / 配置错误 2 / gh 失败 3），不反映判定——`REJECT` 的 review 照常发出，判定看记录。**记录没写成时不发送**：前置校验失败退 2、写盘失败退 3，两种都不发 review——没有记录就没有可追溯的判定。
 
@@ -136,6 +136,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | 错误行 | stderr，`dsh-pipeline: <子命令>: <错误码>: <说明>` | 同 |
 | 机器模式 | `--json` 输出一个 JSON 对象 | 同 |
 | `kb impact` 的 `--json` + `--out` | 两者都生效：`--out` 写 JSON 文件，stdout 仍输出 JSON；只给 `--out` 时 stdout 为人读摘要 | 同 |
+| `kb queue` | 无影响静默（`--json` 输出 `{ok:true,affected:[]}`）；有影响时投递评论并推进水位；`--dry-run` 只打印正文 | 同 |
 
 **阶段的划分**（契约 §5 的状态行）：`审核` = `review prepare` / `review prompt` / `review publish` / `record` / `gate`；`合并` = `merge`（其进度行 `repo:` / `head:` / `gate:` / `ci:` / `merge:` / `worktree:` / `fetch:` / `ff:` / `branch:` 本身就是阶段式）；`构建` = `deploy init` / `deploy check`。其余命令（`task` / `pr` / `shim` / `hooks` / `init` / `lock` / `selftest` / `check-all` / `doctor` / `status`）不在这三个阶段里，保留子命令前缀。
 
@@ -164,6 +165,7 @@ L2 之所以要变成生成物：入口一旦允许手写，就等于给“某�
 | 审核提示词 | `<root>/.tmp/review/<pr>/prompt.md` | 现行 |
 | 审核记录 | `<root>/.dsh-web/reviews/<pr>-<head_sha>.json` | 现行 |
 | 跳过审计 | `<root>/.dsh-web/reviews/skips/<ts>-<pr>.json` | 现行 |
+| 日更队列水位 | `~/.dsh/kb-queue/<repo>.json`（**仓库外**，不进 git） | 现行 |
 
 **现行**：产生上述产物的命令，`<root>` 缺省口径统一——显式 `--root` 优先；否则定位**主工作区**（`git rev-parse --git-common-dir` 的父目录，即 `git worktree list --porcelain` 首条）；git 定位不到（非仓库 / git 失败）退回当前目录。
 
@@ -471,4 +473,5 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | 2026-11-08 | §3.2 新增 `init`：一键生成配置 + 入口 shim + pre-push 钩子 + `docs/pipeline` 骨架（幂等、`--check` 只读校验）；§9 新增 `--init`（不并入 `--fast`） |
 | 2026-11-08 | `--request` / `--response` / `--findings` 的读失败按 errno 分档：文件不存在退 2、权限 / IO 退 3；`review prompt --out` 写盘失败退 3 |
 | 2026-11-10 | §3.2 / §5：`kb impact` 改用 `git diff --name-status -M`（删除取旧路径、改名/复制取旧+新）+ 覆盖路径 glob 直匹配；`--json` 与 `--out` 同时给时两者都生效 |
+| 2026-11-10 | §3.2 / §5 新增 `kb queue`（issue #154 P7.1）：水位 + `computeImpact` + 滚动 issue 评论；投递成功才推进水位，`--dry-run` 不投递不写状态；状态文件缺省 `~/.dsh/kb-queue/<repo>.json` |
 | 2026-11-09 | 新增 `kb check\|init\|refresh\|impact`（契约 §3.2，issue #154）：页眉 canonical 两行 + 三种旧格式兼容、覆盖路径机械判据（单条 ≤30 / 单篇 ≤200 / 顶层 ≤10）、入口双向一致性检查、12 类检查码；`kb init` / `kb refresh` 只读仓库（除 `--out`）。§4 / §5 补 kb 的退出码与检查码口径 |
