@@ -49,7 +49,7 @@ dsh-pipeline pr [--issue <号>] [--root <dir>]
 | 分支 | 必须是 `task/<号>-<slug>`（正则 `TASK_BRANCH_PATTERN`）；分支名不含号时用 `--issue` 补，但仍必须在 `task/*` 上 |
 | `--issue` 冲突 | 与分支名里的号不一致 → 退 2（要改 PR 关哪个 issue，先改分支名） |
 | 工作区 | 必须干净（`status --porcelain` 为空），否则 `E_DIRTY` |
-| 幂等 | 先 `gh pr view --head <branch>`，已存在 → 只打印链接，不重推 |
+| 幂等 | 先 `prViewByBranch`（`pr view <branch> --repo <repo> --json url`），已存在 → 只打印链接，不重推 |
 | PR 标题 | `<issue 标题> (#<号>)` |
 | PR 正文 | 首行 `Closes #<号>`，其后是合并前提（与 `docs/pipeline/README.md` §四 口径一致，改动要同步） |
 | base | `main` |

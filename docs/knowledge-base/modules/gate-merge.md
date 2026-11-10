@@ -79,7 +79,7 @@
 | 开关 | 作用 | 不做什么 |
 |---|---|---|
 | `--check-only` | 跑到 CI 门槛为止，不合并不清理 | 不写任何东西（除闸门的跳过审计） |
-| `--checks-file <f>` | 用本地 JSON 代替 `gh pr checks`（自测 / 离线） | 不改变闸门 |
+| `--checks-file <f>` | 用本地 JSON 代替 `gh pr view --json statusCheckRollup`（自测 / 离线） | 不改变闸门 |
 | `--force` | 跳过 CI（连 gh 都不发，步骤标「跳过」而非「通过」） | **不能绕过闸门**（闸门在 CI 之前，顺序即保证）；不写跳过审计；不能替代 `--no-review` |
 
 ### 失败语义
