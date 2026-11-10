@@ -601,3 +601,67 @@ test('INDEX 导航写全仓相对路径（docs/knowledge-base/…）也能识别
   const result = check(root)
   assert.equal(result.code, 0, result.out)
 })
+
+// ---------------------------------------------------------------- 导航解析：格式兼容
+
+/** 把 INDEX 的导航表改写成给定格式（保留其余正文）。 */
+function rewriteNav(root, formatter) {
+  const indexFile = join(root, KB, 'INDEX.md')
+  const text = readFileSync(indexFile, 'utf8')
+  const rows = [
+    ['INDEX.md', '入口'],
+    ['ARCHITECTURE.md', '架构'],
+    ['API.md', '接口'],
+    ['DATA.md', '数据'],
+    ['OPERATIONS.md', '运维'],
+    ['CONVENTIONS.md', '约定'],
+    ['modules/core.md', '核心模块'],
+  ]
+  const body = rows.map(([path, label]) => formatter(path, label)).join('\n')
+  const rewritten = text.replace(
+    /## 文档导航[\s\S]*$/,
+    `## 文档导航\n\n${body}\n`,
+  )
+  writeFileSync(indexFile, rewritten)
+  return rewritten
+}
+
+test('INDEX 导航是 Markdown 链接表（memx 风格）也能识别', (t) => {
+  const { root } = makeCleanRepo()
+  t.after(() => cleanup(root))
+  const rewritten = rewriteNav(root, (path, label) => `| [${path}](${path}) | ${label} |`)
+  assert.match(rewritten, /\[INDEX\.md\]\(INDEX\.md\)/)
+  assert.match(rewritten, /\[modules\/core\.md\]\(modules\/core\.md\)/)
+  const result = check(root)
+  assert.equal(result.code, 0, result.out)
+})
+
+test('INDEX 导航是反引号表（dsh-pipeline 风格）能识别', (t) => {
+  const { root } = makeCleanRepo()
+  t.after(() => cleanup(root))
+  const rewritten = rewriteNav(root, (path, label) => `| \`${path}\` | ${label} |`)
+  assert.match(rewritten, /`modules\/core\.md`/)
+  const result = check(root)
+  assert.equal(result.code, 0, result.out)
+})
+
+test('INDEX 导航是纯文本列表也能识别', (t) => {
+  const { root } = makeCleanRepo()
+  t.after(() => cleanup(root))
+  const rewritten = rewriteNav(root, (path) => `- ${path}`)
+  assert.match(rewritten, /^- modules\/core\.md$/m)
+  const result = check(root)
+  assert.equal(result.code, 0, result.out)
+})
+
+test('INDEX 导航是链接 + 全仓相对路径也能识别', (t) => {
+  const { root } = makeCleanRepo()
+  t.after(() => cleanup(root))
+  const rewritten = rewriteNav(
+    root,
+    (path, label) => `| [${path}](${KB}/${path}) | ${label} |`,
+  )
+  assert.match(rewritten, new RegExp(`\\[modules/core\\.md\\]\\(${KB}/modules/core\\.md\\)`))
+  const result = check(root)
+  assert.equal(result.code, 0, result.out)
+})
