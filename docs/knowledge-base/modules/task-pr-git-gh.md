@@ -1,6 +1,6 @@
 # 模块：task / pr / 仓库定位 / git 与 gh 封装
 
-> 最后更新: 2026-11-10 | commit: `a1e502d`
+> 最后更新: 2026-11-10 | commit: `d934fd5`
 > 覆盖路径: `lib/task.mjs`, `lib/pr.mjs`, `lib/repo.mjs`, `lib/git.mjs`, `lib/gh.mjs`, `lib/fs-probe.mjs`, `bin/cli.mjs`, `test/task.test.mjs`, `test/task-worktree.test.mjs`, `test/pr.test.mjs`, `test/git.test.mjs`, `test/gh.test.mjs`
 
 ## 职责
@@ -72,7 +72,7 @@ dsh-pipeline pr [--issue <号>] [--root <dir>]
 
 交付流程用：`worktreeList`（解析 `--porcelain`）、`worktreeListPlain`、`currentBranch`、`branchShow`、`headOneline`、`headSha`、`showStat`、`remoteUrl`、`toplevel`、`gitCommonDir`、`statusPorcelain`、`checkout`、`fetch`、`mergeFF`、`worktreeAdd`、`push`、`configGet`、`configSet`、`worktreeRemove`、`deleteBranch`。
 
-`kb` 用（2026-11 新增）：`lsFiles`（`-z` 分隔，知识库覆盖路径只靠它展开）、`commitExists`、`isAncestor`（只有退出码 1 算「不是祖先」）、`logOnelineRange`、`diffShortstat`、`diffNameOnly`。
+`kb` 用（2026-11 新增）：`lsFiles`（`-z` 分隔，知识库覆盖路径只靠它展开）、`commitExists`、`isAncestor`（只有退出码 1 算「不是祖先」）、`logOnelineRange`、`diffShortstat`、`diffNameOnly`、`diffNameStatus`（`--name-status -M`，`kb impact` 用）。
 
 约定：
 

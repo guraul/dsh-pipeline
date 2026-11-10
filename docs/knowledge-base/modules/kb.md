@@ -1,6 +1,6 @@
 # 模块：知识库三件套（kb check / init / refresh）与影响分析（kb impact）
 
-> 最后更新: 2026-11-10 | commit: `415f3a4`
+> 最后更新: 2026-11-10 | commit: `d934fd5`
 > 覆盖路径: `lib/kb.mjs`, `lib/git.mjs`, `lib/policy.mjs`, `bin/cli.mjs`, `templates/kb-prompt.md`, `templates/agents.md`, `test/kb.test.mjs`, `test/git.test.mjs`
 
 这一组命令把「知识库从零建起来 / 存量重新对齐 / 判断一篇文档是否过期 / 这次改动影响哪几篇」收进本包。设计边界：**只读仓库**（除 `--out` 指定的文件），不写 KB 正文、不改 `AGENTS.md`、不装定时任务。
@@ -21,7 +21,7 @@
 | 文件 | 职责 |
 |---|---|
 | `lib/kb.mjs` | 页眉解析、覆盖路径校验、入口检查、stale 计算、四种提示词渲染、影响分析 |
-| `lib/git.mjs` | 新增具名封装：`lsFiles` / `commitExists` / `isAncestor` / `logOnelineRange` / `diffShortstat` / `diffNameOnly` |
+| `lib/git.mjs` | 新增具名封装：`lsFiles` / `commitExists` / `isAncestor` / `logOnelineRange` / `diffShortstat` / `diffNameOnly` / `diffNameStatus`（`--name-status -M`，删除取旧路径、改名/复制取旧+新） |
 | `lib/policy.mjs` | 复用 `globToRegExp`（`--exclude` 与路径匹配）与 `normalizePath`；不引第三方 glob |
 | `bin/cli.mjs` | `runKb` 分派 + `runKbCheck` / `runKbInit` / `runKbRefresh` / `runKbImpact`；`parseArgs` 支持可重复参数（`--exclude` / `--doc`） |
 | `templates/kb-prompt.md` | 写作指令模板（init 的回退来源；本仓 `docs/kb-prompt.md` 与它同源） |
