@@ -1,7 +1,7 @@
 # 模块：部署 caller 骨架（deploy）
 
-> 最后更新: 2026-11-09 | commit: `943d92a`
-> 覆盖路径: `lib/deploy.mjs`, `lib/build-info.mjs`, `lib/config.mjs`, `bin/cli.mjs`, `.github/workflows/deploy.yml`, `.dsh/pipeline.json`, `test/cli.test.mjs`, `test/config.test.mjs`, `test/deploy.test.mjs`
+> 最后更新: 2026-11-10 | commit: `a1e502d`
+> 覆盖路径: `lib/deploy.mjs`, `lib/region.mjs`, `lib/build-info.mjs`, `lib/config.mjs`, `bin/cli.mjs`, `.github/workflows/deploy.yml`, `.dsh/pipeline.json`, `test/cli.test.mjs`, `test/config.test.mjs`, `test/deploy.test.mjs`
 
 ## 职责
 
@@ -11,7 +11,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| `lib/deploy.mjs` | 标记文案、路径常量、`resolveDeploy`（补默认值）、`renderRegion` / `renderSkeleton`、`extractRegion`、`firstDifference`、`replaceRegion` |
+| `lib/deploy.mjs` | 标记文案、路径常量、`resolveDeploy`（补默认值）、`renderRegion` / `renderSkeleton`；生成区的 `extractRegion` / `firstDifference` / `replaceRegion` 委托给 `lib/region.mjs` |
 | `lib/config.mjs` | `deploy` 段的 schema 校验（`DEPLOY_FIELDS` / `DEPLOY_HEALTH_FIELDS` / `DEPLOY_ARTIFACTS` / `DEPLOY_HEALTH_CHECKS`） |
 | `bin/cli.mjs` | `runDeploy`（`init` / `check` 两个动作、`--write` / `--rollback`、读 `build.json` 拿 gitSha） |
 
@@ -92,6 +92,10 @@ dsh-pipeline deploy check --root <dir>
 | `workDir` | 是 | 非空字符串（`deploy.yml` 的 `work_dir` 是必填 input） |
 | `artifactDir` | 否 | `null`（不写进 caller，交给 `deploy.yml` 的默认 `dist`） |
 | `sshHost` | 否 | `null`（不写，让 `deploy.yml` 从 `health_url` 解析主机） |
+| `qualityCmd` | 否 | `null`（不写，交给 `deploy.yml` 的默认 `pnpm exec tsc --noEmit && pnpm test`） |
+| `buildCmd` | 否 | `null`（不写，交给 `deploy.yml` 的默认 `pnpm exec expo export --platform web --clear`） |
+| `paths` | 否 | `null`（不写 = 任何 push 都部署；写成 `[]` 会被 schema 拒，空数组等于静默丢掉过滤） |
+| `linkPaths` | 否 | `null`（不写 = 不建持久化软链；写了就逐项渲染成 `with.link_paths`） |
 | `health.url` | 是 | — |
 | `health.check` | 否 | `http`；可选 `ssh` |
 | `health.publicUrl` | 否 | `null`（不写，跳过对外链路检查） |
@@ -115,7 +119,7 @@ dsh-pipeline deploy check --root <dir>
 
 ## 依赖
 
-`lib/deploy.mjs` 无 lib 依赖（纯字符串处理）；gitSha 由 CLI 经 `lib/build-info.mjs` 读入后传入（`deps.buildInfo` 可注入，**判据是「显式传了没有」**——测试注入 `null` 表示「没有 build.json」，不能用 `isPlainObject` 判断）。
+`lib/deploy.mjs` → `lib/region.mjs`（生成区提取 / 替换 / 首处差异的通用实现，deploy 与 init 共用；deploy 只固定自己的标记文案）；gitSha 由 CLI 经 `lib/build-info.mjs` 读入后传入（`deps.buildInfo` 可注入，**判据是「显式传了没有」**——测试注入 `null` 表示「没有 build.json」，不能用 `isPlainObject` 判断）。
 
 ## 修改本模块的注意事项
 

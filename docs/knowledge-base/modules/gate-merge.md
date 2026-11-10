@@ -1,7 +1,7 @@
 # 模块：闸门、合并与高风险策略
 
-> 最后更新: 2026-11-09 | commit: `18289d5`
-> 覆盖路径: `lib/gate.mjs`, `lib/merge.mjs`, `lib/policy.mjs`, `bin/cli.mjs`, `.dsh/pipeline.json`, `test/contract.test.mjs`, `test/gate.test.mjs`, `test/merge.test.mjs`, `test/policy.test.mjs`
+> 最后更新: 2026-11-10 | commit: `a1e502d`
+> 覆盖路径: `lib/gate.mjs`, `lib/merge.mjs`, `lib/policy.mjs`, `lib/fs-probe.mjs`, `bin/cli.mjs`, `.dsh/pipeline.json`, `test/contract.test.mjs`, `test/gate.test.mjs`, `test/merge.test.mjs`, `test/policy.test.mjs`
 
 ## 职责
 
@@ -34,7 +34,7 @@
 | 8 | `policy.hit` 为假 | `E_POLICY` | 命中高风险必须人工放行，理由从 `policy.reasons` 里取路径 |
 | 9 | `policyVersion === 当前包版本` | `E_POLICY_VERSION` | 按旧规则审的记录必须复审 |
 
-（失败码是**内部码**；输出层的错误行一律折成契约 §5 的 6 码，见 `bin/cli.mjs` 的 `publicCode`。）
+（失败码是**内部码**；输出层的错误行一律折成契约 §5 的 6 码，见 `bin/cli.mjs` 的 `publicCode`。记录存在但读不出来（权限 / IO，`lib/fs-probe.mjs` 的 `isIoError`）按 `E_ENV` 退 3；`--checks-file` 读不到 / 非 JSON 按 `E_INPUT` 退 2。）
 
 **无 IO、不直接读时钟**：`now` 由调用方传入（缺省才取当前时间），同一组输入永远同一结论，单测与审计可复现。
 
@@ -52,7 +52,7 @@
 
 | 步 | 动作 | 失败码 | 关键约束 |
 |---|---|---|---|
-| `repo` | 读 `.dsh/pipeline.json` 的 `repo` | `E_CONFIG` | 缺 repo 直接拒绝 |
+| `repo` | 读 `.dsh/pipeline.json` 的 `repo` | `E_CONFIG`（配置写错）/ `E_ENV`（读不出来，退 3） | 缺 repo 直接拒绝 |
 | `head` | `gh pr view` 的 `headRefOid`（或 `--head-sha`） | `E_HEAD`（gh 读取失败 → 输出层折成 `E_ENV`）/ `E_STATE`（PR 没有 headRefOid）/ `E_INPUT`（输出层折成 `E_USAGE`，退 2） | **不用本机 HEAD** |
 | `gate` | 同闸门（含跳过审计） | 闸门的码 | 不通过时后面的 gh 命令一条都不发 |
 | `pr` | 取 `headRefName` / `state` | `E_PR` | `CLOSED` 拒绝；`MERGED` 只清理 |
@@ -79,12 +79,12 @@
 | 开关 | 作用 | 不做什么 |
 |---|---|---|
 | `--check-only` | 跑到 CI 门槛为止，不合并不清理 | 不写任何东西（除闸门的跳过审计） |
-| `--checks-file <f>` | 用本地 JSON 代替 `gh pr checks`（自测 / 离线） | 不改变闸门 |
+| `--checks-file <f>` | 用本地 JSON 代替 `gh pr view --json statusCheckRollup`（自测 / 离线） | 不改变闸门 |
 | `--force` | 跳过 CI（连 gh 都不发，步骤标「跳过」而非「通过」） | **不能绕过闸门**（闸门在 CI 之前，顺序即保证）；不写跳过审计；不能替代 `--no-review` |
 
 ### 失败语义
 
-任一步失败即停在该步，`steps` 保留此前成功的每一步。**不做回滚**——合并已在服务端发生，回滚比如实报告更危险。
+任一步失败即停在该步，`steps` 保留此前成功的每一步，且失败步骤带 `code`（CLI 按它渲染错误行，不落到 `publicCode` 的默认分支）。**不做回滚**——合并已在服务端发生，回滚比如实报告更危险。
 
 ## 高风险策略（`lib/policy.mjs`）
 

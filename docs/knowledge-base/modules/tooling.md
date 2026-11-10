@@ -1,6 +1,6 @@
 # 模块：接入与一致性工具（init / selftest / shim / hooks / check-all / doctor / build-info）
 
-> 最后更新: 2026-11-09 | commit: `8a4f46b`
+> 最后更新: 2026-11-10 | commit: `a1e502d`
 > 覆盖路径: `lib/init.mjs`, `lib/selftest.mjs`, `lib/shim.mjs`, `lib/hooks.mjs`, `lib/check-all.mjs`, `lib/doctor.mjs`, `lib/profile-check.mjs`, `lib/build-info.mjs`, `lib/region.mjs`, `templates/shim.sh`, `templates/pipeline-docs/**`, `.dsh/pipeline.json`, `package.json`, `test/init.test.mjs`, `test/selftest.test.mjs`, `test/shim.test.mjs`, `test/hooks.test.mjs`, `test/check-all.test.mjs`, `test/doctor.test.mjs`, `test/config.test.mjs`, `test/gitignore.test.mjs`
 
 这一组命令的共同点：**只读检查优先、能修才写、判据是"渲染后逐字节比对"而不是"看起来像"**。它们替代了各仓过去手写的 `build-check.sh` / `review-loop-check.sh` 之类脚本。
@@ -31,7 +31,7 @@ dsh-pipeline selftest [--shims] [--config] [--lock] [--peer] [--exit-codes] [--i
 | `--shims` | `<root>/scripts/pipeline` 下 6 个入口 == 按**当前包版本**渲染后的模板 | 已实现 |
 | `--config` | `<root>/.dsh/pipeline.json` 能被 schema 接受、无未声明字段；没有该文件视为通过 | 已实现 |
 | `--lock` | 装包的 `build.json` == `.dsh/pipeline.lock.json` 的 `expect`；锁不存在 / 未装包跳过，旧版本包或不一致失败（详见下节 `lock`） | 已实现 |
-| `--fast` | 等价 `--shims --config`（pre-push 用，契约 §9） | 已实现 |
+| `--fast` | 等价 `--shims --config`（本地自检用；pre-push 钩子只拦直推 main/master，不跑自检。契约 §9 仍写「pre-push 用 --fast」，以代码为准，契约待同步） | 已实现 |
 | `--repos a,b,c` | 多仓装的共享包是否同一构建（读各自 `tools/node_modules/dsh-pipeline/build.json` 的 `gitSha`） | 已实现 |
 | `--peer` | 各包的 DSH 版本声明覆盖当前版本（四个来源按优先级） | 已实现 |
 | `--init` | 四件套接入检测：配置可过 schema、6 个入口与模板一致、pre-push 钩子已装且可执行、`docs/pipeline` 生成区一致（与 `init --check` 同一判据）；不并入 `--fast` | 已实现 |
@@ -78,7 +78,7 @@ dsh-pipeline init --check [--root <dir>]
 
 - **幂等**：二次 `init` 不改动任何文件（配置跳过、shim 相同跳过、钩子 unchanged、docs 生成区相同跳过）。
 - **`--check`**：只读，逐项 `✓ / ✗`；缺任一项退 1。与 `selftest --init` 同一判据（`checkInit` 复用 `checkConfigFile` / `checkShims` / `checkHook` / `checkDocs`，`resolveRepo` 与注入的 `runner` 也一并透传）。
-- **不并入 `--fast`**：pre-push 只跑 `--shims --config`；消费仓尚未接入 docs 骨架时，不应让 pre-push 因缺它而红。
+- **不并入 `--fast`**：`--fast` 是本地自检用法；pre-push 钩子只拦直推 `main` / `master`，不跑自检（`templates/pipeline-docs/README.md` 已按实现校正）。消费仓尚未接入 docs 骨架时，也不该让自检因缺它而红。
 - **repo 推导**：`--repo` 优先，其次 `git remote get-url origin`；都拿不到就省略该字段（下游命令需要时自己报错，不猜）。
 - **两段式**：先对四项做只判定的预演（各 install 的 `dryRun`），任一项不通过就一个文件都不写——避免「配置失败但 shim / hooks 已落盘」的半写状态。
 - **worktree 里要显式 `--root .`**：`init` 的 `--root` 缺省是主工作区（与 `shim` / `hooks` / `selftest` 同口径）；在 task worktree 里不带 `--root` 会校验 / 写入主工作区。

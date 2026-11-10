@@ -1,7 +1,7 @@
 # 模块：task / pr / 仓库定位 / git 与 gh 封装
 
-> 最后更新: 2026-11-09 | commit: `cf7544f`
-> 覆盖路径: `lib/task.mjs`, `lib/pr.mjs`, `lib/repo.mjs`, `lib/git.mjs`, `lib/gh.mjs`, `bin/cli.mjs`, `test/task.test.mjs`, `test/task-worktree.test.mjs`, `test/pr.test.mjs`, `test/git.test.mjs`, `test/gh.test.mjs`
+> 最后更新: 2026-11-10 | commit: `a1e502d`
+> 覆盖路径: `lib/task.mjs`, `lib/pr.mjs`, `lib/repo.mjs`, `lib/git.mjs`, `lib/gh.mjs`, `lib/fs-probe.mjs`, `bin/cli.mjs`, `test/task.test.mjs`, `test/task-worktree.test.mjs`, `test/pr.test.mjs`, `test/git.test.mjs`, `test/gh.test.mjs`
 
 ## 职责
 
@@ -14,8 +14,8 @@
 | `lib/task.mjs` | `runTask`、`slugify`、`normalizeSlug`、`taskBranchName`、`taskWorktreePath`、`resolveWorktreesDir` |
 | `lib/pr.mjs` | `runPr`、`prBody`、`issueFromBranch`、`TASK_BRANCH_PATTERN` |
 | `lib/repo.mjs` | `resolveRoot`（当前工作树）、`resolveMainRoot`（主工作区）、`resolveRepo`、`repoFromRemote`、`mainRootFromCommonDir` |
-| `lib/git.mjs` | 16 个具名 git 操作 |
-| `lib/gh.mjs` | 10 个具名 gh 操作；`MERGE_STRATEGY = 'squash'` |
+| `lib/git.mjs` | 26 个具名 git 操作 |
+| `lib/gh.mjs` | 11 个具名 gh 操作；`MERGE_STRATEGY = 'squash'` |
 
 ## `task`（`lib/task.mjs`）
 
@@ -32,7 +32,7 @@ dsh-pipeline task <issue号> [--slug <slug>] [--root <dir>] [--worktrees-dir <di
 | slug | 标题小写 → 非 `[a-z0-9]` 折成 `-` → 去首尾 `-` → 截断 40；**非 ASCII 标题会被整段清空**，此时回退成标题 `sha1` 前 8 位（必须确定性，重跑要得到同一分支名） |
 | `--slug` | 与自动 slug 同一字符集与长度上限；规范化后为空 → 退 2，**不静默回退**到自动 slug |
 | 幂等 | worktree 已存在 → 只打印路径，退 0，**不 fetch、不动现场** |
-| 路径冲突 | 路径存在但不是本仓 worktree → `E_PATH` 退 2 |
+| 路径冲突 | 路径存在但不是本仓 worktree → `E_PATH` 退 2；路径读不出来（权限 / IO）→ `E_ENV` 退 3（走 `probePath`，不用 `existsSync`——它会把 EACCES 折成「不存在」） |
 | fetch | 失败重试 3 次（间隔 3s，`Atomics.wait` 同步等待）仍失败 → `E_FETCH` 退 **3**（环境错误） |
 | 身份 | worktree 建好后把 `user.name` / `user.email` 从主工作区复制到 worktree 局部配置；读不到就跳过（不把身份缺失判成失败） |
 
@@ -49,12 +49,12 @@ dsh-pipeline pr [--issue <号>] [--root <dir>]
 | 分支 | 必须是 `task/<号>-<slug>`（正则 `TASK_BRANCH_PATTERN`）；分支名不含号时用 `--issue` 补，但仍必须在 `task/*` 上 |
 | `--issue` 冲突 | 与分支名里的号不一致 → 退 2（要改 PR 关哪个 issue，先改分支名） |
 | 工作区 | 必须干净（`status --porcelain` 为空），否则 `E_DIRTY` |
-| 幂等 | 先 `gh pr view --head <branch>`，已存在 → 只打印链接，不重推 |
+| 幂等 | 先 `prViewByBranch`（`pr view <branch> --repo <repo> --json url`），已存在 → 只打印链接，不重推 |
 | PR 标题 | `<issue 标题> (#<号>)` |
 | PR 正文 | 首行 `Closes #<号>`，其后是合并前提（与 `docs/pipeline/README.md` §四 口径一致，改动要同步） |
 | base | `main` |
 
-顺序：定位 root → 读当前分支 → 解析 issue（含 `--issue` 校验）→ `resolveRepo` → `gh issue view`（取标题）→ 查已有 PR → 查工作区干净 → `git push -u origin <branch>` → `gh pr create`。
+顺序：定位 root → 读当前分支 → 解析 issue（含 `--issue` 校验）→ `resolveRepo` → `gh issue view`（取标题）→ 查已有 PR → 查工作区干净 → `git push -u origin <branch>` → `gh pr create`。`gh issue view` 失败（issue 不存在 / 网络 / 鉴权）统一按 `E_ENV` 退 3；issue 取到了但没有标题才是 `E_ISSUE`。
 
 ## `lib/repo.mjs`（两套 root，不能混用）
 
@@ -62,7 +62,7 @@ dsh-pipeline pr [--issue <号>] [--root <dir>]
 |---|---|---|
 | `resolveRoot({root, cwd, git})` | 显式 root 优先，否则 `git rev-parse --show-toplevel` | `pr` |
 | `resolveMainRoot({root, cwd, git})` | 显式 root（若是 linked worktree 顶层则折回主工作区），否则 `--git-common-dir` 的父目录 | `task`；`record`/`review`/`selftest`/`shim`/`status`/`hooks` 经 `bin/cli.mjs` 的 `resolveMainWorktreeRoot` |
-| `resolveRepo({root, git})` | 配置 `repo` 优先，否则从 `origin` 远端地址反推；两条都拿不到**明确失败**（绝不猜一个仓库去开 PR） | `task` / `pr` |
+| `resolveRepo({root, git})` | 配置 `repo` 优先，否则从 `origin` 远端地址反推；两条都拿不到**明确失败**（绝不猜一个仓库去开 PR）：配置写错 → `E_CONFIG`，读不出来 / origin 读不到 → `E_ENV` | `task` / `pr` |
 
 - `repoFromRemote` 覆盖 `git@github.com:o/n.git`、`https://github.com/o/n.git`、`ssh://git@github.com/o/n` 三种写法；
 - `mainRootFromCommonDir` 要先把 git 返回的**相对**路径（`.git` / `../.git`）按 cwd 归一成绝对路径，再取父目录；
@@ -70,7 +70,9 @@ dsh-pipeline pr [--issue <号>] [--root <dir>]
 
 ## `lib/git.mjs`（具名操作，固定 argv）
 
-`worktreeList`（解析 `--porcelain`）、`currentBranch`、`headSha`、`remoteUrl`、`toplevel`、`gitCommonDir`、`statusPorcelain`、`checkout`、`fetch`、`mergeFF`、`worktreeAdd`、`push`、`configGet`、`configSet`、`worktreeRemove`、`deleteBranch`。
+交付流程用：`worktreeList`（解析 `--porcelain`）、`worktreeListPlain`、`currentBranch`、`branchShow`、`headOneline`、`headSha`、`showStat`、`remoteUrl`、`toplevel`、`gitCommonDir`、`statusPorcelain`、`checkout`、`fetch`、`mergeFF`、`worktreeAdd`、`push`、`configGet`、`configSet`、`worktreeRemove`、`deleteBranch`。
+
+`kb` 用（2026-11 新增）：`lsFiles`（`-z` 分隔，知识库覆盖路径只靠它展开）、`commitExists`、`isAncestor`（只有退出码 1 算「不是祖先」）、`logOnelineRange`、`diffShortstat`、`diffNameOnly`。
 
 约定：
 
@@ -82,11 +84,12 @@ dsh-pipeline pr [--issue <号>] [--root <dir>]
 
 ## `lib/gh.mjs`（具名操作）
 
-`prView`、`prChecks`（`--json name,state,bucket,…`）、`prDiff`、`prMerge`、`prComment`、`prReview`、`prList`、`issueView`、`prViewByBranch`、`prCreate`。
+`currentUser`（`gh api user --jq .login`，供 `review.identity.account` 校验）、`prView`、`prChecks`（`pr view --json statusCheckRollup`；gh 2.42.1 不支持 `pr checks --json`）、`prDiff`、`prMerge`、`prComment`、`prReview`、`prList`、`issueView`、`prViewByBranch`、`prCreate`。
 
 - 只暴露具名操作，argv 在内部拼好，调用方**不能传任意子命令或任意参数**；
 - 合并策略固定 `--squash`，不接受参数；
-- `prReview` 的 event 映射到互斥的 `--approve` / `--request-changes` / `--comment` 开关。
+- `prReview` 的 event 映射到互斥的 `--approve` / `--request-changes` / `--comment` 开关；
+- `prChecks` 只把「字段缺失或 null」当没有 checks；`statusCheckRollup` 是其它非法形状时返回失败（上层按 `E_ENV` 拒绝放行，不静默当空）。
 
 ## 两条封装共用的测试形状
 
