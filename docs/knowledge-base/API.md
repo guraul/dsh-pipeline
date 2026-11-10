@@ -27,7 +27,7 @@
 | `hooks` | 安装 / 校验 pre-push 直推拦截钩子 | `install [--root] [--force] [--allow-main]`、`check [--root]` | `runHooks` → `lib/hooks.mjs` | 0 / 1 未装、不一致、拒绝覆盖 / 2 用法 / 3 git 或读盘失败 |
 | `check-all` | 逐包跑 test / check / typecheck 并汇总 | `--root`、`--packages a,b,c`、`--json` | `runCheckAllCommand` → `lib/check-all.mjs` | 0 / 1 有失败 / 2 用法或配置 / 3 找不到 pnpm、读目录或 package.json 失败 |
 | `init` | 新仓库一键接入：生成配置 + 入口 shim + pre-push 钩子 + `docs/pipeline` 骨架（契约 §3.2） | `--root`、`--check`、`--force`、`--repo <owner/name>` | `runInitCommand` → `lib/init.mjs` `runInit` | 0 成功或齐备 / 1 缺项、冲突或拒绝覆盖 / 2 用法与配置 / 3 git、读盘或写盘失败 |
-| `kb` | 知识库检查 / 初始化 / 更新提示词 / 影响分析（契约 §3.2） | `check`、`init`、`refresh`、`impact`；`--root`、`--kb-dir`、`--exclude`（可重复）、`--strict`、`--allow-missing`、`--prompt`、`--out`、`--doc`（可重复）、`--staged`、`--range`、`--json` | `runKb` → `runKbCheck` / `runKbInit` / `runKbRefresh` / `runKbImpact` → `lib/kb.mjs` | 0 / 1 结构违规（或 `--strict` 有 stale；init 遇已有 KB、refresh 遇无 KB）/ 2 用法与配置 / 3 git 或读写失败 |
+| `kb` | 知识库检查 / 初始化 / 更新提示词 / 影响分析 / 日更队列（契约 §3.2） | `check`、`init`、`refresh`、`impact`、`queue`；`--root`、`--kb-dir`、`--exclude`（可重复）、`--strict`、`--allow-missing`、`--prompt`、`--out`、`--doc`（可重复）、`--staged`、`--range`、`--repo`、`--issue`、`--since`、`--state`、`--dry-run`、`--json` | `runKb` → `runKbCheck` / `runKbInit` / `runKbRefresh` / `runKbImpact` / `runKbQueue` → `lib/kb.mjs` | 0 / 1 结构违规（或 `--strict` 有 stale；init 遇已有 KB、refresh 遇无 KB）/ 2 用法与配置 / 3 git 或读写失败 |
 | `deploy` | 生成 / 校验 caller workflow 骨架（契约 §10） | `init --root <dir> [--write] [--rollback]`、`check --root <dir>` | `runDeploy` → `lib/deploy.mjs` | 0（含回滚 caller 缺失 / 手写跳过）/ 1 不一致、部署 caller 缺标记或拒绝覆盖 / 2 / 3 读取已有文件失败 |
 
 ### 输出约定（契约 §5）

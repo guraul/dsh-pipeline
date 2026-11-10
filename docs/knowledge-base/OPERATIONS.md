@@ -197,6 +197,7 @@ node bin/cli.mjs kb check --root . --json       # 机器报告
 node bin/cli.mjs kb check --root . --strict     # stale > 0 也退 1（收尾用）
 node bin/cli.mjs kb impact --staged             # 这次暂存的改动影响哪几篇
 node bin/cli.mjs kb refresh --root . --out /tmp/kb-refresh.md   # 存量更新提示词
+node bin/cli.mjs kb queue --root . --repo <owner/name> --issue <n> --since HEAD~5 --dry-run  # 日更队列（只打印评论正文）
 ```
 
 - 改了 `lib/` / `bin/` 的代码后，若文档内容需要跟着改，`kb impact` 会列出受影响的文档；改完把页眉的 stamp 更新为**内容对齐的代码提交**。

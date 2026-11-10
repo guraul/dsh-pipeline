@@ -23,7 +23,7 @@
 命令函数：runGate · runMerge · runRecord · runReviewPrepare · runReviewPublish · sendReview
           runReviewPrompt · runReview · runDoctor · runSelftest · runReposCheck · runShim
           runHooks · runCheckAllCommand · runStatus · runTask · runPr · runDeploy
-          runKb（分派）· runKbCheck · runKbInit · runKbRefresh · runKbImpact
+          runKb（分派）· runKbCheck · runKbInit · runKbRefresh · runKbImpact · runKbQueue
 入口：runCli(argv, deps) → 分派；invokedDirectly() 时才 process.exit
 ```
 
