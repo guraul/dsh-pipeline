@@ -31,7 +31,7 @@ dsh-pipeline selftest [--shims] [--config] [--lock] [--peer] [--exit-codes] [--i
 | `--shims` | `<root>/scripts/pipeline` 下 6 个入口 == 按**当前包版本**渲染后的模板 | 已实现 |
 | `--config` | `<root>/.dsh/pipeline.json` 能被 schema 接受、无未声明字段；没有该文件视为通过 | 已实现 |
 | `--lock` | 装包的 `build.json` == `.dsh/pipeline.lock.json` 的 `expect`；锁不存在 / 未装包跳过，旧版本包或不一致失败（详见下节 `lock`） | 已实现 |
-| `--fast` | 等价 `--shims --config`（本地自检用；pre-push 钩子只拦直推 main/master，不跑自检，契约 §9） | 已实现 |
+| `--fast` | 等价 `--shims --config`（本地自检用；pre-push 钩子只拦直推 main/master，不跑自检。契约 §9 仍写「pre-push 用 --fast」，以代码为准，契约待同步） | 已实现 |
 | `--repos a,b,c` | 多仓装的共享包是否同一构建（读各自 `tools/node_modules/dsh-pipeline/build.json` 的 `gitSha`） | 已实现 |
 | `--peer` | 各包的 DSH 版本声明覆盖当前版本（四个来源按优先级） | 已实现 |
 | `--init` | 四件套接入检测：配置可过 schema、6 个入口与模板一致、pre-push 钩子已装且可执行、`docs/pipeline` 生成区一致（与 `init --check` 同一判据）；不并入 `--fast` | 已实现 |
