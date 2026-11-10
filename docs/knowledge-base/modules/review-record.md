@@ -1,6 +1,6 @@
 # 模块：审核请求、判定解析与记录
 
-> 最后更新: 2026-11-09 | commit: `c5aa0b2`
+> 最后更新: 2026-11-10 | commit: `a1e502d`
 > 覆盖路径: `lib/review.mjs`, `lib/record.mjs`, `lib/roles.mjs`, `bin/cli.mjs`, `package.json`, `test/contract-format.test.mjs`, `test/post-review.test.mjs`, `test/record-name.test.mjs`, `test/record.test.mjs`, `test/review-cmd.test.mjs`, `test/review.test.mjs`, `test/roles.test.mjs`
 
 ## 职责
@@ -113,6 +113,8 @@ writeRecord(dir, record, { name? })
 --json 时输出记录本体，否则打印「审核: 已写入审核记录: <路径>」
 判定不可用 → 退 1（已落盘）；否则 0；前置校验失败退 2（含输入文件不存在）、读盘或写盘失败退 3
 ```
+
+**读失败分档**：`--request` / `--response` / `--findings` 按 errno 分档——文件不存在退 2，权限 / IO 读不出来退 3（不把环境问题说成参数问题）；`--out` 写盘失败退 3。
 
 **`--name` 的用途**：分片审核直接写成 `<pr>-<sha>.shard-i-of-n.json`，避免"先写规范名再删除"那段"单片判定冒充整份判定"的窗口。
 
