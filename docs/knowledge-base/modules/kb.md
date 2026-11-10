@@ -1,6 +1,6 @@
 # 模块：知识库三件套（kb check / init / refresh）与影响分析（kb impact）
 
-> 最后更新: 2026-11-09 | commit: `d2d7463`
+> 最后更新: 2026-11-10 | commit: `415f3a4`
 > 覆盖路径: `lib/kb.mjs`, `lib/git.mjs`, `lib/policy.mjs`, `bin/cli.mjs`, `templates/kb-prompt.md`, `templates/agents.md`, `test/kb.test.mjs`, `test/git.test.mjs`
 
 这一组命令把「知识库从零建起来 / 存量重新对齐 / 判断一篇文档是否过期 / 这次改动影响哪几篇」收进本包。设计边界：**只读仓库**（除 `--out` 指定的文件），不写 KB 正文、不改 `AGENTS.md`、不装定时任务。
@@ -69,7 +69,8 @@
 - `AGENTS.md` 必须有指向 `<kb-dir>/INDEX.md` 的路由；路由里提到的每个 `<kb-dir>/*.md` 都必须存在（否则 `E_ROUTE_DEAD`）。
 - `modules/*.md` 与 `AGENTS.md` 路由表双向一致：模块文档没被路由 → `E_ROUTE_MISMATCH`。
 - `INDEX.md` 的「文档导航」小节与实际文件双向一致（缺项 / 指向不存在的文档都是 `E_NAV_MISMATCH`）。
-- 导航项可以写知识库相对路径（`modules/x.md`），也可以写全仓相对路径（`docs/knowledge-base/modules/x.md`），两者都会归一到知识库相对路径；`../CONTRACT.md` 这类知识库外的文档不算导航项。
+- 导航项可以是纯路径（`modules/x.md`）、反引号路径，或 Markdown 链接 `[文字](modules/x.md)`（memx / homebase 的导航表就是链接格式）：链接只取目标，链接文字不参与匹配。
+- 路径可以写知识库相对路径，也可以写全仓相对路径（`docs/knowledge-base/modules/x.md`），两者都会归一到知识库相对路径；`../CONTRACT.md` 这类知识库外的文档不算导航项。
 - `--exclude` 同时作用于文档枚举与导航比对：排除一篇导航里列着的文档，不会反过来报 `E_NAV_MISMATCH`。
 
 ## 覆盖路径的机械判据
