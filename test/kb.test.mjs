@@ -597,6 +597,26 @@ test('kb impact：--json 与 --out 同时给，文件与 stdout 都是 JSON（#1
   assert.deepEqual(JSON.parse(readFileSync(out, 'utf8')), stdout)
 })
 
+test('kb impact：目录写法与 glob 写法都能命中删除（#163）', (t) => {
+  const { root, stamp } = makeCleanRepo()
+  t.after(() => cleanup(root))
+  writeDoc(root, 'modules/dir.md', { title: '目录', stamp, coverage: ['lib'] })
+  writeDoc(root, 'modules/glob.md', { title: 'Glob', stamp, coverage: ['lib/**'] })
+  commitAll(root, '目录 / glob 文档')
+  const base = git(root, 'rev-parse', 'HEAD').trim()
+
+  git(root, 'rm', 'lib/a.mjs')
+  commitAll(root, '删除 a')
+
+  const payload = JSON.parse(
+    run(['kb', 'impact', '--root', root, '--range', `${base}..HEAD`, '--json']).out,
+  )
+  const docs = payload.affected.map((item) => item.doc)
+  assert.ok(docs.includes('modules/dir.md'), '目录写法应命中')
+  assert.ok(docs.includes('modules/glob.md'), 'glob 写法应命中')
+  assert.ok(docs.includes('modules/core.md'), '字面写法应命中')
+})
+
 // ---------------------------------------------------------------- 审核修复的回归
 
 test('git 不可用（非 git 目录）按环境错误退 3，不报成 E_DEAD_GLOB', (t) => {

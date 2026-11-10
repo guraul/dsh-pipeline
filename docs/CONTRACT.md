@@ -470,4 +470,5 @@ curl -s -m 8 -o /dev/null -w '%{http_code}\n' <healthUrl>
 | 2026-11-08 | 退出码口径统一：环境错误（gh / git / 写盘 / 读盘 / 未捕获异常）全命令退 3，入参 / 配置退 2，业务拒绝退 1；`E_REPO` 拆成 `E_CONFIG`（配置读不出）与 `E_ENV`（origin 读不出） |
 | 2026-11-08 | §3.2 新增 `init`：一键生成配置 + 入口 shim + pre-push 钩子 + `docs/pipeline` 骨架（幂等、`--check` 只读校验）；§9 新增 `--init`（不并入 `--fast`） |
 | 2026-11-08 | `--request` / `--response` / `--findings` 的读失败按 errno 分档：文件不存在退 2、权限 / IO 退 3；`review prompt --out` 写盘失败退 3 |
+| 2026-11-10 | §3.2 / §5：`kb impact` 改用 `git diff --name-status -M`（删除取旧路径、改名/复制取旧+新）+ 覆盖路径 glob 直匹配；`--json` 与 `--out` 同时给时两者都生效 |
 | 2026-11-09 | 新增 `kb check\|init\|refresh\|impact`（契约 §3.2，issue #154）：页眉 canonical 两行 + 三种旧格式兼容、覆盖路径机械判据（单条 ≤30 / 单篇 ≤200 / 顶层 ≤10）、入口双向一致性检查、12 类检查码；`kb init` / `kb refresh` 只读仓库（除 `--out`）。§4 / §5 补 kb 的退出码与检查码口径 |
