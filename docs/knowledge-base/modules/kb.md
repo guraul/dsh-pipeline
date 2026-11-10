@@ -88,6 +88,17 @@
 - `kb impact` 取 `git diff --name-status -M`（`--staged` 或 `--range`）：A/M/T 取新路径、D 取旧路径、R/C 取旧+新；用覆盖路径的 glob 匹配器**直接测试改动路径**（字面文件 / 目录前缀 / glob 三种写法），不先用 `lsFiles` 展开——删除的旧路径已不在 tracked 集合里，展开必然漏报。`--json` 与 `--out` 同时给时两者都生效（文件写 JSON、stdout 也输出 JSON）；只读。
 - `kb refresh` 对单篇 stale >30 条或 diff >2000 行的情况，在提示词里要求「放弃逐条 diff、按写作指令重写该篇」。
 
+## 日更队列（`kb queue`，P7.1）
+
+`dsh-pipeline kb queue --root <dir> --repo <owner/name> --issue <n> [--since <sha>] [--state <file>] [--dry-run] [--json]`
+
+- **水位**：首次用 `--since`；之后从 `--state` 读（缺省 `~/.dsh/kb-queue/<repo>.json`，**不进仓库**）。`--since` 可以是 ref（`HEAD~5`），命令内先 `revParse` 成完整 sha。
+- **计算**：复用 `computeImpact` 算 `<水位>..HEAD` 的影响；无影响静默退 0（`--json` 给 `{ok:true,affected:[]}`）。
+- **有影响**：生成评论（日期、受影响文档、命中文件、涉及提交、`kb refresh --doc` 建议），首行标记 `<!-- kb-queue: <repo> -->`，用 `lib/gh.mjs` 的 `issueComment` 投到 `--issue` 指定的滚动 issue。
+- **推进**：只在**评论投递成功**后写水位；投递失败退 3 且水位不动（下次重扫同一段，不丢改动）。
+- **`--dry-run`**：只打印评论正文，不投递、不写状态文件。
+- 不装定时任务、不自动开 PR / 合并——调度与自动更新属 P7.2/P7.3，需用户授权。
+
 ## 退出码（契约 §4）
 
 | 场景 | check | init | refresh | impact |
