@@ -1,6 +1,6 @@
 # 模块：部署 caller 骨架（deploy）
 
-> 最后更新: 2026-11-10 | commit: `a1e502d`
+> 最后更新: 2026-11-10 | commit: `d934fd5`
 > 覆盖路径: `lib/deploy.mjs`, `lib/region.mjs`, `lib/build-info.mjs`, `lib/config.mjs`, `bin/cli.mjs`, `.github/workflows/deploy.yml`, `.dsh/pipeline.json`, `test/cli.test.mjs`, `test/config.test.mjs`, `test/deploy.test.mjs`
 
 ## 职责

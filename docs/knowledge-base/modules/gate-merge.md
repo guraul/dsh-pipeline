@@ -1,6 +1,6 @@
 # 模块：闸门、合并与高风险策略
 
-> 最后更新: 2026-11-10 | commit: `a1e502d`
+> 最后更新: 2026-11-10 | commit: `d934fd5`
 > 覆盖路径: `lib/gate.mjs`, `lib/merge.mjs`, `lib/policy.mjs`, `lib/fs-probe.mjs`, `bin/cli.mjs`, `.dsh/pipeline.json`, `test/contract.test.mjs`, `test/gate.test.mjs`, `test/merge.test.mjs`, `test/policy.test.mjs`
 
 ## 职责

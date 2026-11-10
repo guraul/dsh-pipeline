@@ -1,6 +1,6 @@
 # 模块：知识库三件套（kb check / init / refresh）与影响分析（kb impact）
 
-> 最后更新: 2026-11-10 | commit: `415f3a4`
+> 最后更新: 2026-11-10 | commit: `d934fd5`
 > 覆盖路径: `lib/kb.mjs`, `lib/git.mjs`, `lib/policy.mjs`, `bin/cli.mjs`, `templates/kb-prompt.md`, `templates/agents.md`, `test/kb.test.mjs`, `test/git.test.mjs`
 
 这一组命令把「知识库从零建起来 / 存量重新对齐 / 判断一篇文档是否过期 / 这次改动影响哪几篇」收进本包。设计边界：**只读仓库**（除 `--out` 指定的文件），不写 KB 正文、不改 `AGENTS.md`、不装定时任务。
