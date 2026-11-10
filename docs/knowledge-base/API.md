@@ -1,6 +1,6 @@
 # 接口清单
 
-> 最后更新: 2026-11-09 | commit: `d2d7463`
+> 最后更新: 2026-11-10 | commit: `415f3a4`
 > 覆盖路径: `bin/cli.mjs`, `lib/*.mjs`, `scripts/source-hash.mjs`
 
 本包没有 HTTP 接口。对外接口分两类：**CLI 子命令**（人 / 脚本 / 消费仓 shim 调用）与 **lib 导出**（测试与被后续子命令复用）。规则来源是 `docs/CONTRACT.md` §3–§5。
