@@ -1,6 +1,6 @@
 # 模块：CLI 编排层
 
-> 最后更新: 2026-11-09 | commit: `d934fd5`
+> 最后更新: 2026-11-09 | commit: `3676219`
 > 覆盖路径: `bin/cli.mjs`, `lib/merge.mjs`, `test/cli.test.mjs`, `test/contract.test.mjs`, `test/post-review.test.mjs`, `test/record-name.test.mjs`, `test/review-cmd.test.mjs`
 
 ## 职责
@@ -23,7 +23,7 @@
 命令函数：runGate · runMerge · runRecord · runReviewPrepare · runReviewPublish · sendReview
           runReviewPrompt · runReview · runDoctor · runSelftest · runReposCheck · runShim
           runHooks · runCheckAllCommand · runStatus · runTask · runPr · runDeploy
-          runKb（分派）· runKbCheck · runKbInit · runKbRefresh · runKbImpact
+          runKb（分派）· runKbCheck · runKbInit · runKbRefresh · runKbImpact · runKbQueue
 入口：runCli(argv, deps) → 分派；invokedDirectly() 时才 process.exit
 ```
 

@@ -1,6 +1,6 @@
 # 架构与数据流
 
-> 最后更新: 2026-11-10 | commit: `d934fd5`
+> 最后更新: 2026-11-10 | commit: `3676219`
 > 覆盖路径: `package.json`, `bin/cli.mjs`, `lib/*.mjs`, `templates/**`, `.github/workflows/deploy.yml`, `.dsh/pipeline.json`, `scripts/source-hash.mjs`
 
 ## 1. 整体架构
