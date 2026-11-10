@@ -10,7 +10,7 @@
  *   - 退出码 0 / 1 / 2 / 3；
  *   - init 只读（不写 AGENTS.md、不写 KB）、已有 KB 退 1、--out 落文件；
  *   - refresh 无 KB 退 1、--doc 过滤、未知 --doc 退 2；
- *   - impact 的 --staged / --range / 互斥。
+ *   - impact 的 --staged / --range / 互斥 / 删除 / 改名 / --json+--out。
  *
  * 全部用临时 git 仓库 + 本地提交，不触网、不碰真实仓库。
  */
@@ -540,6 +540,61 @@ test('kb impact：--staged 与 --range 互斥，非法区间退 2', (t) => {
   t.after(() => cleanup(root))
   assert.equal(run(['kb', 'impact', '--root', root, '--staged', '--range', 'a..b']).code, 2)
   assert.equal(run(['kb', 'impact', '--root', root, '--range', 'not-a-range']).code, 2)
+})
+
+test('kb impact --range：删除被覆盖文件也能报出文档（#163）', (t) => {
+  const { root, stamp } = makeCleanRepo()
+  t.after(() => cleanup(root))
+  git(root, 'rm', 'lib/a.mjs')
+  commitAll(root, '删除 a')
+
+  const result = run(['kb', 'impact', '--root', root, '--range', `${stamp}..HEAD`, '--json'])
+  assert.equal(result.code, 0, result.err)
+  const payload = JSON.parse(result.out)
+  assert.ok(payload.affected.some((item) => item.doc === 'modules/core.md'))
+  assert.ok(payload.changed.includes('lib/a.mjs'))
+})
+
+test('kb impact --range：改名时旧路径与新路径都能报出（#163）', (t) => {
+  const { root, stamp } = makeCleanRepo()
+  t.after(() => cleanup(root))
+  writeDoc(root, 'modules/renamed.md', { title: '改名后', stamp, coverage: ['lib/b.mjs'] })
+  commitAll(root, '加改名后文档')
+  const base = git(root, 'rev-parse', 'HEAD').trim()
+
+  git(root, 'mv', 'lib/a.mjs', 'lib/b.mjs')
+  commitAll(root, '改名 a→b')
+
+  const payload = JSON.parse(
+    run(['kb', 'impact', '--root', root, '--range', `${base}..HEAD`, '--json']).out,
+  )
+  const docs = payload.affected.map((item) => item.doc)
+  assert.ok(docs.includes('modules/core.md'), '旧路径应命中旧文档')
+  assert.ok(docs.includes('modules/renamed.md'), '新路径应命中新文档')
+  assert.ok(payload.changed.includes('lib/a.mjs'))
+  assert.ok(payload.changed.includes('lib/b.mjs'))
+})
+
+test('kb impact：--json 与 --out 同时给，文件与 stdout 都是 JSON（#163）', (t) => {
+  const { root } = makeCleanRepo()
+  t.after(() => cleanup(root))
+  writeFileSync(join(root, 'lib', 'a.mjs'), 'export const a = 6\n')
+  git(root, 'add', 'lib/a.mjs')
+  const out = join(root, '.tmp', 'impact.json')
+
+  const result = run(['kb', 'impact', '--root', root, '--staged', '--json', '--out', out])
+  assert.equal(result.code, 0, result.err)
+  const stdout = JSON.parse(result.out)
+  const file = JSON.parse(readFileSync(out, 'utf8'))
+  assert.deepEqual(file, stdout)
+  assert.equal(stdout.ok, true)
+  assert.ok(stdout.affected.some((item) => item.doc === 'modules/core.md'))
+
+  // 只给 --out 时：文件仍是 JSON，stdout 保持人读摘要。
+  const human = run(['kb', 'impact', '--root', root, '--staged', '--out', out])
+  assert.equal(human.code, 0, human.err)
+  assert.match(human.out, /影响分析/)
+  assert.deepEqual(JSON.parse(readFileSync(out, 'utf8')), stdout)
 })
 
 // ---------------------------------------------------------------- 审核修复的回归
