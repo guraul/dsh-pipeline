@@ -92,6 +92,10 @@ dsh-pipeline deploy check --root <dir>
 | `workDir` | 是 | 非空字符串（`deploy.yml` 的 `work_dir` 是必填 input） |
 | `artifactDir` | 否 | `null`（不写进 caller，交给 `deploy.yml` 的默认 `dist`） |
 | `sshHost` | 否 | `null`（不写，让 `deploy.yml` 从 `health_url` 解析主机） |
+| `qualityCmd` | 否 | `null`（不写，交给 `deploy.yml` 的默认 `pnpm exec tsc --noEmit && pnpm test`） |
+| `buildCmd` | 否 | `null`（不写，交给 `deploy.yml` 的默认 `pnpm exec expo export --platform web --clear`） |
+| `paths` | 否 | `null`（不写 = 任何 push 都部署；写成 `[]` 会被 schema 拒，空数组等于静默丢掉过滤） |
+| `linkPaths` | 否 | `null`（不写 = 不建持久化软链；写了就逐项渲染成 `with.link_paths`） |
 | `health.url` | 是 | — |
 | `health.check` | 否 | `http`；可选 `ssh` |
 | `health.publicUrl` | 否 | `null`（不写，跳过对外链路检查） |

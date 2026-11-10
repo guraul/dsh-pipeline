@@ -1,7 +1,7 @@
 # 模块：闸门、合并与高风险策略
 
 > 最后更新: 2026-11-10 | commit: `a1e502d`
-> 覆盖路径: `lib/gate.mjs`, `lib/merge.mjs`, `lib/policy.mjs`, `bin/cli.mjs`, `.dsh/pipeline.json`, `test/contract.test.mjs`, `test/gate.test.mjs`, `test/merge.test.mjs`, `test/policy.test.mjs`
+> 覆盖路径: `lib/gate.mjs`, `lib/merge.mjs`, `lib/policy.mjs`, `lib/fs-probe.mjs`, `bin/cli.mjs`, `.dsh/pipeline.json`, `test/contract.test.mjs`, `test/gate.test.mjs`, `test/merge.test.mjs`, `test/policy.test.mjs`
 
 ## 职责
 
@@ -34,7 +34,7 @@
 | 8 | `policy.hit` 为假 | `E_POLICY` | 命中高风险必须人工放行，理由从 `policy.reasons` 里取路径 |
 | 9 | `policyVersion === 当前包版本` | `E_POLICY_VERSION` | 按旧规则审的记录必须复审 |
 
-（失败码是**内部码**；输出层的错误行一律折成契约 §5 的 6 码，见 `bin/cli.mjs` 的 `publicCode`。记录存在但读不出来（权限 / IO）按 `E_ENV` 退 3；`--checks-file` 读不到 / 非 JSON 按 `E_INPUT` 退 2。）
+（失败码是**内部码**；输出层的错误行一律折成契约 §5 的 6 码，见 `bin/cli.mjs` 的 `publicCode`。记录存在但读不出来（权限 / IO，`lib/fs-probe.mjs` 的 `isIoError`）按 `E_ENV` 退 3；`--checks-file` 读不到 / 非 JSON 按 `E_INPUT` 退 2。）
 
 **无 IO、不直接读时钟**：`now` 由调用方传入（缺省才取当前时间），同一组输入永远同一结论，单测与审计可复现。
 

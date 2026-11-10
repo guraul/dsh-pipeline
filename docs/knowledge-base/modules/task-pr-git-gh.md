@@ -84,7 +84,7 @@ dsh-pipeline pr [--issue <号>] [--root <dir>]
 
 ## `lib/gh.mjs`（具名操作）
 
-`currentUser`（`gh api user --jq .login`，供 `review.identity.account` 校验）、`prView`、`prChecks`（`--json name,state,bucket,…`）、`prDiff`、`prMerge`、`prComment`、`prReview`、`prList`、`issueView`、`prViewByBranch`、`prCreate`。
+`currentUser`（`gh api user --jq .login`，供 `review.identity.account` 校验）、`prView`、`prChecks`（`pr view --json statusCheckRollup`；gh 2.42.1 不支持 `pr checks --json`）、`prDiff`、`prMerge`、`prComment`、`prReview`、`prList`、`issueView`、`prViewByBranch`、`prCreate`。
 
 - 只暴露具名操作，argv 在内部拼好，调用方**不能传任意子命令或任意参数**；
 - 合并策略固定 `--squash`，不接受参数；
