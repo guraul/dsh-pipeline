@@ -77,7 +77,7 @@
 
 1. 只列正文点名的代码 / 配置 / 脚本；按目录聚合。
 2. 单条 glob 展开 ≤30 个 tracked 文件；单篇 ≤200 个；顶层文档（`INDEX` / `ARCHITECTURE` / `API` / `DATA` / `OPERATIONS` / `CONVENTIONS`）只列结构锚点 ≤10 条。
-3. 展开一律 `git ls-files -- <glob>`——`fs` 递归会把 `node_modules` 与未跟踪文件算进去。
+3. `check` 展开一律 `git ls-files -- <glob>`——`fs` 递归会把 `node_modules` 与未跟踪文件算进去；`impact` 例外（按改动路径直匹配，见下节）。
 4. 文档自身、`docs/**`、`test/fixtures/**` 不进覆盖路径（否则文档改一下自己就 stale）。
 5. 路径相对仓库根，不带 `./` 前缀，不写绝对路径。
 
@@ -85,7 +85,7 @@
 
 - stale = `git log --oneline <stamp>..HEAD -- <覆盖路径>` 的条数；`--strict` 时 stale>0 也退 1，缺省只报告。
 - 用**原始 glob** 而不是展开后的文件列表做 pathspec：覆盖目录下新增的文件也算改动。
-- `kb impact` 取 `git diff --name-only`（`--staged` 或 `--range`），与每篇的覆盖路径展开结果求交；只读。
+- `kb impact` 取 `git diff --name-status -M`（`--staged` 或 `--range`）：A/M/T 取新路径、D 取旧路径、R/C 取旧+新；用覆盖路径的 glob 匹配器**直接测试改动路径**（字面文件 / 目录前缀 / glob 三种写法），不先用 `lsFiles` 展开——删除的旧路径已不在 tracked 集合里，展开必然漏报。`--json` 与 `--out` 同时给时两者都生效（文件写 JSON、stdout 也输出 JSON）；只读。
 - `kb refresh` 对单篇 stale >30 条或 diff >2000 行的情况，在提示词里要求「放弃逐条 diff、按写作指令重写该篇」。
 
 ## 退出码（契约 §4）
@@ -100,7 +100,7 @@
 ## 修改本模块的注意事项
 
 1. **`check` 的判据不许放宽**：放过 `E_STAMP_ORPHAN` 或 `E_BROAD_GLOB` 会让「信任靠 diff」失去数据层支撑（issue #154 §6 的 1–6 条都是真实踩过的坑）。
-2. **不要用 `fs` 展开覆盖路径**：一律 `lsFiles`（`git ls-files -z --`），否则未跟踪文件与 `node_modules` 会混进来。
+2. **`check` 不要用 `fs` 展开覆盖路径**：一律 `lsFiles`（`git ls-files -z --`），否则未跟踪文件与 `node_modules` 会混进来。**`impact` 例外**：它按 `git diff --name-status` 的改动路径直接匹配（删除/改名要算旧路径），不要改回「先展开再求交」。
 3. **`init` / `refresh` 只读**：`AGENTS.md` 是高危文件，草稿只打印；`docs/kb-prompt.md` 缺失时用包内模板作为回退，不替调用方复制。
 4. **新增错误码先改契约**：`docs/CONTRACT.md` §3.2 / §4 / §5 与 `HELP` 同步；测试里 `DOC_ERROR_CODES` / `ENTRY_ERROR_CODES` 的长度断言（7 / 5）是「12 类」的守门。
 5. **`--doc` / `--exclude` 可重复**：`parseArgs` 的第 4 个参数是 `repeatableFlags`，不要退回「重复参数一律报错」。

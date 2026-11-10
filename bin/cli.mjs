@@ -299,7 +299,7 @@ kb 用法:
   dsh-pipeline kb check   [--root <dir>] [--kb-dir <dir>] [--exclude <glob>]... [--strict] [--json] [--allow-missing]
   dsh-pipeline kb init    [--root <dir>] [--kb-dir <dir>] [--prompt <path>] [--out <file>] [--json]
   dsh-pipeline kb refresh [--root <dir>] [--kb-dir <dir>] [--doc <path>]... [--exclude <glob>]... [--out <file>] [--json]
-  dsh-pipeline kb impact  [--root <dir>] [--kb-dir <dir>] (--staged | --range <a>..<b>) [--json]
+  dsh-pipeline kb impact  [--root <dir>] [--kb-dir <dir>] (--staged | --range <a>..<b>) [--json] [--out <file>]
   check    校验每篇页眉（最后更新 + commit / 覆盖路径）与入口（AGENTS.md 路由、INDEX.md 导航）：
            文档级 7 类错误码 E_NO_STAMP / E_BAD_DATE / E_STAMP_ORPHAN / E_NO_COVERAGE /
            E_DEAD_GLOB / E_BROAD_GLOB / E_FORBIDDEN_PATH；入口级 5 类 E_NO_AGENTS /
@@ -313,14 +313,15 @@ kb 用法:
            + 升级规则（>30 条提交或 >2000 行 diff 改为重写）+ 页眉规则 + 禁止项；
            --doc 可重复，只处理指定文档。
   impact   算「这次改动影响哪几篇文档」：--staged 取暂存区，--range 取区间（缺省 origin/main..HEAD）；
-           只读，不改任何文件。
+           删除取旧路径、改名/复制取旧+新（git diff --name-status -M）；只读，不改任何文件；
+           --json 与 --out 同时给时两者都生效（文件写 JSON、stdout 也输出 JSON）。
   --root <dir>       仓库根目录（缺省 cwd 的 git 顶层；不是 git 仓时用 cwd）
   --kb-dir <dir>     知识库目录（相对仓库根，缺省 docs/knowledge-base）
   --exclude <glob>   可重复；枚举时排除命中的文档（相对知识库或仓库根匹配）
   --strict           仅 check：stale > 0 也退 1（缺省只报告不失败，避免阻塞无关 PR）
   --allow-missing    仅 check：知识库目录不存在时退 0（多仓批量巡检用）
   --prompt <path>    仅 init / refresh：写作指令路径（缺省 docs/kb-prompt.md → docs/promptA.md → 包内模板）
-  --out <file>       仅 init / refresh：提示词写入文件（不写 KB 正文、不改任何文档）
+  --out <file>       仅 init / refresh / impact：init/refresh 写提示词；impact 写 JSON 报告
   --doc <path>       仅 refresh：可重复，只处理指定文档（相对知识库目录）
   --range <a>..<b>   仅 impact：提交区间（与 --staged 互斥）
   --json             机器可读输出（退出码与人读模式一致）
@@ -795,7 +796,7 @@ const KB_INIT_BOOL_FLAGS = new Set(['json'])
 const KB_REFRESH_VALUE_FLAGS = new Set(['root', 'kb-dir', 'prompt', 'out'])
 const KB_REFRESH_BOOL_FLAGS = new Set(['json'])
 const KB_REFRESH_REPEAT_FLAGS = new Set(['doc', 'exclude'])
-const KB_IMPACT_VALUE_FLAGS = new Set(['root', 'kb-dir', 'range'])
+const KB_IMPACT_VALUE_FLAGS = new Set(['root', 'kb-dir', 'range', 'out'])
 const KB_IMPACT_BOOL_FLAGS = new Set(['staged', 'json'])
 const KB_RANGE_PATTERN = /^[^\s-][^\s]*\.\.[^\s]+$/
 
@@ -2602,6 +2603,9 @@ function runKbImpact(argv, deps, io) {
   const root = resolveKbRoot(options.root, deps)
   const located = resolveKbDir(root, options['kb-dir'])
   if (located.error !== undefined) return argError(io, 'kb', located.error)
+  if (options.out !== undefined && !nonEmpty(options.out)) {
+    return argError(io, 'kb', '--out 必须是非空文件路径')
+  }
 
   const result = computeImpact(root, {
     kbDir: located.kbDir,
@@ -2611,8 +2615,19 @@ function runKbImpact(argv, deps, io) {
   })
   if (!result.ok) return argError(io, 'kb', result.error, result.code === 3 ? 'E_ENV' : 'E_CONFIG')
 
+  const jsonText = `${JSON.stringify(result)}\n`
+  if (options.out !== undefined) {
+    try {
+      mkdirSync(dirname(options.out), { recursive: true })
+      writeFileSync(options.out, jsonText, 'utf8')
+    } catch (error) {
+      return argError(io, 'kb', `写 --out 失败: ${messageOf(error)}`, 'E_ENV')
+    }
+  }
+
+  // --json 与 --out 同时给：文件写 JSON、stdout 也输出 JSON（issue #163）。
   if (options.json === true) {
-    io.out(JSON.stringify(result))
+    io.out(jsonText.trimEnd())
     return 0
   }
 
