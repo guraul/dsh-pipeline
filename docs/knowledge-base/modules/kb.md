@@ -13,7 +13,7 @@
 | `kb init` | 生成「从零建知识库」提示词 + `AGENTS.md` 草稿（只打印，不落盘） |
 | `kb refresh` | 生成「存量更新」提示词：结构违规 + 每篇 stale 的 `git log` 原文 + 升级/页眉规则 + 禁止项 |
 | `kb impact` | 算「这次改动影响哪几篇文档」（`--staged` 或 `--range`） |
-| `kb queue` | 日更队列：算「水位..HEAD」的影响，有影响才投滚动 issue 评论；投递成功才推进水位 |
+| `kb queue` | 日更队列：算「水位..HEAD」的影响，有影响才投 issue 清单评论；`--issue` 投递后推进水位，`--daily` 投递写 `pending`、`--finish` 关单后提升水位 |
 
 `check` 是唯一验收器：`init` / `refresh` 的「完成」定义都是 `kb check` 退 0（或只剩被 `--exclude` 明确排除的文件）。`check` 不判断「文档写得对不对」，只判断「声明是否完整、路径是否活着、有没有变过」。
 
@@ -21,13 +21,13 @@
 
 | 文件 | 职责 |
 |---|---|
-| `lib/kb.mjs` | 页眉解析、覆盖路径校验、入口检查、stale 计算、四种提示词渲染、影响分析 |
+| `lib/kb.mjs` | 页眉解析、覆盖路径校验、入口检查、stale 计算、四种提示词渲染、影响分析、队列状态读写（`pending`）与每日 issue 标题 / 正文 |
 | `lib/git.mjs` | 新增具名封装：`lsFiles` / `commitExists` / `isAncestor` / `logOnelineRange` / `diffShortstat` / `diffNameOnly` / `diffNameStatus`（`--name-status -M`，删除取旧路径、改名/复制取旧+新） |
 | `lib/policy.mjs` | 复用 `globToRegExp`（`--exclude` 与路径匹配）与 `normalizePath`；不引第三方 glob |
 | `bin/cli.mjs` | `runKb` 分派 + `runKbCheck` / `runKbInit` / `runKbRefresh` / `runKbImpact`；`parseArgs` 支持可重复参数（`--exclude` / `--doc`） |
 | `templates/kb-prompt.md` | 写作指令模板（init 的回退来源；本仓 `docs/kb-prompt.md` 与它同源） |
 | `templates/agents.md` | `AGENTS.md` 五段草稿模板（`{{REPO}}` / `{{KB_DIR}}` / `{{MODULES_ROWS}}` / `{{RULES}}` / `{{COMMANDS}}`） |
-| `test/kb.test.mjs` | 12 类错误码 + 旧格式兼容 + `--exclude` / `--strict` / `--allow-missing` + 退出码 0/1/2/3 + init/refresh/impact |
+| `test/kb.test.mjs` | 12 类错误码 + 旧格式兼容 + `--exclude` / `--strict` / `--allow-missing` + 退出码 0/1/2/3 + init/refresh/impact + queue（`--issue` / `--daily` / `--finish` / 互斥 / 旧状态文件） |
 
 ## 页眉解析（`parseHeader`）
 
@@ -91,23 +91,30 @@
 
 ## 日更队列（`kb queue`，P7.1）
 
-`dsh-pipeline kb queue --root <dir> --repo <owner/name> --issue <n> [--since <sha>] [--state <file>] [--dry-run] [--json]`
+```text
+dsh-pipeline kb queue --root <dir> --repo <owner/name> (--issue <n> | --daily) [--since <sha>] [--state <file>] [--dry-run] [--json]
+dsh-pipeline kb queue --finish --repo <owner/name> [--state <file>] [--json]
+```
 
 - **水位**：首次用 `--since`；之后从 `--state` 读（缺省 `~/.dsh/kb-queue/<repo>.json`，**不进仓库**）。`--since` 可以是 ref（`HEAD~5`），命令内先 `revParse` 成完整 sha。
-- **计算**：复用 `computeImpact` 算 `<水位>..HEAD` 的影响；无影响静默退 0（`--json` 给 `{ok:true,affected:[]}`）。
-- **有影响**：生成评论（日期、受影响文档、命中文件、涉及提交、`kb refresh --doc` 建议），首行标记 `<!-- kb-queue: <repo> -->`，用 `lib/gh.mjs` 的 `issueComment` 投到 `--issue` 指定的滚动 issue。
-- **推进**：只在**评论投递成功**后写水位；投递失败退 3 且水位不动（下次重扫同一段，不丢改动）。
-- **`--dry-run`**：只打印评论正文，不投递、不写状态文件。
+- **计算**：复用 `computeImpact` 算 `<水位>..HEAD` 的影响；无影响静默退 0（`--json` 给 `{ok:true,affected:[]}`），此时不查也不建 issue。
+- **有影响**：生成评论（日期、受影响文档、命中文件、涉及提交、`kb refresh --doc` 建议），首行标记 `<!-- kb-queue: <repo> -->`，用 `lib/gh.mjs` 的 `issueComment` 投递。投递目标二选一：
+  - `--issue <n>`（老路径，行为与正文逐字不变）：投到指定滚动 issue（正文引用「滚动 issue #N」），**投递成功后才推进水位**；投递失败退 3 且水位不动（下次重扫同一段，不丢改动）。
+  - `--daily`：按标题 `dailyIssueTitle`（`<repo> 知识库日更 <YYYY-MM-DD>`）用 `issueList` 查当天 issue——OPEN 复用；CLOSED 打印「今日已完成」退 0（不投递、不动水位）；不存在则 `issueCreate` 新建，正文 `dailyIssueBody` 带同一标记与「本 issue 由当日自动流程创建，修完即关」说明；投递正文的 issue 引用写「追踪 issue #N」（日更单不是滚动 issue）。投递后状态文件写 `pending: {issue, head}`，`watermark` **原样保留**——当天之后再合并的提交不会被跳过。
+  - **写新 `pending` 前先收掉上一日还开着的旧 issue**：`issueView` 判旧 `pending.issue` 仍 OPEN 就先补一条「未收口，转入今日 #<新号>」评论再 `issueClose`，已 CLOSED 则直接覆盖（旧 issue 指向当天同一号时跳过）。不做这一步，隔日未收口的旧 issue 会永远挂着、再也无法用 `--finish` 收口。
+- **收口 `--finish`**：不算区间，只读状态里的 `pending`：`issueView` 判状态 → 还开着就 `issueClose`（已关则跳过，**幂等**）→ `watermark ← pending.head` 并移除 `pending`。`pending` 缺失或残缺退 3（环境错误）；**状态文件 `repo` 与 `--repo` 不一致退 2（E_CONFIG），一条 gh 命令都不发**——防关错仓（默认 statePath 由 `--repo` 推导，正常路径不触发）。顺序恒为「先关单、后写盘」：关单失败不动状态、可直接重跑；关单成功但写盘失败，下一轮看到 issue 已关照样提升水位。
+- **互斥**：`--daily` ↔ `--issue`（都不给退 2）；`--finish` ↔ `--daily` / `--issue` / `--since` / `--dry-run`。
+- **`--dry-run`**：只打印评论正文，不查也不建 issue、不投递、不写状态文件（此时还不知道 issue 号，正文省略 issue 引用）。
 - 不装定时任务、不自动开 PR / 合并——调度与自动更新属 P7.2/P7.3，需用户授权。
 
 ## 退出码（契约 §4）
 
 | 场景 | check | init | refresh | impact | queue |
 |---|---|---|---|---|---|
-| 成功 | 0 | 0 | 0 | 0 | 0（含无影响静默） |
+| 成功 | 0 | 0 | 0 | 0 | 0（含无影响静默；`--daily` 遇当天 issue 已关） |
 | 业务拒绝 | 1（有结构违规；`--strict` 且有 stale） | 1（已有 KB） | 1（无 KB，提示用 init） | — | — |
-| 用法 / 配置 | 2（参数错；`--kb-dir` 不存在且没给 `--allow-missing`） | 2 | 2（含未知 `--doc`） | 2 | 2（缺 `--repo` / `--issue` / 水位） |
-| 环境错误 | 3（git / 读盘失败） | 3（写 `--out` 失败） | 3 | 3 | 3（gh 投递 / 水位写盘失败） |
+| 用法 / 配置 | 2（参数错；`--kb-dir` 不存在且没给 `--allow-missing`） | 2 | 2（含未知 `--doc`） | 2 | 2（缺 `--repo` / 水位；`--issue` 与 `--daily` 都没给或都给了；`--finish` 带互斥开关；`--finish` 状态文件 `repo` 与 `--repo` 不一致） |
+| 环境错误 | 3（git / 读盘失败） | 3（写 `--out` 失败） | 3 | 3 | 3（gh 投递 / 关单 / 水位写盘失败；`--finish` 无 `pending`） |
 
 ## 修改本模块的注意事项
 
@@ -122,4 +129,4 @@
 
 ## 相关测试
 
-`test/kb.test.mjs`（页眉解析、12 类错误码、开关、退出码、init/refresh/impact）、`test/git.test.mjs`（6 个新封装）。
+`test/kb.test.mjs`（页眉解析、12 类错误码、开关、退出码、init/refresh/impact、queue 的 `--issue` / `--daily` / `--finish` / 互斥 / 旧状态文件）、`test/git.test.mjs`（6 个新封装）、`test/gh.test.mjs`（`issueCreate` / `issueList` / `issueClose` 的 argv 与注入边界）。

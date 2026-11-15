@@ -214,7 +214,10 @@ test('导出面固定：只有具名操作，没有接受 argv 的通用入口',
   const callables = Object.entries(gh).filter(([, value]) => typeof value === 'function')
   assert.deepEqual(callables.map(([name]) => name).sort(), [
     'currentUser',
+    'issueClose',
     'issueComment',
+    'issueCreate',
+    'issueList',
     'issueView',
     'prChecks',
     'prComment',
@@ -292,4 +295,65 @@ test('prCreate：base/head/title/body 各占一个 argv，缺一项就拒绝', (
   assert.equal(gh.prCreate({ repo: REPO, head: 'task/12-x', title: '  ', body: 'b', runner: idle }).code, 'E_INPUT')
   assert.equal(gh.prCreate({ repo: REPO, head: 'task/12-x', title: 't', body: '   ', runner: idle }).code, 'E_INPUT')
   assert.equal(gh.prCreate({ repo: 'bad repo', head: 'task/12-x', title: 't', body: 'b', runner: idle }).code, 'E_INPUT')
+})
+
+test('issueList：按标题搜索并全等过滤，state 收敛为枚举', () => {
+  const title = 'demo/repo 知识库日更 2026-11-15'
+  const runner = recorder(
+    okJson([
+      { number: 41, title: `${title} 补充`, state: 'OPEN' },
+      { number: 42, title, state: 'CLOSED' },
+    ]),
+  )
+  const result = gh.issueList({ repo: REPO, title, runner })
+
+  assert.deepEqual(runner.calls[0].args, [
+    'issue',
+    'list',
+    '--repo',
+    REPO,
+    '--state',
+    'all',
+    '--search',
+    `${title} in:title`,
+    '--json',
+    'number,title,state',
+  ])
+  assert.deepEqual(result.data, [{ number: 42, title, state: 'CLOSED' }])
+
+  const idle = recorder(okJson([]))
+  assert.equal(gh.issueList({ repo: REPO, title: '  ', runner: idle }).code, 'E_INPUT')
+  assert.equal(gh.issueList({ repo: REPO, title: 't', state: 'closedx', runner: idle }).code, 'E_INPUT')
+  assert.equal(gh.issueList({ repo: 'bad repo', title: 't', runner: idle }).code, 'E_INPUT')
+  assert.equal(idle.calls.length, 0)
+})
+
+test('issueCreate：从返回链接取号，标题/正文各占一个 argv', () => {
+  const runner = recorder({ status: 0, stdout: 'https://github.com/guraul/x/issues/42\n', stderr: '' })
+  const result = gh.issueCreate({ repo: REPO, title: '标题', body: '正文', runner })
+
+  assert.deepEqual(runner.calls[0].args, ['issue', 'create', '--repo', REPO, '--title', '标题', '--body', '正文'])
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.data, { number: 42, url: 'https://github.com/guraul/x/issues/42' })
+
+  const idle = recorder({ status: 0, stdout: 'not-a-link', stderr: '' })
+  const broken = gh.issueCreate({ repo: REPO, title: 't', body: 'b', runner: idle })
+  assert.equal(broken.ok, false)
+  assert.match(broken.error, /未返回 issue 链接/)
+
+  assert.equal(gh.issueCreate({ repo: REPO, title: 't', body: '   ', runner: idle }).code, 'E_INPUT')
+  assert.equal(gh.issueCreate({ repo: REPO, title: '', body: 'b', runner: idle }).code, 'E_INPUT')
+  assert.equal(gh.issueCreate({ repo: 'bad repo', title: 't', body: 'b', runner: idle }).code, 'E_INPUT')
+})
+
+test('issueClose：argv 固定，非法编号不发命令', () => {
+  const runner = recorder({ status: 0, stdout: '', stderr: '' })
+  const result = gh.issueClose(42, { repo: REPO, runner })
+  assert.deepEqual(runner.calls[0].args, ['issue', 'close', '42', '--repo', REPO])
+  assert.equal(result.ok, true)
+
+  const idle = recorder({ status: 0, stdout: '', stderr: '' })
+  assert.equal(gh.issueClose(0, { repo: REPO, runner: idle }).code, 'E_INPUT')
+  assert.equal(gh.issueClose(1, { repo: 'bad repo', runner: idle }).code, 'E_INPUT')
+  assert.equal(idle.calls.length, 0)
 })
