@@ -327,11 +327,13 @@ kb 用法:
            删除取旧路径、改名/复制取旧+新（git diff --name-status -M）；只读，不改任何文件；
            --json 与 --out 同时给时两者都生效（文件写 JSON、stdout 也输出 JSON）。
   queue    日更队列：算「水位..HEAD」的影响；无影响静默退 0，有影响生成清单评论（首行标记
-           <!-- kb-queue: <repo> -->）。--issue <n> 投固定滚动 issue，投递成功后推进水位；
-           --daily 按标题 <repo> 知识库日更 <YYYY-MM-DD> 建/复用当天 issue（已关则打印
-           「今日已完成」退 0，不投递不动水位），投递只写 pending 不动水位；--finish 关 issue
-           并把 pending 提升为水位（幂等：issue 已关只提升水位；无 pending 退 3）。状态文件
-           缺省 ~/.dsh/kb-queue/<repo>.json（不进仓库）；--dry-run 只打印正文，
+           <!-- kb-queue: <repo> -->）。--issue <n> 投固定滚动 issue（正文引用「滚动 issue #N」），
+           投递成功后推进水位；--daily 按标题 <repo> 知识库日更 <YYYY-MM-DD> 建/复用当天 issue
+           （正文引用「追踪 issue #N」；已关则打印「今日已完成」退 0，不投递不动水位），投递只写
+           pending 不动水位，写新 pending 前先收掉上一日还开着的旧 issue（补「转入今日 #N」评论
+           再关）；--finish 关 issue 并把 pending 提升为水位（幂等：issue 已关只提升水位；
+           无 pending 退 3；状态文件 repo 与 --repo 不一致退 2，不发 gh）。状态文件缺省
+           ~/.dsh/kb-queue/<repo>.json（不进仓库）；--dry-run 只打印正文，
            不建 issue、不投递、不写状态。
   --root <dir>       仓库根目录（缺省 cwd 的 git 顶层；不是 git 仓时用 cwd）
   --kb-dir <dir>     知识库目录（相对仓库根，缺省 docs/knowledge-base）
@@ -345,13 +347,15 @@ kb 用法:
   --repo <owner/name> 仅 queue：issue 所在仓库
   --issue <n>        仅 queue：滚动 issue 号（与 --daily 互斥）
   --daily            仅 queue：按标题建/复用当天追踪 issue（与 --issue 互斥）
-  --finish           仅 queue：关当天 issue 并把 pending 提升为水位（与 --daily/--issue/--since/--dry-run 互斥）
+  --finish           仅 queue：关当天 issue 并把 pending 提升为水位（与 --daily/--issue/--since/--dry-run 互斥；
+                     状态文件 repo 与 --repo 不一致退 2，不发 gh）
   --since <sha>      仅 queue：首次水位（之后从 --state 读；--finish 不算区间，不用它）
   --state <file>     仅 queue：水位文件（缺省 ~/.dsh/kb-queue/<repo>.json）
   --dry-run          仅 queue：只打印评论正文，不建 issue、不投递、不写状态
   --json             机器可读输出（退出码与人读模式一致）
   退出码: 0 通过 / 1 有结构违规（或 --strict 且有 stale；init 遇已有 KB、refresh 遇无 KB）/
-          2 用法或配置错误（queue 缺投递目标、--daily 与 --issue 同给、--finish 带互斥开关）/
+          2 用法或配置错误（queue 缺投递目标、--daily 与 --issue 同给、--finish 带互斥开关、
+            --finish 的状态文件 repo 与 --repo 不一致）/
           3 git、读盘或写盘失败（queue 投递 / 关单失败、--finish 无 pending）
 
 task 用法:
@@ -2677,7 +2681,8 @@ function runKbImpact(argv, deps, io) {
  * kb queue：日更队列。算 `<水位>..HEAD` 的影响，有影响才往 issue 投一条清单评论。
  * 投递目标二选一：`--issue <n>` 投固定滚动 issue，投递成功后立即推进水位（老路径，行为不变）；
  * `--daily` 按标题 `<repo> 知识库日更 <YYYY-MM-DD>` 建 / 复用当天 issue，投递只写 `pending`
- * 不动水位，收口交给 `--finish`（关 issue + 提升水位，幂等）。
+ * 不动水位，收口交给 `--finish`（关 issue + 提升水位，幂等）；写新 `pending` 前会先收掉
+ * 上一日还开着的旧 issue（补「转入今日」评论再关），否则隔日未收口会丢单。
  * `--dry-run` 只打印正文：不查也不建 issue、不投递、不写状态。
  * 退出码：0 成功（含无影响静默、`--daily` 遇当天 issue 已关）/ 2 用法与配置错误 /
  * 3 gh、git 或写盘失败（含 `--finish` 没有 pending）。
@@ -2759,6 +2764,7 @@ function runKbQueue(argv, deps, io) {
     buildQueueComment({
       repo: options.repo,
       issue: target,
+      daily,
       date: localDate(),
       watermark,
       head: head.data,
@@ -2816,6 +2822,30 @@ function runKbQueue(argv, deps, io) {
       if (!created.ok) return argError(io, 'kb', `创建当日 issue 失败: ${created.error}`, 'E_ENV')
       target = created.data.number
     }
+
+    // 隔日未收口会丢单：写新 pending 前，旧 pending 的 issue 还开着就先补
+    // 「转入今日」评论再关掉（已 CLOSED 则直接覆盖），否则它永远挂着、再也无法 --finish。
+    const previous = readQueueState(statePath)?.pending
+    if (
+      previous !== null &&
+      typeof previous === 'object' &&
+      Number.isInteger(previous.issue) &&
+      previous.issue > 0 &&
+      previous.issue !== target
+    ) {
+      const viewed = issueView(previous.issue, { repo: options.repo, runner: deps.runner })
+      if (!viewed.ok) return argError(io, 'kb', `读取未收口 issue #${previous.issue} 失败: ${viewed.error}`, 'E_ENV')
+      if (viewed.data?.state !== 'CLOSED') {
+        const noted = issueComment(previous.issue, {
+          repo: options.repo,
+          body: `未收口，转入今日 #${target}：本 issue 不再用 --finish 收口，后续日更清单投到今日 issue。`,
+          runner: deps.runner,
+        })
+        if (!noted.ok) return argError(io, 'kb', `给未收口 issue #${previous.issue} 补评论失败: ${noted.error}`, 'E_ENV')
+        const closedOld = issueClose(previous.issue, { repo: options.repo, runner: deps.runner })
+        if (!closedOld.ok) return argError(io, 'kb', `关闭未收口 issue #${previous.issue} 失败: ${closedOld.error}`, 'E_ENV')
+      }
+    }
   }
 
   const body = buildBody(target)
@@ -2862,12 +2892,24 @@ function runKbQueue(argv, deps, io) {
 
 /**
  * `kb queue --finish`：不计算区间，只做「关 issue + 把 pending 提升为水位」。
- * 幂等：issue 已关（人工关的或上一轮关过）就只提升水位；`pending` 缺失或残缺退 3。
+ * 幂等：issue 已关（人工关的或上一轮关过）就只提升水位；`pending` 缺失或残缺退 3；
+ * 状态文件 `repo` 与 `--repo` 不一致退 2（E_CONFIG），一条 gh 命令都不发——防止关错仓。
  * 顺序固定「先关单、后写盘」：关单失败不动状态，重跑安全；关单成功但写盘失败，
  * 下一轮看到 issue 已关照样提升水位，不会卡死。
  */
 function finishKbQueue({ statePath, repo, options, deps, io }) {
-  const pending = readQueueState(statePath)?.pending
+  const state = readQueueState(statePath)
+  // 防关错仓：状态文件的 repo 与 --repo 对不上就直接拒，一条 gh 命令都不发。
+  // 默认 statePath 由 --repo 推导，正常路径不会触发。
+  if (state !== null && state.repo !== repo) {
+    return argError(
+      io,
+      'kb',
+      `状态文件的 repo 与 --repo 不一致（文件: ${String(state.repo)}，参数: ${repo}），拒绝关单`,
+      'E_CONFIG',
+    )
+  }
+  const pending = state?.pending
   const usable =
     pending !== null &&
     typeof pending === 'object' &&
