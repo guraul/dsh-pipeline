@@ -1,6 +1,6 @@
 # 约定与陷阱
 
-> 最后更新: 2026-11-10 | commit: `3676219`
+> 最后更新: 2026-11-15 | commit: `ac58a07`
 > 覆盖路径: `package.json`, `bin/cli.mjs`, `lib/*.mjs`, `templates/**`, `.dsh/pipeline.json`, `test/gate.test.mjs`, `test/contract-format.test.mjs`, `test/gitignore.test.mjs`, `.github/workflows/*.yml`
 
 ## 1. 代码风格与命名
