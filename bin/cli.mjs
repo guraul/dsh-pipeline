@@ -331,8 +331,9 @@ kb 用法:
            投递成功后推进水位；--daily 按标题 <repo> 知识库日更 <YYYY-MM-DD> 建/复用当天 issue
            （正文引用「追踪 issue #N」；已关则打印「今日已完成」退 0，不投递不动水位），投递只写
            pending 不动水位，写新 pending 前先收掉上一日还开着的旧 issue（补「转入今日 #N」评论
-           再关）；--finish 关 issue 并把 pending 提升为水位（幂等：issue 已关只提升水位；
-           无 pending 退 3；状态文件 repo 与 --repo 不一致退 2，不发 gh）。状态文件缺省
+           再关，同日同号跳过不收口）；--daily 与 --finish 都先比对状态文件 repo 与 --repo，
+           不一致退 2、不发 gh（防动错仓）；--finish 关 issue 并把 pending 提升为水位
+           （幂等：issue 已关只提升水位；无 pending 退 3）。状态文件缺省
            ~/.dsh/kb-queue/<repo>.json（不进仓库）；--dry-run 只打印正文，
            不建 issue、不投递、不写状态。
   --root <dir>       仓库根目录（缺省 cwd 的 git 顶层；不是 git 仓时用 cwd）
@@ -346,7 +347,8 @@ kb 用法:
   --range <a>..<b>   仅 impact：提交区间（与 --staged 互斥）
   --repo <owner/name> 仅 queue：issue 所在仓库
   --issue <n>        仅 queue：滚动 issue 号（与 --daily 互斥）
-  --daily            仅 queue：按标题建/复用当天追踪 issue（与 --issue 互斥）
+  --daily            仅 queue：按标题建/复用当天追踪 issue（与 --issue 互斥；
+                     状态文件 repo 与 --repo 不一致退 2，不发 gh）
   --finish           仅 queue：关当天 issue 并把 pending 提升为水位（与 --daily/--issue/--since/--dry-run 互斥；
                      状态文件 repo 与 --repo 不一致退 2，不发 gh）
   --since <sha>      仅 queue：首次水位（之后从 --state 读；--finish 不算区间，不用它）
@@ -355,7 +357,7 @@ kb 用法:
   --json             机器可读输出（退出码与人读模式一致）
   退出码: 0 通过 / 1 有结构违规（或 --strict 且有 stale；init 遇已有 KB、refresh 遇无 KB）/
           2 用法或配置错误（queue 缺投递目标、--daily 与 --issue 同给、--finish 带互斥开关、
-            --finish 的状态文件 repo 与 --repo 不一致）/
+            --daily 与 --finish 的状态文件 repo 与 --repo 不一致）/
           3 git、读盘或写盘失败（queue 投递 / 关单失败、--finish 无 pending）
 
 task 用法:
@@ -2683,7 +2685,8 @@ function runKbImpact(argv, deps, io) {
  * `--daily` 按标题 `<repo> 知识库日更 <YYYY-MM-DD>` 建 / 复用当天 issue，投递只写 `pending`
  * 不动水位，收口交给 `--finish`（关 issue + 提升水位，幂等）；写新 `pending` 前会先收掉
  * 上一日还开着的旧 issue（补「转入今日」评论再关），否则隔日未收口会丢单。
- * `--dry-run` 只打印正文：不查也不建 issue、不投递、不写状态。
+ * `--daily` 与 `--finish` 都先比对状态文件 `repo` 与 `--repo`，不一致退 2（E_CONFIG），
+ * 一条 gh 命令都不发、状态文件不动。`--dry-run` 只打印正文：不查也不建 issue、不投递、不写状态。
  * 退出码：0 成功（含无影响静默、`--daily` 遇当天 issue 已关）/ 2 用法与配置错误 /
  * 3 gh、git 或写盘失败（含 `--finish` 没有 pending）。
  */
@@ -2720,6 +2723,21 @@ function runKbQueue(argv, deps, io) {
 
   const statePath = options.state !== undefined ? options.state : queueStatePath(options.repo)
   if (finish) return finishKbQueue({ statePath, repo: options.repo, options, deps, io })
+
+  // 防动错仓（与 --finish 同款）：--daily 显式 --state 指到别的仓的水位文件时先拒，
+  // 一条 gh 命令都不发、状态文件不动——否则会拿别的仓的 issue 号在 --repo 里乱动。
+  // 默认 statePath 由 --repo 推导，正常路径不触发。
+  if (daily) {
+    const state = readQueueState(statePath)
+    if (state !== null && state.repo !== options.repo) {
+      return argError(
+        io,
+        'kb',
+        `状态文件的 repo 与 --repo 不一致（文件: ${String(state.repo)}，参数: ${options.repo}），拒绝投递`,
+        'E_CONFIG',
+      )
+    }
+  }
 
   const root = resolveKbRoot(options.root, deps)
   const issue = hasIssue ? Number(options.issue) : null

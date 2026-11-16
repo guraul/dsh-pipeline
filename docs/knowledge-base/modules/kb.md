@@ -100,8 +100,8 @@ dsh-pipeline kb queue --finish --repo <owner/name> [--state <file>] [--json]
 - **计算**：复用 `computeImpact` 算 `<水位>..HEAD` 的影响；无影响静默退 0（`--json` 给 `{ok:true,affected:[]}`），此时不查也不建 issue。
 - **有影响**：生成评论（日期、受影响文档、命中文件、涉及提交、`kb refresh --doc` 建议），首行标记 `<!-- kb-queue: <repo> -->`，用 `lib/gh.mjs` 的 `issueComment` 投递。投递目标二选一：
   - `--issue <n>`（老路径，行为与正文逐字不变）：投到指定滚动 issue（正文引用「滚动 issue #N」），**投递成功后才推进水位**；投递失败退 3 且水位不动（下次重扫同一段，不丢改动）。
-  - `--daily`：按标题 `dailyIssueTitle`（`<repo> 知识库日更 <YYYY-MM-DD>`）用 `issueList` 查当天 issue——OPEN 复用；CLOSED 打印「今日已完成」退 0（不投递、不动水位）；不存在则 `issueCreate` 新建，正文 `dailyIssueBody` 带同一标记与「本 issue 由当日自动流程创建，修完即关」说明；投递正文的 issue 引用写「追踪 issue #N」（日更单不是滚动 issue）。投递后状态文件写 `pending: {issue, head}`，`watermark` **原样保留**——当天之后再合并的提交不会被跳过。
-  - **写新 `pending` 前先收掉上一日还开着的旧 issue**：`issueView` 判旧 `pending.issue` 仍 OPEN 就先补一条「未收口，转入今日 #<新号>」评论再 `issueClose`，已 CLOSED 则直接覆盖（旧 issue 指向当天同一号时跳过）。不做这一步，隔日未收口的旧 issue 会永远挂着、再也无法用 `--finish` 收口。
+  - `--daily`：**先比对状态文件 `repo` 与 `--repo`（不一致退 2、E_CONFIG，一条 gh 命令都不发——防止在 `--repo` 指定的仓里动别的仓的 issue 号）**，再按标题 `dailyIssueTitle`（`<repo> 知识库日更 <YYYY-MM-DD>`）用 `issueList` 查当天 issue——OPEN 复用；CLOSED 打印「今日已完成」退 0（不投递、不动水位）；不存在则 `issueCreate` 新建，正文 `dailyIssueBody` 带同一标记与「本 issue 由当日自动流程创建，修完即关」说明；投递正文的 issue 引用写「追踪 issue #N」（日更单不是滚动 issue）。投递后状态文件写 `pending: {issue, head}`，`watermark` **原样保留**——当天之后再合并的提交不会被跳过。
+  - **写新 `pending` 前先收掉上一日还开着的旧 issue**：`issueView` 判旧 `pending.issue` 仍 OPEN 就先补一条「未收口，转入今日 #<新号>」评论再 `issueClose`，已 CLOSED 则直接覆盖（旧 issue 指向当天同一号时跳过——同日重入因此不发 `issueView` / `issueClose`，只再投当日清单）。不做这一步，隔日未收口的旧 issue 会永远挂着、再也无法用 `--finish` 收口。
 - **收口 `--finish`**：不算区间，只读状态里的 `pending`：`issueView` 判状态 → 还开着就 `issueClose`（已关则跳过，**幂等**）→ `watermark ← pending.head` 并移除 `pending`。`pending` 缺失或残缺退 3（环境错误）；**状态文件 `repo` 与 `--repo` 不一致退 2（E_CONFIG），一条 gh 命令都不发**——防关错仓（默认 statePath 由 `--repo` 推导，正常路径不触发）。顺序恒为「先关单、后写盘」：关单失败不动状态、可直接重跑；关单成功但写盘失败，下一轮看到 issue 已关照样提升水位。
 - **互斥**：`--daily` ↔ `--issue`（都不给退 2）；`--finish` ↔ `--daily` / `--issue` / `--since` / `--dry-run`。
 - **`--dry-run`**：只打印评论正文，不查也不建 issue、不投递、不写状态文件（此时还不知道 issue 号，正文省略 issue 引用）。
@@ -113,7 +113,7 @@ dsh-pipeline kb queue --finish --repo <owner/name> [--state <file>] [--json]
 |---|---|---|---|---|---|
 | 成功 | 0 | 0 | 0 | 0 | 0（含无影响静默；`--daily` 遇当天 issue 已关） |
 | 业务拒绝 | 1（有结构违规；`--strict` 且有 stale） | 1（已有 KB） | 1（无 KB，提示用 init） | — | — |
-| 用法 / 配置 | 2（参数错；`--kb-dir` 不存在且没给 `--allow-missing`） | 2 | 2（含未知 `--doc`） | 2 | 2（缺 `--repo` / 水位；`--issue` 与 `--daily` 都没给或都给了；`--finish` 带互斥开关；`--finish` 状态文件 `repo` 与 `--repo` 不一致） |
+| 用法 / 配置 | 2（参数错；`--kb-dir` 不存在且没给 `--allow-missing`） | 2 | 2（含未知 `--doc`） | 2 | 2（缺 `--repo` / 水位；`--issue` 与 `--daily` 都没给或都给了；`--finish` 带互斥开关；`--daily` / `--finish` 状态文件 `repo` 与 `--repo` 不一致） |
 | 环境错误 | 3（git / 读盘失败） | 3（写 `--out` 失败） | 3 | 3 | 3（gh 投递 / 关单 / 水位写盘失败；`--finish` 无 `pending`） |
 
 ## 修改本模块的注意事项
