@@ -1,11 +1,11 @@
 # 模块：CLI 编排层
 
-> 最后更新: 2026-11-16 | commit: `71f7a69`
+> 最后更新: 2026-11-16 | commit: `193d027`
 > 覆盖路径: `bin/cli.mjs`, `lib/merge.mjs`, `test/cli.test.mjs`, `test/contract.test.mjs`, `test/post-review.test.mjs`, `test/record-name.test.mjs`, `test/review-cmd.test.mjs`
 
 ## 职责
 
-`bin/cli.mjs`（约 3200 行）是本包唯一入口：解析参数、校验参数、调用 `lib/`、按 stdout/stderr 打印、把结果映射成退出码。它**不实现任何业务规则**——闸门、写盘、外部命令都在 `lib/`。
+`bin/cli.mjs`（约 3600 行）是本包唯一入口：解析参数、校验参数、调用 `lib/`、按 stdout/stderr 打印、把结果映射成退出码。它**不实现任何业务规则**——闸门、写盘、外部命令都在 `lib/`。
 
 ## 关键文件
 
@@ -64,4 +64,4 @@
 
 ## 相关测试
 
-`test/cli.test.mjs`（811 行，覆盖各子命令的参数与输出）、`test/contract.test.mjs`（真实子进程行为）、`test/review-cmd.test.mjs`、`test/post-review.test.mjs`、`test/record-name.test.mjs`。
+`test/cli.test.mjs`（1257 行，覆盖各子命令的参数与输出）、`test/contract.test.mjs`（真实子进程行为）、`test/review-cmd.test.mjs`、`test/post-review.test.mjs`、`test/record-name.test.mjs`。
