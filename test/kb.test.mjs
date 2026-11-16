@@ -13,7 +13,7 @@
  *   - impact 的 --staged / --range / 互斥 / 删除 / 改名 / --json+--out；
  *   - queue 的无影响静默 / 有影响投递 / --dry-run / 投递失败 / --json；
  *   - queue --daily（新建 / 复用 OPEN / 遇 CLOSED 退 0 / --dry-run 不触网 /
- *     隔日未收口先评论转入今日再关单）与
+ *     隔日未收口先评论转入今日再关单 / 同日重入不收口 / repo 不一致退 2 不发 gh）与
  *     --finish（关单 + 提升水位、issue 已关只提升、无 pending 退 3、repo 不一致退 2）、
  *     互斥退 2、旧状态文件（无 pending）仍可读、日更单正文引用「追踪 issue」。
  *
@@ -971,6 +971,96 @@ test('kb queue --daily：旧 pending 未收口先评论转入今日并关单，�
   assert.equal(again.code, 0, again.err)
   assert.deepEqual(ghKinds(calls2), ['issue list', 'issue create', 'issue view', 'issue comment'])
   assert.equal(JSON.parse(readFileSync(state, 'utf8')).pending.issue, 43)
+})
+
+test('kb queue --daily：同日重入（pending.issue 等于当日 issue）不收口，只查当日单再投清单', (t) => {
+  const { root, stamp } = makeCleanRepo()
+  t.after(() => cleanup(root))
+  writeFileSync(join(root, 'lib', 'a.mjs'), 'export const a = 26\n')
+  commitAll(root, '改 a')
+  const head = git(root, 'rev-parse', 'HEAD').trim()
+
+  const state = queueStateFile()
+  t.after(() => rmSync(state, { force: true }))
+
+  // 首次：当日无 issue → 新建 42 并投清单，写 pending {issue: 42}
+  const firstCalls = []
+  const first = run(
+    ['kb', 'queue', '--root', root, '--repo', 'demo/repo', '--daily', '--since', stamp, '--state', state],
+    {
+      runner: ghRunner(firstCalls, {
+        'issue list': ghJson([]),
+        'issue create': { status: 0, stdout: 'https://github.com/demo/repo/issues/42\n', stderr: '' },
+      }),
+    },
+  )
+  assert.equal(first.code, 0, first.err)
+  assert.deepEqual(ghKinds(firstCalls), ['issue list', 'issue create', 'issue comment'])
+
+  // 同日第二次：当日 issue 仍是 42，旧 pending.issue === target → 不收口（不 view / 不补转入今日 / 不关单）
+  const againCalls = []
+  const again = run(
+    ['kb', 'queue', '--root', root, '--repo', 'demo/repo', '--daily', '--since', stamp, '--state', state],
+    {
+      runner: ghRunner(againCalls, {
+        'issue list': ghJson([{ number: 42, title: dailyIssueTitle('demo/repo'), state: 'OPEN' }]),
+      }),
+    },
+  )
+  assert.equal(again.code, 0, again.err)
+  assert.deepEqual(
+    ghKinds(againCalls),
+    ['issue list', 'issue comment'],
+    '同日重入只有 issue list 与投清单的 issue comment，不得出现 issue view / issue close',
+  )
+  assert.equal(againCalls[1][2], '42', '清单仍投到当日 issue')
+  const delivered = againCalls[1][againCalls[1].length - 1]
+  assert.match(delivered, /<!-- kb-queue: demo\/repo -->/)
+  assert.doesNotMatch(delivered, /转入今日/, '同日重入不补「转入今日」评论')
+
+  const saved = JSON.parse(readFileSync(state, 'utf8'))
+  assert.deepEqual(saved.pending, { issue: 42, head }, 'pending 仍是当日 issue 号')
+  assert.equal(saved.watermark, stamp, 'watermark 不动')
+})
+
+test('kb queue --daily：状态文件 repo 与 --repo 不一致退 2，不发 gh 命令（防动错仓）', (t) => {
+  const { root, stamp } = makeCleanRepo()
+  t.after(() => cleanup(root))
+  writeFileSync(join(root, 'lib', 'a.mjs'), 'export const a = 27\n')
+  commitAll(root, '改 a')
+
+  const state = queueStateFile()
+  t.after(() => rmSync(state, { force: true }))
+  writeFileSync(
+    state,
+    `${JSON.stringify(
+      {
+        repo: 'other/repo',
+        watermark: stamp,
+        pending: { issue: 9, head: '1'.repeat(40) },
+        updatedAt: '2026-11-15T00:00:00.000Z',
+      },
+      null,
+      2,
+    )}\n`,
+  )
+  const before = readFileSync(state, 'utf8')
+
+  const calls = []
+  const result = run(
+    ['kb', 'queue', '--root', root, '--repo', 'demo/repo', '--daily', '--since', stamp, '--state', state],
+    {
+      runner: ghRunner(calls, {
+        'issue list': ghJson([]),
+        'issue create': { status: 0, stdout: 'https://github.com/demo/repo/issues/42\n', stderr: '' },
+      }),
+    },
+  )
+  assert.equal(result.code, 2, result.err)
+  assert.match(result.err, /E_CONFIG/)
+  assert.match(result.err, /repo 与 --repo 不一致/)
+  assert.deepEqual(calls, [], '一条 gh 命令都不发')
+  assert.equal(readFileSync(state, 'utf8'), before, '状态文件不动')
 })
 
 test('kb queue --finish：状态文件 repo 与 --repo 不一致退 2，不发 gh 命令（防关错仓）', () => {
