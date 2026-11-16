@@ -1,6 +1,6 @@
 # 模块：task / pr / 仓库定位 / git 与 gh 封装
 
-> 最后更新: 2026-11-15 | commit: `ac58a07`
+> 最后更新: 2026-11-16 | commit: `71f7a69`
 > 覆盖路径: `lib/task.mjs`, `lib/pr.mjs`, `lib/repo.mjs`, `lib/git.mjs`, `lib/gh.mjs`, `lib/fs-probe.mjs`, `bin/cli.mjs`, `test/task.test.mjs`, `test/task-worktree.test.mjs`, `test/pr.test.mjs`, `test/git.test.mjs`, `test/gh.test.mjs`
 
 ## 职责

@@ -1,6 +1,6 @@
 # 构建与运维
 
-> 最后更新: 2026-11-15 | commit: `ac58a07`
+> 最后更新: 2026-11-16 | commit: `71f7a69`
 > 覆盖路径: `package.json`, `bin/cli.mjs`, `.github/workflows/ci.yml`, `scripts/pack.sh`, `templates/shim.sh`, `test/contract.test.mjs`, `test/gitignore.test.mjs`, `.dsh/pipeline.json`, `lib/dist-freshness.mjs`, `lib/profile-check.mjs`
 
 ## 1. 环境变量清单

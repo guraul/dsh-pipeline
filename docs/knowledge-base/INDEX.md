@@ -1,6 +1,6 @@
 # dsh-pipeline 知识库索引
 
-> 最后更新: 2026-11-15 | commit: `ac58a07`
+> 最后更新: 2026-11-16 | commit: `71f7a69`
 > 覆盖路径: `package.json`, `bin/cli.mjs`, `lib/*.mjs`, `templates/**`, `.dsh/pipeline.json`, `.github/workflows/*.yml`, `scripts/pack.sh`, `test/gate.test.mjs`, `test/merge.test.mjs`, `test/contract-format.test.mjs`
 
 ## 使用说明
