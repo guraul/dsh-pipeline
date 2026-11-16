@@ -1,6 +1,6 @@
 # 模块：task / pr / 仓库定位 / git 与 gh 封装
 
-> 最后更新: 2026-11-16 | commit: `71f7a69`
+> 最后更新: 2026-11-16 | commit: `193d027`
 > 覆盖路径: `lib/task.mjs`, `lib/pr.mjs`, `lib/repo.mjs`, `lib/git.mjs`, `lib/gh.mjs`, `lib/fs-probe.mjs`, `bin/cli.mjs`, `test/task.test.mjs`, `test/task-worktree.test.mjs`, `test/pr.test.mjs`, `test/git.test.mjs`, `test/gh.test.mjs`
 
 ## 职责
@@ -14,8 +14,8 @@
 | `lib/task.mjs` | `runTask`、`slugify`、`normalizeSlug`、`taskBranchName`、`taskWorktreePath`、`resolveWorktreesDir` |
 | `lib/pr.mjs` | `runPr`、`prBody`、`issueFromBranch`、`TASK_BRANCH_PATTERN` |
 | `lib/repo.mjs` | `resolveRoot`（当前工作树）、`resolveMainRoot`（主工作区）、`resolveRepo`、`repoFromRemote`、`mainRootFromCommonDir` |
-| `lib/git.mjs` | 26 个具名 git 操作 |
-| `lib/gh.mjs` | 12 个具名 gh 操作；`MERGE_STRATEGY = 'squash'` |
+| `lib/git.mjs` | 28 个具名 git 操作 |
+| `lib/gh.mjs` | 15 个具名 gh 操作；`MERGE_STRATEGY = 'squash'` |
 
 ## `task`（`lib/task.mjs`）
 

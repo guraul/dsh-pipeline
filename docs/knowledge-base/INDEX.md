@@ -1,6 +1,6 @@
 # dsh-pipeline 知识库索引
 
-> 最后更新: 2026-11-16 | commit: `71f7a69`
+> 最后更新: 2026-11-16 | commit: `193d027`
 > 覆盖路径: `package.json`, `bin/cli.mjs`, `lib/*.mjs`, `templates/**`, `.dsh/pipeline.json`, `.github/workflows/*.yml`, `scripts/pack.sh`, `test/gate.test.mjs`, `test/merge.test.mjs`, `test/contract-format.test.mjs`
 
 ## 使用说明
@@ -45,7 +45,7 @@
 | 运行时 | Node.js | `engines.node >=20`；CI 用 24 | 纯 ESM，`"type": "module"` |
 | 依赖 | 无（零运行时依赖、零 devDependency） | — | glob / 校验 / 参数解析全部手写 |
 | 测试 | `node:test` + `node:assert/strict` | 随 Node | `pnpm test` = `node --test`（条数随 PR 变化，不写死） |
-| 包管理 | pnpm | CI 钉 `12.6.0`（`pnpm-lock.yaml` 只有 2 行，无依赖） | 只允许 pnpm |
+| 包管理 | pnpm | CI 钉 `12.6.0`（`pnpm-lock.yaml` 仅 9 行、`importers` 下为空，无依赖） | 只允许 pnpm |
 | CI | GitHub Actions | `actions/checkout@v4`、`pnpm/action-setup@v4`、`actions/setup-node@v4` | `node --test`，不打包、不上传产物 |
 | 部署 | GitHub Actions 复用 workflow | `deploy.yml` / `rollback.yml`（`on: workflow_call`） | rsync + `releases/<id>` + `dist` 软链 + 重启 + 验活 |
 | Shell | bash | 兼容 macOS 自带 3.2 | `templates/shim.sh`、`scripts/pack.sh` 不用 bash 4 语法 |
@@ -55,7 +55,7 @@
 
 ```text
 dsh-pipeline/
-├── bin/cli.mjs              # 唯一入口：参数解析、子命令编排、输出与退出码（约 3200 行）
+├── bin/cli.mjs              # 唯一入口：参数解析、子命令编排、输出与退出码（约 3600 行）
 ├── lib/                     # 业务实现，28 个模块；CLI 只调它，不复制规则
 │   ├── gate.mjs             # 闸门判定（纯函数）
 │   ├── merge.mjs            # 合并编排：闸门 → CI → squash → 清理
